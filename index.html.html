@@ -1,0 +1,2770 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ระบบอนุมัติเอกสาร | Document Flow</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap');
+
+:root{
+  --navy:#152238;
+  --navy-light:#1F3358;
+  --navy-lighter:#2A4270;
+  --paper:#F3EEE1;
+  --paper-white:#FBF8F1;
+  --ink:#26241F;
+  --ink-soft:#726C5E;
+  --stamp-red:#A83A2C;
+  --gold:#B8902A;
+  --forest:#2E6B4E;
+  --line:#E1D8C2;
+  --blue:#2E5EAA;
+  --purple:#7B4FA0;
+  --orange:#BE6C17;
+  --pink:#AE4270;
+  --radius:9px;
+  --shadow: 0 2px 10px rgba(21,34,56,0.10);
+}
+*{box-sizing:border-box;}
+@keyframes busy-spin{ to{ transform:rotate(360deg); } }
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans Thai',sans-serif;font-size:14px;}
+h1,h2,h3,h4{font-family:'Noto Serif Thai',serif;margin:0;color:var(--navy);}
+button{font-family:inherit;cursor:pointer;}
+input,select,textarea{font-family:inherit;font-size:13.5px;}
+::selection{background:var(--gold);color:#fff;}
+
+/* ---------- LOGIN ---------- */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:
+  radial-gradient(circle at 20% 20%, rgba(184,144,42,0.10), transparent 45%),
+  radial-gradient(circle at 80% 80%, rgba(46,94,170,0.08), transparent 45%),
+  var(--navy);padding:20px;}
+.login-card{background:var(--paper-white);width:100%;max-width:400px;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.35);overflow:hidden;}
+.login-head{background:var(--navy);color:#fff;padding:28px 30px 22px;position:relative;}
+.login-head::after{content:'';position:absolute;bottom:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--gold),var(--stamp-red),var(--forest));}
+.login-head .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;color:#C9A227;text-transform:uppercase;}
+.login-head h1{color:#fff;font-size:22px;margin-top:6px;}
+.login-body{padding:26px 30px 30px;}
+.field{margin-bottom:16px;}
+.field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
+.field select, .field input, .field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);}
+.field textarea{resize:vertical;min-height:60px;}
+.field .hint{font-size:11px;color:var(--ink-soft);margin-top:4px;}
+.btn{border:none;border-radius:7px;padding:10px 18px;font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:6px;}
+.btn-primary{background:var(--navy);color:#fff;}
+.btn-primary:hover{background:var(--navy-light);}
+.btn-block{width:100%;justify-content:center;padding:12px;}
+.login-hint{margin-top:14px;font-size:12px;color:var(--ink-soft);line-height:1.6;background:var(--paper);border:1px dashed var(--line);padding:10px 12px;border-radius:7px;}
+
+/* ---------- LAYOUT ---------- */
+.app{display:flex;min-height:100vh;}
+.sidebar{width:236px;background:var(--navy);color:#EFE9DA;flex-shrink:0;display:flex;flex-direction:column;}
+.sidebar-brand{padding:22px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.08);}
+.sidebar-brand .mark{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold);letter-spacing:.12em;}
+.sidebar-brand h2{color:#fff;font-size:17px;margin-top:4px;}
+.nav{padding:14px 10px;flex:1;overflow-y:auto;}
+.nav-group-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:#8792A8;padding:14px 12px 6px;}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:7px;color:#D8D2C1;font-size:13.5px;font-weight:500;margin-bottom:2px;}
+.nav-item:hover{background:rgba(255,255,255,0.06);cursor:pointer;}
+.nav-item.active{background:var(--navy-lighter);color:#fff;}
+.nav-item .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.5;}
+.nav-sub{margin-left:14px;padding-left:10px;border-left:1px solid rgba(255,255,255,0.12);}
+.nav-sub .nav-item{font-size:12.5px;padding:7px 12px;}
+.sidebar-foot{padding:14px 20px;border-top:1px solid rgba(255,255,255,0.08);font-size:11.5px;color:#8792A8;}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0;}
+.topbar{background:var(--paper-white);border-bottom:1px solid var(--line);padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
+.topbar h1{font-size:19px;}
+.topbar .sub{color:var(--ink-soft);font-size:12.5px;margin-top:2px;}
+.user-chip{display:flex;align-items:center;gap:10px;}
+.user-chip .avatar{width:34px;height:34px;border-radius:50%;background:var(--gold);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-family:'Noto Serif Thai',serif;}
+.user-chip .who{text-align:right;}
+.user-chip .who .name{font-weight:600;font-size:13px;}
+.user-chip .who .role{font-size:11.5px;color:var(--ink-soft);}
+.logout-btn{background:none;border:1px solid var(--line);border-radius:7px;padding:7px 12px;font-size:12px;color:var(--ink-soft);}
+.logout-btn:hover{border-color:var(--stamp-red);color:var(--stamp-red);}
+
+.content{padding:26px 28px 60px;overflow-y:auto;}
+.card{background:var(--paper-white);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:22px;margin-bottom:20px;}
+.card h3{font-size:16px;margin-bottom:14px;}
+.table-scroll{overflow-x:auto;}
+
+/* ---------- DASHBOARD ---------- */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px;}
+.stat-card{background:var(--paper-white);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .15s,border-color .15s;}
+.stat-card:hover{border-color:var(--ink-soft);}
+.stat-card.active{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset,var(--shadow);}
+.stat-card .num{font-family:'Noto Serif Thai',serif;font-size:30px;color:var(--navy);font-weight:700;}
+.stat-card .lbl{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+.stat-card::before{content:'';position:absolute;top:0;left:0;bottom:0;width:4px;}
+.stat-card.s-accountant::before{background:var(--blue);}
+.stat-card.s-reviewer::before{background:var(--orange);}
+.stat-card.s-approver::before{background:var(--purple);}
+.stat-card.s-finance::before{background:var(--gold);}
+.stat-card.s-complete::before{background:var(--forest);}
+.stat-card.s-reject::before{background:var(--stamp-red);}
+.stat-card.s-cancel::before{background:var(--ink-soft);}
+
+/* ---------- FILTER BAR ---------- */
+.filter-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:10px;}
+.filter-bar .f-field{min-width:150px;}
+.filter-bar .f-field label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:4px;font-weight:600;}
+.filter-bar input, .filter-bar select{padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12.5px;width:100%;}
+.filter-clear{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12px;color:var(--ink-soft);height:33px;}
+.filter-clear:hover{border-color:var(--stamp-red);color:var(--stamp-red);}
+
+.company-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:14px 18px;background:var(--navy);border-radius:10px;color:#fff;flex-wrap:wrap;}
+.company-header label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#C9A227;font-weight:700;}
+.company-header select{padding:8px 12px;border-radius:6px;border:none;font-size:13px;min-width:260px;}
+
+.group-header td{background:var(--navy);color:#fff;font-weight:700;font-size:12.5px;padding:9px 14px;border-radius:6px;}
+.group-header .cnt{font-weight:400;color:#C9A227;margin-left:6px;}
+
+/* ---------- TABLE ---------- */
+table{width:100%;border-collapse:collapse;font-size:13px;}
+thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);padding:9px 10px;border-bottom:2px solid var(--line);white-space:nowrap;}
+tbody td{padding:11px 10px;border-bottom:1px solid var(--line);vertical-align:top;}
+tbody tr:hover{background:rgba(184,144,42,0.05);}
+.mono{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);}
+.link-cell a{color:var(--blue);text-decoration:none;font-size:12.5px;}
+.link-cell a:hover{text-decoration:underline;}
+.empty-row td{text-align:center;padding:36px;color:var(--ink-soft);}
+.comment-cell{max-width:220px;font-size:12px;color:var(--ink-soft);}
+.sap-cell{font-family:'IBM Plex Mono',monospace;font-size:12px;}
+.sap-cell.empty{color:#B9B2A0;}
+
+/* ---------- BADGES / STAMPS ---------- */
+.badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11.5px;font-weight:600;color:#fff;white-space:nowrap;}
+.badge-blue{background:var(--blue);}
+.badge-purple{background:var(--purple);}
+.badge-orange{background:var(--orange);}
+.badge-pink{background:var(--pink);}
+.badge-gold{background:var(--gold);}
+.badge-forest{background:var(--forest);}
+.status-pill{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:#EDE6D2;color:var(--ink);}
+.status-pill.complete{background:var(--forest);color:#fff;transform:rotate(-2deg);box-shadow:0 1px 4px rgba(46,107,78,0.4);}
+.status-pill.reject{background:var(--stamp-red);color:#fff;}
+
+.trail{display:flex;align-items:center;gap:3px;}
+.trail .stg{width:9px;height:9px;border-radius:50%;background:var(--line);border:1px solid #D8CDAE;}
+.trail .stg.done{background:var(--forest);border-color:var(--forest);}
+.trail .stg.current{background:var(--gold);border-color:var(--gold);box-shadow:0 0 0 3px rgba(184,144,42,0.25);}
+.trail .bar{width:14px;height:2px;background:var(--line);}
+.trail .bar.done{background:var(--forest);}
+.trail-label{font-size:10.5px;color:var(--ink-soft);margin-top:3px;}
+
+/* ---------- FORMS / ACTIONS ---------- */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.form-grid .full{grid-column:1/-1;}
+.btn-sm{padding:6px 12px;font-size:12px;border-radius:6px;}
+.btn-approve{background:var(--forest);color:#fff;border:none;}
+.btn-approve:hover{opacity:.9;}
+.btn-reject{background:#fff;color:var(--stamp-red);border:1px solid var(--stamp-red);}
+.btn-reject:hover{background:rgba(168,58,44,0.08);}
+.btn-outline{background:#fff;color:var(--navy);border:1px solid var(--line);}
+.btn-outline:hover{border-color:var(--navy);}
+.btn-action{background:var(--navy);color:#fff;border:1px solid var(--navy);}
+.btn-action:hover{background:var(--navy-light);}
+.btn-cancel{background:#fff;color:var(--ink-soft);border:1px solid var(--ink-soft);}
+.btn-cancel:hover{background:rgba(114,108,94,0.1);color:var(--ink);border-color:var(--ink);}
+.action-row td{background:var(--paper);padding:14px 16px;}
+.note-box{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;}
+.note-box textarea{flex:1;min-width:220px;min-height:40px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;}
+.note-box .sap-input{width:190px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;}
+.note-box .sap-wrap label{display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:3px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
+
+.icon-btn{background:#fff;border:1px solid var(--line);border-radius:6px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-soft);}
+.icon-btn:hover{border-color:var(--navy);color:var(--navy);background:var(--paper);}
+.icon-btn.edit-icon{color:var(--gold);border-color:rgba(184,144,42,0.45);}
+.icon-btn.edit-icon:hover{background:rgba(184,144,42,0.1);border-color:var(--gold);color:var(--gold);}
+.icon-btn.dl-icon{color:var(--purple);border-color:rgba(123,79,160,0.4);}
+.icon-btn.dl-icon:hover{background:rgba(123,79,160,0.1);border-color:var(--purple);color:var(--purple);}
+.icon-btn.ql-folder{color:var(--blue);border-color:rgba(46,94,170,0.4);}
+.icon-btn.ql-folder:hover{background:rgba(46,94,170,0.1);border-color:var(--blue);color:var(--blue);}
+.icon-btn.ql-payment{color:var(--forest);border-color:rgba(46,107,78,0.4);}
+.icon-btn.ql-payment:hover{background:rgba(46,107,78,0.1);border-color:var(--forest);color:var(--forest);}
+.icon-btn.ql-receipt{color:var(--orange);border-color:rgba(190,108,23,0.4);}
+.icon-btn.ql-receipt:hover{background:rgba(190,108,23,0.1);border-color:var(--orange);color:var(--orange);}
+.icon-btn.ql-wht{color:var(--pink);border-color:rgba(174,66,112,0.4);}
+.icon-btn.ql-wht:hover{background:rgba(174,66,112,0.1);border-color:var(--pink);color:var(--pink);}
+.icon-btn.sap-link{font-size:9px;font-weight:700;letter-spacing:.2px;color:var(--blue);}
+.icon-btn.sap-link:hover{border-color:var(--blue);color:var(--blue);background:var(--paper);}
+
+.tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line);}
+.tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;}
+.tab:hover{color:var(--navy);cursor:pointer;}
+.tab.active{color:var(--navy);border-color:var(--gold);}
+
+.chip-check{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;font-size:12px;margin:3px 4px 3px 0;background:#fff;}
+.chip-check input{margin:0;}
+
+.eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.12em;color:var(--gold);text-transform:uppercase;}
+.helper{color:var(--ink-soft);font-size:12.5px;margin-top:2px;margin-bottom:16px;}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:999;opacity:0;transform:translateY(10px);transition:all .25s;}
+.toast.show{opacity:1;transform:translateY(0);}
+.role-tag{font-size:10.5px;background:var(--navy);color:#fff;padding:2px 8px;border-radius:20px;}
+hr.div{border:none;border-top:1px solid var(--line);margin:18px 0;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ============================= DATA / CONSTANTS ============================= */
+const ROLE_LABELS = {
+  'User': 'User (ผู้ใช้งานทั่วไป)',
+  'ธุรการ': 'ธุรการ',
+  'นักบัญชี': 'นักบัญชี',
+  'ผู้ตรวจสอบ': 'ผู้ตรวจสอบ (หัวหน้าแผนกบัญชี)',
+  'ผู้อนุมัติ': 'ผู้อนุมัติ (ผู้จัดการฝ่ายบัญชีและการเงิน)',
+  'เจ้าหน้าที่การเงิน': 'เจ้าหน้าที่การเงิน',
+  'Admin': 'Admin (ผู้ดูแลระบบ)'
+};
+const ROLE_ORDER = ['User','ธุรการ','นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','เจ้าหน้าที่การเงิน','Admin'];
+
+const STAGES = [
+  {key:'accountant', label:'นักบัญชี', status:'รอนักบัญชี', role:'นักบัญชี'},
+  {key:'reviewer',   label:'ผู้ตรวจสอบ', status:'รอผู้ตรวจสอบ', role:'ผู้ตรวจสอบ'},
+  {key:'approver',   label:'ผู้อนุมัติ', status:'รอผู้อนุมัติ', role:'ผู้อนุมัติ'},
+  {key:'finance',    label:'การเงิน', status:'รอชำระเงิน', role:'เจ้าหน้าที่การเงิน'},
+];
+
+const PENCIL_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const DOWNLOAD_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
+const FOLDER_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5l2 3h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/></svg>';
+const PAYMENT_SLIP_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>';
+const RECEIPT_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12a1 1 0 0 1 1 1v18l-2.5-1.5L14 21l-2.5-1.5L9 21l-2.5-1.5L4 21V3a1 1 0 0 1 1-1Z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>';
+const WHT_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><circle cx="9.7" cy="14.5" r="1.1"/><circle cx="15.3" cy="18.5" r="1.1"/><path d="m9 19 7-7"/></svg>';
+const QUICK_LINK_DEFAULTS = {
+  folderUrl: 'https://mitrphol.sharepoint.com/:f:/s/MPIRAccountingService/IgDqwIIpSgjQQ5Qz2L0V0aA5AdnVY_1tvHw5JE9dlbMr3UY?e=FyB7d9',
+  paymentSlipUrl: 'https://mitrphol.sharepoint.com/:f:/s/MPIRAccountingService/IgDkfD40f1aqR5Ym1vTn4eMHATpLkYriqnYNOBIOuz1Ad70?e=jMUON4',
+  receiptUrl: 'https://mitrphol.sharepoint.com/:f:/s/MPIRAccountingService/IgCTjkJ5gGGfTYbr1p-KhcRoAb-9HCF0RrwyH8iqB1dn1Hw?e=VXmavH',
+  whtUrl: 'https://mitrphol.sharepoint.com/:f:/s/MPIRAccountingService/IgBCbDoCINIrRpIWKS-ZFOOGAey0pkQoCFsz6QQaX7_6was?e=ulcbZb',
+};
+function getQuickLink(key){ return (state.appSettings && state.appSettings[key]) || QUICK_LINK_DEFAULTS[key] || '#'; }
+const EYE_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.45 18.45 0 0 0 1 12s4 8 11 8a9.16 9.16 0 0 0 5.39-1.61M14.12 14.12a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>';
+const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?sap-ui2-tcode=FB03&sap-system=FIORI_MENU';
+
+/* ============================= STATE ============================= */
+let state = {
+  loading:true, user:null, view:'dashboard', approvalTab:null,
+  members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], appSettings:{}, vendors:[],
+  expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
+  authView:'login', authEmail:'',
+  dashSearch:{type:'', name:'', status:''},
+  approvalSearch:{type:'', name:'', due:'', createdBy:''},
+  approvalCompany:'all',
+  paymentSearch:{type:'', name:'', due:'', createdBy:''},
+  paymentCompany:'all',
+  paymentSelected:[], paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
+  reportCompany:'all',
+  trackingCompany:'all',
+  reportSearch:{docPayment:'', by:'', from:'', to:''},
+  trackingSearch:{type:'', name:'', createdBy:'', from:'', to:'', status:''},
+  memberSearch:{name:'', email:''},
+  permSearch:{name:'', email:''},
+};
+
+function fmtDate(d){ if(!d) return '-'; try{ return new Date(d).toLocaleDateString('th-TH',{year:'numeric',month:'short',day:'numeric'});}catch(e){return d;} }
+function amtInput(d, field, placeholder){ return `<input type="number" step="0.01" id="amt-${field}-${d.id}" class="sap-input" style="width:100px;" value="${d[field]===''||d[field]===undefined?'':d[field]}" placeholder="${placeholder}" onchange="saveAmountField('${d.id}','${field}',this.value)">`; }
+function payTypeLabel(v){
+  const map = {'1':'1 = Direct', '2':'2 = Media', 'D':'D = Demand Draft'};
+  return map[v] || '-';
+}
+function vendorBankInfoText(vendorCode){
+  if(!vendorCode) return 'ยังไม่ได้เลือก Vendor';
+  const v = state.vendors.find(x=>String(x.vendorCode)===String(vendorCode));
+  if(!v || (!v.bankAccount && !v.bankName)) return 'ไม่มีข้อมูลบัญชี/ธนาคารของ Vendor นี้';
+  return `เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}`;
+}
+function onVendorInput(id){
+  const el = document.getElementById('vendor-'+id);
+  if(!el) return;
+  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  if(match){
+    el.value = match.vendorCode;
+    const nameEl = document.getElementById('vendorName-'+id);
+    if(nameEl) nameEl.value = match.vendorName;
+  }
+  const bankEl = document.getElementById('vendor-bank-'+id);
+  if(bankEl) bankEl.textContent = vendorBankInfoText(el.value);
+}
+/* Tax Code calculation (accounting): V7 = 7% VAT (Base = Net × 100/107, VAT = Net − Base); VX = no VAT (Base = Net, VAT = 0) */
+async function applyTaxCalc(id){
+  const taxEl = document.getElementById('taxCode-'+id);
+  if(!taxEl) return;
+  const taxCode = taxEl.value;
+  const netEl = document.getElementById('amt-netAmount-'+id);
+  const baseEl = document.getElementById('amt-baseAmount-'+id);
+  const vatEl = document.getElementById('amt-vatAmount-'+id);
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  const patch = { id, taxCode };
+  if(taxCode && netEl){
+    const net = parseFloat(netEl.value)||0;
+    let base, vat;
+    if(taxCode==='V7'){
+      base = Math.round(net*100/107*100)/100;
+      vat = Math.round((net-base)*100)/100;
+    } else { // VX — no VAT
+      base = net;
+      vat = 0;
+    }
+    if(baseEl) baseEl.value = base.toFixed(2);
+    if(vatEl) vatEl.value = vat.toFixed(2);
+    patch.baseAmount = base.toFixed(2);
+    patch.vatAmount = vat.toFixed(2);
+  }
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกการคำนวณไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+}
+function findMemberSignature(fullNameStr){
+  if(!fullNameStr) return null;
+  const m = state.members.find(x=>fullName(x)===fullNameStr);
+  return (m && m.signatureImage) ? m.signatureImage : null;
+}
+function getApprovalMapping(docType, companyCode){
+  return state.approvalMappings.find(mp=>mp.docType===docType && String(mp.companyCode)===String(companyCode)) || null;
+}
+function stageRoleForDoc(doc){
+  if(doc.status==='รอผู้ตรวจสอบ' || doc.status==='ตีกลับแก้ไข(ผู้อนุมัติ)') return 'reviewer';
+  if(doc.status==='รอผู้อนุมัติ') return 'approver';
+  return null; // accountant stage (and any other status) is not mapping-restricted
+}
+function canActOnStage(doc){
+  const role = stageRoleForDoc(doc);
+  if(!role) return true;
+  const mapping = getApprovalMapping(doc.docType, doc.companyCode);
+  if(!mapping) return true; // no mapping configured for this type+company -> unrestricted fallback
+  const targetId = role==='reviewer' ? mapping.reviewerId : mapping.approverId;
+  if(!targetId) return true; // mapping row exists but this slot left unset -> unrestricted fallback
+  return isAdmin() || state.user.id === targetId;
+}
+function assignedActorName(doc){
+  const role = stageRoleForDoc(doc);
+  if(!role) return null;
+  const mapping = getApprovalMapping(doc.docType, doc.companyCode);
+  if(!mapping) return null;
+  const targetId = role==='reviewer' ? mapping.reviewerId : mapping.approverId;
+  if(!targetId) return null;
+  const m = state.members.find(x=>x.id===targetId);
+  return m ? fullName(m) : null;
+}
+function signBlock(positionLabel, personName, roleTag){
+  const sig = findMemberSignature(personName);
+  const stamp = sig
+    ? `<img src="${sig}" style="height:48px;max-width:160px;object-fit:contain;display:block;margin:20px auto 4px;">`
+    : `<div class="sign-line"></div>`;
+  return `<div>${positionLabel}${stamp}${personName||'-'}<br><span style="color:#666;">${roleTag}</span></div>`;
+}
+function blankSignBlock(positionLabel, roleTag){
+  // always renders an empty live-signature line — no name from the system, ever
+  return `<div>${positionLabel}<div class="sign-line"></div>&nbsp;<br><span style="color:#666;">${roleTag}</span></div>`;
+}
+function nowStr(){ return new Date().toLocaleString('th-TH'); }
+function fullName(u){ return u ? (u.firstName+' '+u.lastName) : ''; }
+function docTypeInfo(key){ return state.docTypes.find(d=>d.key===key) || {label:key, color:'gold'}; }
+function companyName(code){ const c = state.companies.find(c=>c.code===code); return c ? c.code+' · '+c.name : code; }
+function isEnglishOnly(str){ return /^[A-Za-z]+$/.test((str||'').trim()); }
+function canEditMemberDetails(){ return isAdmin(); }
+function canEditDocuments(){ return ['นักบัญชี','ผู้ตรวจสอบ'].includes(state.user.role); }
+function companySelectOptions(selected){
+  return state.companies.map(c=>`<option value="${c.code}" ${selected===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('');
+}
+
+/* ============================= API (Google Apps Script backend) ============================= */
+const API_URL = 'https://script.google.com/macros/s/AKfycbxc63hCx3Xc5QgG8MN-_njsBm3sH8kHwxPBRHqOxHaOMQVpSJnAYSZU5STWp0x5SIf6/exec';
+
+async function apiCall(action, payload){
+  try{
+    const res = await fetch(API_URL, {
+      method:'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight against Apps Script
+      body: JSON.stringify({ action, payload: payload||{} }),
+    });
+    const data = await res.json();
+    if(!data.success && data.error) console.warn('API', action, 'returned error:', data.error);
+    return data;
+  }catch(err){
+    console.error('API call failed', action, err);
+    showToast('เชื่อมต่อ Server ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+    return { success:false, error:String(err) };
+  }
+}
+async function refreshData(){
+  const data = await apiCall('bootstrap', {});
+  if(data && data.success){
+    // Google Sheets auto-types numeric-looking company codes (1010, 1160, 4040...) as Numbers.
+    // <select> option values are always strings, so without this normalization every strict
+    // === comparison against a company code silently fails and dropdowns snap back to "all".
+    state.members = (data.members || []).map(m=>{
+      if(m.signatureImage===undefined) m.signatureImage='';
+      m.companyCodes = (m.companyCodes||[]).map(c=>String(c));
+      m.canTrack = (m.canTrack===true || m.canTrack==='TRUE' || m.canTrack==='true');
+      return m;
+    });
+    state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code) }));
+    state.docTypes = data.docTypes || [];
+    state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
+    state.appSettings = data.appSettings || {};
+    state.vendors = data.vendors || [];
+    state.documents = (data.documents || []).map(d=>{
+      if(d.docSAP===undefined) d.docSAP='';
+      if(d.vatAmount===undefined) d.vatAmount='';
+      if(d.whtAmount===undefined) d.whtAmount='';
+      if(d.baseAmount===undefined) d.baseAmount='';
+      if(d.netAmount===undefined) d.netAmount='';
+      if(d.docPayment===undefined) d.docPayment='';
+      if(d.skipApprover===undefined) d.skipApprover='';
+      if(d.skipFinance===undefined) d.skipFinance='';
+      if(d.payType===undefined) d.payType='';
+      if(d.cancelledBy===undefined) d.cancelledBy='';
+      if(d.cancelledDate===undefined) d.cancelledDate='';
+      if(d.cancelNote===undefined) d.cancelNote='';
+      if(d.docPaymentLink===undefined) d.docPaymentLink='';
+      if(d.vendor===undefined) d.vendor='';
+      if(d.vendorName===undefined) d.vendorName='';
+      if(d.taxCode===undefined) d.taxCode='';
+      if(d.trackClerkBy===undefined) d.trackClerkBy='';
+      if(d.trackClerkDate===undefined) d.trackClerkDate='';
+      if(d.trackAcct1By===undefined) d.trackAcct1By='';
+      if(d.trackAcct1Date===undefined) d.trackAcct1Date='';
+      if(d.trackAcct2By===undefined) d.trackAcct2By='';
+      if(d.trackAcct2Date===undefined) d.trackAcct2Date='';
+      if(d.trackClerkNote===undefined) d.trackClerkNote='';
+      if(d.trackAcct1Note===undefined) d.trackAcct1Note='';
+      if(d.trackAcct2Note===undefined) d.trackAcct2Note='';
+      if(d.companyCode!==undefined) d.companyCode=String(d.companyCode);
+      return d;
+    });
+  }
+  return data && data.success;
+}
+async function loadAll(){
+  const ok = await refreshData();
+  if(!ok){ showToast('โหลดข้อมูลจาก Server ไม่สำเร็จ ลองรีเฟรชหน้าเว็บอีกครั้ง'); }
+  else { restoreSession(); }
+  state.loading = false;
+  render();
+}
+async function manualRefresh(){
+  const btn = document.getElementById('refresh-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'กำลังรีเฟรช...'; }
+  const ok = await refreshData();
+  if(ok && state.user){
+    // re-point state.user at the refreshed record in case role/company changed
+    const refreshedUser = state.members.find(m=>m.id===state.user.id);
+    if(refreshedUser) state.user = refreshedUser;
+  }
+  if(btn){ btn.disabled = false; btn.textContent = '↻ รีเฟรช'; }
+  showToast(ok ? 'รีเฟรชข้อมูลล่าสุดเรียบร้อย' : 'รีเฟรชไม่สำเร็จ ลองใหม่อีกครั้ง');
+  render();
+}
+
+/* ============================= TOAST ============================= */
+function showToast(msg){
+  let t = document.getElementById('toast');
+  if(!t){ t = document.createElement('div'); t.id='toast'; t.className='toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>t.classList.remove('show'), 2600);
+}
+
+/* ============================= BUSY OVERLAY (for multi-step operations) ============================= */
+function showBusyOverlay(msg){
+  let el = document.getElementById('busy-overlay');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'busy-overlay';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(21,34,56,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<div style="background:#fff;padding:26px 34px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,0.25);text-align:center;font-size:14px;color:var(--ink);min-width:240px;">
+    <div style="width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--navy);border-radius:50%;margin:0 auto 14px;animation:busy-spin 0.8s linear infinite;"></div>
+    <div>${msg}</div>
+  </div>`;
+  el.style.display = 'flex';
+}
+function hideBusyOverlay(){
+  const el = document.getElementById('busy-overlay');
+  if(el) el.style.display = 'none';
+}
+
+/* ============================= RENDER: ROOT (focus-preserving) ============================= */
+function render(){
+  const root = document.getElementById('app');
+  const active = document.activeElement;
+  const activeId = active && active.id ? active.id : null;
+  const selStart = active && typeof active.selectionStart==='number' ? active.selectionStart : null;
+  const selEnd = active && typeof active.selectionEnd==='number' ? active.selectionEnd : null;
+
+  if(state.loading){ root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8792A8;background:var(--navy);font-family:IBM Plex Mono,monospace;font-size:13px;">กำลังโหลดระบบ...</div>'; return; }
+  if(!state.user){ root.innerHTML = loginHTML(); return; }
+  root.innerHTML = layoutHTML();
+
+  if(activeId){
+    const el = document.getElementById(activeId);
+    if(el){
+      el.focus();
+      if(selStart!=null && el.setSelectionRange){ try{ el.setSelectionRange(selStart, selEnd); }catch(e){} }
+    }
+  }
+}
+
+/* ============================= LOGIN / PASSWORD ============================= */
+function loginHTML(){
+  return state.authView === 'set-password' ? setPasswordHTML() : loginFormHTML();
+}
+function loginFormHTML(){
+  return `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="eyebrow">Document Flow · ระบบวางบิลและอนุมัติเอกสาร</div>
+        <h1>เข้าสู่ระบบ</h1>
+      </div>
+      <div class="login-body">
+        <form onsubmit="doLogin(event)">
+          <div class="field">
+            <label>Email</label>
+            <input id="login-email" type="email" name="email" placeholder="name@company.com" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label>รหัสผ่าน</label>
+            <div style="position:relative;">
+              <input id="login-password" type="password" name="password" placeholder="••••••••" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="current-password" required style="padding-right:40px;">
+              <button type="button" onclick="togglePasswordVisibility('login-password', this)" title="แสดง/ซ่อนรหัสผ่าน" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;padding:4px;color:var(--ink-soft);cursor:pointer;display:flex;">${EYE_SVG}</button>
+            </div>
+          </div>
+          <div class="field" style="display:flex;align-items:center;gap:8px;">
+            <input id="login-remember" type="checkbox" name="remember" style="width:auto;margin:0;">
+            <label for="login-remember" style="margin:0;font-size:13px;font-weight:400;cursor:pointer;">จดจำการเข้าสู่ระบบไว้ในเครื่องนี้</label>
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">เข้าสู่ระบบ</button>
+        </form>
+        <div style="text-align:center;margin-top:12px;">
+          <a href="#" onclick="switchAuthView('set-password');return false;" style="font-size:12.5px;color:var(--blue);">ยังไม่มีรหัสผ่าน หรือถูกรีเซ็ตแล้ว? ตั้งรหัสผ่านที่นี่</a>
+        </div>
+        <div class="login-hint">
+          บัญชีผู้ใช้จะถูกเพิ่มโดย Admin ก่อน (เมนู Admin → เพิ่ม Member) จากนั้นแต่ละคนจะมาตั้งรหัสผ่านของตัวเองครั้งแรกผ่านลิงก์ด้านบน — บัญชี Admin เริ่มต้นคือ <b>admin@company.com</b> (ยังไม่ได้ตั้งรหัสผ่าน กรุณาตั้งรหัสผ่านก่อนเข้าใช้งานครั้งแรก)
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function setPasswordHTML(){
+  return `
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-head">
+        <div class="eyebrow">Document Flow · ตั้งรหัสผ่าน</div>
+        <h1>ตั้งรหัสผ่านของคุณ</h1>
+      </div>
+      <div class="login-body">
+        <form onsubmit="doSetPassword(event)">
+          <div class="field">
+            <label>Email (ต้องเป็นอีเมลที่ Admin เพิ่มไว้ในระบบแล้ว)</label>
+            <input type="email" name="email" value="${state.authEmail||''}" placeholder="name@company.com" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label>รหัสผ่านใหม่</label>
+            <div style="position:relative;">
+              <input id="setpw-new" type="password" name="password" placeholder="อย่างน้อย 6 ตัวอักษร" minlength="6" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="new-password" required style="padding-right:40px;">
+              <button type="button" onclick="togglePasswordVisibility('setpw-new', this)" title="แสดง/ซ่อนรหัสผ่าน" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;padding:4px;color:var(--ink-soft);cursor:pointer;display:flex;">${EYE_SVG}</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>ยืนยันรหัสผ่าน</label>
+            <div style="position:relative;">
+              <input id="setpw-confirm" type="password" name="confirm" placeholder="พิมพ์รหัสผ่านอีกครั้ง" minlength="6" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="new-password" required style="padding-right:40px;">
+              <button type="button" onclick="togglePasswordVisibility('setpw-confirm', this)" title="แสดง/ซ่อนรหัสผ่าน" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;padding:4px;color:var(--ink-soft);cursor:pointer;display:flex;">${EYE_SVG}</button>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">บันทึกรหัสผ่าน</button>
+        </form>
+        <div style="text-align:center;margin-top:12px;">
+          <a href="#" onclick="switchAuthView('login');return false;" style="font-size:12.5px;color:var(--blue);">กลับไปหน้าเข้าสู่ระบบ</a>
+        </div>
+        <div class="login-hint">
+          ใช้ได้ทั้งการตั้งรหัสผ่านครั้งแรก และการตั้งใหม่หลัง Admin กดรีเซ็ตรหัสผ่านให้คุณ — หากยังไม่มีชื่อในระบบ กรุณาติดต่อ Admin ให้เพิ่ม Member ก่อน
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function switchAuthView(v){ state.authView = v; render(); }
+function togglePasswordVisibility(inputId, btn){
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  const showing = el.type === 'text';
+  el.type = showing ? 'password' : 'text';
+  btn.innerHTML = showing ? EYE_SVG : EYE_OFF_SVG;
+}
+
+/* ---- Remember-me session (stores only the member id, never the password) ---- */
+const SESSION_KEY = 'dfSession';
+function saveSession(user){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify({id:user.id})); }catch(e){} }
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+function restoreSession(){
+  let saved;
+  try{ saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){ saved = null; }
+  if(!saved || !saved.id) return;
+  const member = state.members.find(m=>m.id===saved.id);
+  if(!member){ clearSession(); return; }
+  state.user = member;
+  state.view = 'dashboard';
+  state.approvalTab = defaultApprovalTab();
+}
+
+async function doLogin(e){
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type=submit]');
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังเข้าสู่ระบบ...'; }
+  const f = new FormData(e.target);
+  const email = f.get('email').trim().toLowerCase();
+  const password = f.get('password').trim();
+  const remember = f.get('remember') === 'on';
+  const res = await apiCall('login', { email, password });
+  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'เข้าสู่ระบบ'; }
+  if(!res.success){
+    if(res.error === 'not_found'){ showToast('ไม่พบบัญชีนี้ในระบบ กรุณาติดต่อ Admin'); return; }
+    if(res.error === 'no_password'){ showToast('บัญชีนี้ยังไม่ได้ตั้งรหัสผ่าน กรุณาตั้งรหัสผ่านก่อน'); state.authEmail = email; state.authView='set-password'; render(); return; }
+    showToast('อีเมลหรือรหัสผ่านไม่ถูกต้อง'); return;
+  }
+  state.user = res.user;
+  state.view = 'dashboard';
+  state.approvalTab = defaultApprovalTab();
+  await refreshData();
+  // keep the freshly-logged-in user object (refreshData rebuilds state.members, so re-point state.user at the matching record)
+  const refreshedUser = state.members.find(m=>m.id===res.user.id);
+  if(refreshedUser) state.user = refreshedUser;
+  if(remember){ saveSession(state.user); } else { clearSession(); }
+  render();
+}
+async function doSetPassword(e){
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type=submit]');
+  const f = new FormData(e.target);
+  const email = f.get('email').trim().toLowerCase();
+  const pw = f.get('password').trim();
+  const confirm = f.get('confirm').trim();
+  if(pw.length < 6){ showToast('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร'); return; }
+  if(pw !== confirm){ showToast('รหัสผ่านที่กรอกไม่ตรงกัน'); return; }
+  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังบันทึก...'; }
+  const res = await apiCall('setPassword', { email, password: pw });
+  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'บันทึกรหัสผ่าน'; }
+  if(!res.success){
+    if(res.error === 'not_found'){ showToast('ไม่พบอีเมลนี้ในระบบ กรุณาให้ Admin เพิ่ม Member ก่อน'); return; }
+    showToast('ตั้งรหัสผ่านไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
+  }
+  showToast('ตั้งรหัสผ่านสำเร็จ กรุณาเข้าสู่ระบบ');
+  state.authView = 'login'; state.authEmail = '';
+  render();
+}
+function doLogout(){ clearSession(); state.user=null; state.authView='login'; render(); }
+
+/* ============================= LAYOUT ============================= */
+function canSeeApproval(){ return ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','Admin'].includes(state.user.role); }
+function canSeePayment(){ return ['เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role); }
+function isAdmin(){ return state.user.role === 'Admin'; }
+function defaultApprovalTab(){
+  const map = {'นักบัญชี':'accountant','ผู้ตรวจสอบ':'reviewer','ผู้อนุมัติ':'approver'};
+  return map[state.user.role] || 'accountant';
+}
+function allowedApprovalTabs(){
+  if(isAdmin()) return ['accountant','reviewer','approver'];
+  const map = {'นักบัญชี':['accountant'],'ผู้ตรวจสอบ':['reviewer'],'ผู้อนุมัติ':['approver']};
+  return map[state.user.role] || [];
+}
+function userCompanyOptions(){
+  if(isAdmin() || !state.user.companyCodes || !state.user.companyCodes.length) return state.companies;
+  return state.companies.filter(c=>state.user.companyCodes.includes(c.code));
+}
+
+function layoutHTML(){
+  return `
+  <div class="app">
+    ${sidebarHTML()}
+    <div class="main">
+      ${topbarHTML()}
+      <div class="content">${viewHTML()}</div>
+    </div>
+  </div>`;
+}
+
+function sidebarHTML(){
+  const nav = [];
+  nav.push(navItem('dashboard','แดชบอร์ด'));
+  nav.push(navItem('submit','วางบิลเอกสาร'));
+  if(state.user.role!=='เจ้าหน้าที่การเงิน') nav.push(navItem('tracking','Tracking Invoice'));
+  if(canSeeApproval()){
+    nav.push(`<div class="nav-item ${state.view==='approval'?'active':''}" onclick="goView('approval')"><span class="dot"></span>การอนุมัติเอกสาร</div>`);
+    if(state.view==='approval'){
+      const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
+      const subs = allowedApprovalTabs().map(t=>`<div class="nav-item ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')">${labels[t]}</div>`).join('');
+      nav.push(`<div class="nav-sub">${subs}</div>`);
+    }
+  }
+  if(canSeePayment()) nav.push(navItem('payment','Payment Voucher'));
+  if(canSeePayment()) nav.push(navItem('report-payment','Report Payment'));
+  if(isAdmin()){
+    nav.push(`<div class="nav-item ${state.view.startsWith('admin')?'active':''}" onclick="goView('admin-members')"><span class="dot"></span>Admin</div>`);
+    if(state.view.startsWith('admin')){
+      const subs = [
+        ['admin-members','เพิ่ม Member'],
+        ['admin-permissions','กำหนดสิทธิ์การใช้งาน'],
+        ['admin-settings','ตั้งค่าทั่วไป'],
+        ['admin-vendors','Vendor Master'],
+      ].map(([v,l])=>`<div class="nav-item ${state.view===v?'active':''}" onclick="goView('${v}')">${l}</div>`).join('');
+      nav.push(`<div class="nav-sub">${subs}</div>`);
+    }
+  }
+  return `
+  <div class="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark">MITRPHOL · E-SIGN</div>
+      <h2>Document Flow</h2>
+    </div>
+    <div class="nav">
+      <div class="nav-group-label">เมนูหลัก</div>
+      ${nav.join('')}
+    </div>
+    <div class="sidebar-foot">v1.2 · ข้อมูลเก็บที่ Google Drive</div>
+  </div>`;
+}
+function navItem(view,label){
+  return `<div class="nav-item ${state.view===view?'active':''}" onclick="goView('${view}')"><span class="dot"></span>${label}</div>`;
+}
+function goView(v){ state.view=v; state.expandedRow=null; if(v==='approval') state.approvalTab = allowedApprovalTabs().includes(state.approvalTab)?state.approvalTab:defaultApprovalTab(); render(); }
+function setApprovalTab(t){ state.approvalTab=t; state.expandedRow=null; render(); }
+
+function topbarHTML(){
+  const titles = {
+    dashboard:['แดชบอร์ด','ภาพรวมสถานะเอกสารทั้งหมดในระบบ'],
+    submit:['วางบิลเอกสาร','บันทึกเอกสารใหม่เข้าสู่กระบวนการอนุมัติ'],
+    tracking:['Tracking Invoice','ติดตามการรับเอกสารตัวจริง (กระดาษ) แยกจากการอนุมัติดิจิทัล'],
+    approval:['การอนุมัติเอกสาร','ตรวจสอบและส่งต่อเอกสารตามลำดับขั้น'],
+    payment:['Payment Voucher','บันทึกการชำระเงินสำหรับเอกสารที่อนุมัติแล้ว'],
+    'report-payment':['Report Payment','รายงานประวัติการรวบจ่ายเงินทั้งหมด'],
+    'admin-members':['Admin · เพิ่ม Member','ลงทะเบียนผู้ใช้งานเข้าสู่ระบบ'],
+    'admin-permissions':['Admin · กำหนดสิทธิ์การใช้งาน','ผูก Role และรหัสบริษัทให้สมาชิก'],
+    'admin-settings':['Admin · ตั้งค่าทั่วไป','จัดการรหัสบริษัทและประเภทเอกสาร'],
+    'admin-vendors':['Admin · Vendor Master','จัดการรายชื่อ Vendor สำหรับใช้ค้นหาตอนอนุมัติเอกสาร'],
+  };
+  const [t,s] = titles[state.view] || ['',''];
+  const initials = (state.user.firstName||'?').slice(0,1);
+  return `
+  <div class="topbar">
+    <div><h1>${t}</h1><div class="sub">${s}</div></div>
+    <div class="user-chip">
+      <div class="who"><div class="name">${fullName(state.user)}</div><div class="role">${ROLE_LABELS[state.user.role]}</div></div>
+      <div class="avatar">${initials}</div>
+      <button class="logout-btn" id="refresh-btn" onclick="manualRefresh()" title="โหลดข้อมูลล่าสุดจากระบบโดยไม่ต้องรีเฟรชหน้าเว็บ">↻ รีเฟรช</button>
+      <button class="logout-btn" onclick="doLogout()">ออกจากระบบ</button>
+    </div>
+  </div>`;
+}
+
+function viewHTML(){
+  switch(state.view){
+    case 'dashboard': return dashboardHTML();
+    case 'submit': return submitHTML();
+    case 'tracking': return trackingHTML();
+    case 'approval': return approvalHTML();
+    case 'payment': return paymentHTML();
+    case 'report-payment': return reportPaymentHTML();
+    case 'admin-members': return adminMembersHTML();
+    case 'admin-permissions': return adminPermissionsHTML();
+    case 'admin-settings': return adminSettingsHTML();
+    case 'admin-vendors': return adminVendorsHTML();
+    default: return '';
+  }
+}
+
+/* ============================= STAMP TRAIL ============================= */
+function trailHTML(doc){
+  if(doc.status === 'Complete'){
+    return `<span class="status-pill complete">✓ Complete</span>`;
+  }
+  if(doc.status.startsWith('ตีกลับ')){
+    return `<span class="status-pill reject">↺ ${doc.status}</span>`;
+  }
+  const idx = STAGES.findIndex(s=>s.status===doc.status);
+  const dots = STAGES.map((s,i)=>{
+    const cls = i<idx ? 'done' : (i===idx ? 'current' : '');
+    const bar = i>0 ? `<span class="bar ${i-1<idx?'done':''}"></span>` : '';
+    return bar + `<span class="stg ${cls}" title="${s.label}"></span>`;
+  }).join('');
+  return `<div><div class="trail">${dots}</div><div class="trail-label">รอ${STAGES[idx] ? STAGES[idx].label : ''}</div></div>`;
+}
+
+/* ============================= SHARED: GROUP BY DUE ============================= */
+function groupByDue(list){
+  const map = {};
+  list.forEach(d=>{
+    const key = d.dueDate || 'ไม่ระบุ';
+    if(!map[key]) map[key] = [];
+    map[key].push(d);
+  });
+  return Object.keys(map).sort().map(key=>({due:key, items:map[key]}));
+}
+function docTypeSelectOptions(selected){
+  return '<option value="">ทุกประเภท</option>' + state.docTypes.map(t=>`<option value="${t.key}" ${selected===t.key?'selected':''}>${t.label}</option>`).join('');
+}
+
+/* ============================= MEMBER DIRECTORY (shared: dashboard + admin) ============================= */
+function memberDirectoryCardHTML(){
+  const canEdit = canEditMemberDetails();
+  const s = state.memberSearch;
+  let list = state.members.slice();
+  if(s.name && s.name.trim()){
+    const q = s.name.trim().toLowerCase();
+    list = list.filter(m=>`${m.firstName} ${m.lastName}`.toLowerCase().includes(q));
+  }
+  if(s.email && s.email.trim()){
+    const q = s.email.trim().toLowerCase();
+    list = list.filter(m=>(m.email||'').toLowerCase().includes(q));
+  }
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหาชื่อ</label><input type="text" placeholder="ชื่อ-สกุล..." value="${s.name}" oninput="setMemberSearch('name', this.value)"></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหา Email</label><input type="text" placeholder="อีเมล..." value="${s.email}" oninput="setMemberSearch('email', this.value)"></div>
+    <button class="filter-clear" onclick="clearMemberSearch()">ล้างตัวกรอง</button>
+  </div>`;
+  const rows = list.map(m=>memberRowHTML(m, canEdit)).join('') || `<tr class="empty-row"><td colspan="8">ไม่พบสมาชิกที่ตรงกับตัวกรอง</td></tr>`;
+  return `
+  <div class="card">
+    <div class="eyebrow">Directory</div>
+    <h3 style="margin-top:4px;">รายชื่อสมาชิกทั้งหมด (${list.length}${list.length!==state.members.length?' จาก '+state.members.length:''})</h3>
+    ${canEdit ? '<div class="helper">คุณสามารถแก้ไขรายละเอียดสมาชิก หรือรีเซ็ตรหัสผ่านได้จากแถวรายการ</div>' : ''}
+    <hr class="div">
+    ${filterBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>Email</th><th>เบอร์โทร</th><th>Role</th><th>รหัสผ่าน</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function setMemberSearch(field, val){ state.memberSearch[field] = val; render(); }
+function clearMemberSearch(){ state.memberSearch = {name:'', email:''}; render(); }
+function memberRowHTML(m, canEdit){
+  const editing = state.memberEditId === m.id;
+  const pwBadge = m.hasPassword ? `<span class="status-pill complete" style="transform:none;">ตั้งแล้ว</span>` : `<span class="status-pill reject">ยังไม่ตั้ง</span>`;
+  if(!editing){
+    const actions = canEdit ? `
+      <button class="icon-btn" title="แก้ไขรายละเอียด" onclick="openMemberEdit('${m.id}')">${PENCIL_SVG}</button>
+      <button class="btn btn-sm btn-outline" onclick="resetMemberPassword('${m.id}')">รีเซ็ตรหัสผ่าน</button>` : '';
+    return `
+    <tr>
+      <td class="mono">${m.id}</td>
+      <td>${m.firstName} ${m.lastName}</td>
+      <td>${m.position}</td>
+      <td>${m.email}</td>
+      <td>${m.phone||'-'}</td>
+      <td><span class="role-tag">${ROLE_LABELS[m.role]}</span></td>
+      <td>${pwBadge}</td>
+      <td style="text-align:right;white-space:nowrap;">${actions}</td>
+    </tr>`;
+  }
+  return `
+  <tr class="action-row">
+    <td colspan="8">
+      <form onsubmit="saveMemberEdit(event,'${m.id}')">
+        <div class="form-grid">
+          <div class="field"><label>ชื่อ (English)</label><input type="text" name="firstName" pattern="[A-Za-z]+" title="ภาษาอังกฤษเท่านั้น" value="${m.firstName}" required></div>
+          <div class="field"><label>นามสกุล (English)</label><input type="text" name="lastName" pattern="[A-Za-z]+" title="ภาษาอังกฤษเท่านั้น" value="${m.lastName}" required></div>
+          <div class="field"><label>ตำแหน่ง</label><input type="text" name="position" value="${m.position}" required></div>
+          <div class="field"><label>Email</label><input type="email" name="email" value="${m.email}" required></div>
+          <div class="field"><label>เบอร์โทร</label><input type="text" name="phone" value="${m.phone||''}"></div>
+        </div>
+        <button class="btn btn-sm btn-approve" type="submit">บันทึก</button>
+        <button class="btn btn-sm btn-outline" type="button" onclick="closeMemberEdit()">ยกเลิก</button>
+      </form>
+    </td>
+  </tr>`;
+}
+function openMemberEdit(id){ if(!canEditMemberDetails()) return; state.memberEditId = id; render(); }
+function closeMemberEdit(){ state.memberEditId = null; render(); }
+async function saveMemberEdit(e, id){
+  e.preventDefault();
+  if(!canEditMemberDetails()) return;
+  const f = new FormData(e.target);
+  const fn = f.get('firstName').trim();
+  const ln = f.get('lastName').trim();
+  if(!isEnglishOnly(fn) || !isEnglishOnly(ln)){ showToast('กรุณากรอกชื่อและนามสกุลเป็นภาษาอังกฤษเท่านั้น'); return; }
+  const position = f.get('position'), email = f.get('email'), phone = f.get('phone')||'';
+  const res = await apiCall('updateMemberDetails', { id, firstName:fn, lastName:ln, position, email, phone });
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const m = state.members.find(x=>x.id===id);
+  if(m){ m.firstName=fn; m.lastName=ln; m.position=position; m.email=email; m.phone=phone; }
+  state.memberEditId = null;
+  showToast('บันทึกข้อมูลสมาชิกเรียบร้อย');
+  render();
+}
+async function resetMemberPassword(id){
+  if(!isAdmin()) return;
+  const res = await apiCall('resetPassword', { id });
+  if(!res.success){ showToast('รีเซ็ตรหัสผ่านไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const m = state.members.find(x=>x.id===id);
+  if(m){ m.hasPassword = false; }
+  showToast('รีเซ็ตรหัสผ่านของ '+(m?m.firstName:'')+' แล้ว — เข้าสู่ระบบครั้งถัดไปต้องตั้งรหัสผ่านใหม่');
+  render();
+}
+
+/* ============================= DASHBOARD ============================= */
+function dashboardHTML(){
+  let docs = state.documents;
+  if(!isAdmin()){
+    if(state.user.role === 'User'){
+      docs = docs.filter(d=>d.createdBy===fullName(state.user));
+    } else if(state.user.companyCodes && state.user.companyCodes.length){
+      docs = docs.filter(d=>state.user.companyCodes.includes(d.companyCode));
+    }
+  }
+  const count = s => docs.filter(d=>d.status===s).length;
+  const rejectCount = docs.filter(d=>d.status.startsWith('ตีกลับ')).length;
+  const completeCount = count('Complete');
+  const cancelCount = count('ยกเลิก');
+
+  const s = state.dashSearch;
+  const cardDef = (key, statusVal, label, cls) => {
+    const active = s.status === statusVal;
+    return `<div class="stat-card ${cls} ${active?'active':''}" role="button" tabindex="0" onclick="setDashStatusFilter('${statusVal}')" onkeypress="if(event.key==='Enter')setDashStatusFilter('${statusVal}')"><div class="num">${key}</div><div class="lbl">${label}</div></div>`;
+  };
+  const stats = `
+  <div class="stat-grid">
+    ${cardDef(count('รอนักบัญชี'), 'รอนักบัญชี', 'รอนักบัญชี', 's-accountant')}
+    ${cardDef(count('รอผู้ตรวจสอบ'), 'รอผู้ตรวจสอบ', 'รอผู้ตรวจสอบ', 's-reviewer')}
+    ${cardDef(count('รอผู้อนุมัติ'), 'รอผู้อนุมัติ', 'รอผู้อนุมัติ', 's-approver')}
+    ${cardDef(count('รอชำระเงิน'), 'รอชำระเงิน', 'รอชำระเงิน', 's-finance')}
+    ${cardDef(completeCount, 'Complete', 'Complete', 's-complete')}
+    ${cardDef(rejectCount, '__REJECTED__', 'ตีกลับแก้ไข', 's-reject')}
+    ${cardDef(cancelCount, 'ยกเลิก', 'ยกเลิก', 's-cancel')}
+  </div>`;
+
+  let filtered = docs.slice();
+  if(s.type) filtered = filtered.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) filtered = filtered.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.status){
+    filtered = s.status==='__REJECTED__' ? filtered.filter(d=>d.status.startsWith('ตีกลับ')) : filtered.filter(d=>d.status===s.status);
+  }
+  filtered.sort((a,b)=> (b.modifiedDate||b.createdDate).localeCompare(a.modifiedDate||a.createdDate));
+  const shown = filtered.slice(0,20);
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ประเภทเอกสาร</label>
+      <select id="dash-f-type" onchange="setDashSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select>
+    </div>
+    <div class="f-field" style="flex:1;min-width:200px;"><label>ค้นหาชื่อเอกสาร</label>
+      <input id="dash-f-name" type="text" placeholder="พิมพ์ชื่อเอกสาร..." value="${s.name}" oninput="setDashSearch('name', this.value)">
+    </div>
+    <button class="filter-clear" onclick="clearDashSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  const rows = shown.map(d=>dashDocRowHTML(d)).join('') || `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+
+  const quickLinks = `
+  <div style="display:flex;gap:6px;">
+    <a class="icon-btn ql-folder" href="${getQuickLink('folderUrl')}" target="_blank" rel="noopener" title="ประสานงานติดต่อสอบถามงานบัญชีและการเงิน">${FOLDER_SVG}</a>
+    <a class="icon-btn ql-payment" href="${getQuickLink('paymentSlipUrl')}" target="_blank" rel="noopener" title="Payment Slip">${PAYMENT_SLIP_SVG}</a>
+    <a class="icon-btn ql-receipt" href="${getQuickLink('receiptUrl')}" target="_blank" rel="noopener" title="ใบเสร็จรับเงิน">${RECEIPT_SVG}</a>
+    <a class="icon-btn ql-wht" href="${getQuickLink('whtUrl')}" target="_blank" rel="noopener" title="WHT (ใบภาษีหัก ณ ที่จ่าย)">${WHT_SVG}</a>
+  </div>`;
+
+  return `
+  ${stats}
+  <div class="card">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <div class="eyebrow">Recent Activity</div>
+      ${quickLinks}
+    </div>
+    <h3 style="margin-top:4px;">เอกสารล่าสุด (${shown.length}${filtered.length>shown.length?' จาก '+filtered.length:''})</h3>
+    ${canEditDocuments() ? '<div class="helper">คุณสามารถแก้ไขรายละเอียดเอกสารได้โดยกดไอคอนดินสอท้ายแถว</div>' : ''}
+    <hr class="div">
+    ${filterBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function setDashSearch(field, val){ state.dashSearch[field] = val; render(); }
+function setDashStatusFilter(val){ state.dashSearch.status = state.dashSearch.status===val ? '' : val; render(); }
+function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:''}; render(); }
+
+/* ---- Recent Activity row edit (accountant / reviewer only) ---- */
+function dashDocRowHTML(d){
+  if(state.dashDocEditId === d.id){
+    return `
+    <tr class="action-row">
+      <td colspan="11">
+        <form onsubmit="saveDashDocEdit(event,'${d.id}')">
+          <div class="form-grid">
+            <div class="field"><label>ประเภทเอกสาร</label><select name="docType">${state.docTypes.map(t=>`<option value="${t.key}" ${d.docType===t.key?'selected':''}>${t.label}</option>`).join('')}</select></div>
+            <div class="field"><label>รหัสบริษัท</label><select name="companyCode">${companySelectOptions(d.companyCode)}</select></div>
+            <div class="field full"><label>ชื่อเอกสาร</label><input type="text" name="docName" value="${d.docName}" required></div>
+            <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" value="${d.dueDate}" required></div>
+            <div class="field"><label>Document SAP</label><input type="text" name="docSAP" value="${d.docSAP||''}"></div>
+            <div class="field"><label>Link File Folder</label><input type="url" name="linkFile" value="${d.linkFile}" required></div>
+            <div class="field full"><label>Comment</label><textarea name="comment">${d.comment||''}</textarea></div>
+          </div>
+          <button class="btn btn-sm btn-approve" type="submit">บันทึก</button>
+          <button class="btn btn-sm btn-outline" type="button" onclick="closeDashDocEdit()">ยกเลิก</button>
+        </form>
+      </td>
+    </tr>`;
+  }
+  const pencil = canEditDocuments() ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openDashDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
+  const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
+  return `
+    <tr>
+      <td class="mono">${d.id}</td>
+      <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
+      <td>${d.docName}</td>
+      <td>${fmtDate(d.dueDate)}</td>
+      <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}</td>
+      <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
+      <td class="comment-cell">${d.comment || '-'}</td>
+      <td>${trailHTML(d)}</td>
+      <td>${d.createdBy}</td>
+      <td>${fmtDate(d.modifiedDate||d.createdDate)}</td>
+      <td style="text-align:right;white-space:nowrap;">${pencil} ${pdfBtn}</td>
+    </tr>`;
+}
+function openDashDocEdit(id){ if(!canEditDocuments()) return; state.dashDocEditId = id; render(); }
+function closeDashDocEdit(){ state.dashDocEditId = null; render(); }
+async function saveDashDocEdit(e, id){
+  e.preventDefault();
+  if(!canEditDocuments()) return;
+  const f = new FormData(e.target);
+  const patch = {
+    id,
+    docType: f.get('docType'),
+    companyCode: f.get('companyCode'),
+    docName: f.get('docName'),
+    dueDate: f.get('dueDate'),
+    docSAP: f.get('docSAP')||'',
+    linkFile: f.get('linkFile'),
+    comment: f.get('comment')||'',
+    modifiedBy: fullName(state.user),
+    modifiedDate: nowStr(),
+  };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const doc = state.documents.find(x=>x.id===id);
+  if(doc) Object.assign(doc, patch);
+  state.dashDocEditId = null;
+  showToast('บันทึกการแก้ไขเอกสารเรียบร้อย');
+  render();
+}
+
+/* ============================= SUBMIT BILL ============================= */
+function submitHTML(){
+  const typeOptions = state.docTypes.map(t=>`<option value="${t.key}">${t.label}</option>`).join('');
+  const companyOptions = state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
+
+  const myRejected = state.documents.filter(d=>d.status==='ตีกลับแก้ไข(นักบัญชี)' && d.createdBy===fullName(state.user));
+  const rejectedBlock = myRejected.length ? `
+    <div class="card">
+      <div class="eyebrow">ต้องแก้ไข</div>
+      <h3 style="margin-top:4px;">เอกสารที่ถูกตีกลับ (${myRejected.length})</h3>
+      <hr class="div">
+      <table>
+        <thead><tr><th>ID</th><th>ชื่อเอกสาร</th><th>เหตุผล</th><th>สถานะ</th><th></th></tr></thead>
+        <tbody>
+        ${myRejected.map(d=>`
+          <tr>
+            <td class="mono">${d.id}</td>
+            <td>${d.docName}</td>
+            <td>${d.accountantNote||d.reviewerNote||d.approverNote||'-'}</td>
+            <td>${trailHTML(d)}</td>
+            <td><button class="btn btn-sm btn-outline" onclick="resubmitDoc('${d.id}')">แก้ไขและส่งใหม่</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>` : '';
+
+  return `
+  ${rejectedBlock}
+  <div class="card">
+    <div class="eyebrow">New Submission</div>
+    <h3 style="margin-top:4px;">วางบิลเอกสารใหม่</h3>
+    <div class="helper">แนบเพียงลิงก์ไฟล์ที่จัดเก็บไว้แล้ว (Google Drive / SharePoint) ระบบนี้ไม่จัดเก็บไฟล์เอกสารโดยตรง</div>
+    <hr class="div">
+    <form onsubmit="submitNewDoc(event)">
+      <div class="form-grid">
+        <div class="field"><label>ประเภทเอกสาร</label><select name="docType" required>${typeOptions}</select></div>
+        <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required>${companyOptions}</select></div>
+        <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
+        <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
+        <div class="field"><label>Link File Folder</label><input type="url" name="linkFile" placeholder="https://drive.google.com/..." required></div>
+        <div class="field"><label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ถ้าทราบ — ไม่บังคับ)</span></label><input type="text" name="vendor" id="submit-vendor" list="submit-vendor-dl" placeholder="ค้นหารหัสหรือชื่อ Vendor..." oninput="onSubmitVendorInput()"><datalist id="submit-vendor-dl">${state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('')}</datalist></div>
+        <div class="field"><label>Vendor Name</label><input type="text" name="vendorName" id="submit-vendorName" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)"></div>
+        <div class="field"><label>ยอดจ่ายสุทธิ <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ถ้าทราบ — ไม่บังคับ)</span></label><input type="number" step="0.01" name="netAmount" placeholder="0.00"></div>
+        <div class="field full"><label>Comment</label><textarea name="comment" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></div>
+      </div>
+      <button class="btn btn-primary" type="submit">ส่งเข้าสู่กระบวนการอนุมัติ</button>
+    </form>
+  </div>`;
+}
+function onSubmitVendorInput(){
+  const el = document.getElementById('submit-vendor');
+  if(!el) return;
+  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  if(match){
+    el.value = match.vendorCode;
+    const nameEl = document.getElementById('submit-vendorName');
+    if(nameEl) nameEl.value = match.vendorName;
+  }
+}
+async function submitNewDoc(e){
+  e.preventDefault();
+  const submitBtn = e.target.querySelector('button[type=submit]');
+  if(submitBtn){ if(submitBtn.disabled) return; submitBtn.disabled = true; submitBtn.textContent = 'กำลังส่ง...'; }
+  const f = new FormData(e.target);
+  const payload = {
+    docType: f.get('docType'), docName: f.get('docName'), comment: f.get('comment')||'',
+    dueDate: f.get('dueDate'), linkFile: f.get('linkFile'), companyCode: f.get('companyCode'),
+    vendor: f.get('vendor')||'', vendorName: f.get('vendorName')||'',
+    netAmount: f.get('netAmount')||'',
+    createdBy: fullName(state.user), createdDate: new Date().toISOString().slice(0,10),
+  };
+  const res = await apiCall('addDocument', payload);
+  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'ส่งเข้าสู่กระบวนการอนุมัติ'; }
+  if(!res.success){
+    if(res.error === 'duplicate_submission'){ showToast('ระบบตรวจพบว่าคุณเพิ่งส่งเอกสารชื่อนี้ไปเมื่อครู่ — ป้องกันการวางบิลซ้ำ ถ้าตั้งใจส่งจริงๆ กรุณารอสักครู่แล้วลองใหม่'); return; }
+    showToast('วางบิลไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
+  }
+  showToast('วางบิลเอกสารเรียบร้อย ID '+res.id);
+  e.target.reset();
+  await refreshData();
+  state.view = 'tracking';
+  render();
+}
+async function resubmitDoc(id){
+  const patch = { id, status:'รอนักบัญชี', modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('ส่งเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('ส่งเอกสารกลับเข้าสู่กระบวนการอนุมัติแล้ว');
+  await refreshData();
+  render();
+}
+
+/* ============================= TRACKING INVOICE ============================= */
+/* Physical-document receipt tracking — fully independent of the digital approval flow.
+   3 independent checkpoints (any order, any subset): ธุรการ, นักบัญชีคนที่1, นักบัญชีคนที่2.
+   "รับครบ" = both accountant checkpoints stamped; the clerk checkpoint is optional/supplementary. */
+function canEditTracking(){ return isAdmin() || state.user.canTrack===true; }
+function canTrackDoc(doc){
+  if(isAdmin()) return true;
+  if(state.user.canTrack!==true) return false;
+  if(state.user.companyCodes && state.user.companyCodes.length){
+    return state.user.companyCodes.includes(doc.companyCode);
+  }
+  return true; // granted but no company restriction set -> can track any (matches existing fallback pattern elsewhere)
+}
+function trackingStatusOf(d){
+  const complete = !!(d.trackAcct1By && d.trackAcct2By);
+  if(complete) return 'complete';
+  const any = !!(d.trackClerkBy || d.trackAcct1By || d.trackAcct2By);
+  return any ? 'partial' : 'none';
+}
+function trackingHTML(){
+  const canEdit = canEditTracking();
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select onchange="setTrackingCompany(this.value)">
+      <option value="all" ${state.trackingCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.trackingCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+    <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่อดูเอกสารทีละบริษัท</span>
+  </div>`;
+
+  let scoped = state.documents.slice();
+  if(state.user.role==='User'){
+    scoped = scoped.filter(d=>d.createdBy===fullName(state.user));
+  } else if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    scoped = scoped.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.trackingCompany!=='all') scoped = scoped.filter(d=>d.companyCode===state.trackingCompany);
+
+  const s = state.trackingSearch;
+  const counts = { none:0, partial:0, complete:0 };
+  scoped.forEach(d=>{ counts[trackingStatusOf(d)]++; });
+  const cardDef = (key, statusVal, label, cls) => {
+    const active = s.status === statusVal;
+    return `<div class="stat-card ${cls} ${active?'active':''}" role="button" tabindex="0" onclick="setTrackingStatusFilter('${statusVal}')"><div class="num">${counts[key]}</div><div class="lbl">${label}</div></div>`;
+  };
+  const statCards = `
+  <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+    ${cardDef('none','none','ยังไม่ได้รับเอกสาร','s-reject')}
+    ${cardDef('partial','partial','รับบางส่วน','s-finance')}
+    ${cardDef('complete','complete','รับครบแล้ว','s-complete')}
+  </div>`;
+
+  let list = scoped.slice();
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(s.status) list = list.filter(d=>trackingStatusOf(d)===s.status);
+  if(s.from){ const from = new Date(s.from); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt >= from; }); }
+  if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt <= to; }); }
+  list.sort((a,b)=>(b.createdDate||'').localeCompare(a.createdDate||''));
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ประเภทเอกสาร</label><select onchange="setTrackingSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร</label><input type="text" placeholder="ค้นหาชื่อเอกสาร..." value="${s.name}" oninput="setTrackingSearch('name', this.value)"></div>
+    <div class="f-field"><label>สร้างโดย</label><input type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setTrackingSearch('createdBy', this.value)"></div>
+    <div class="f-field"><label>จากวันที่สร้าง</label><input type="date" value="${s.from}" onchange="setTrackingSearch('from', this.value)"></div>
+    <div class="f-field"><label>ถึงวันที่สร้าง</label><input type="date" value="${s.to}" onchange="setTrackingSearch('to', this.value)"></div>
+    <button class="filter-clear" onclick="clearTrackingSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  const rows = list.length ? list.map(d=>{
+    const complete = trackingStatusOf(d)==='complete';
+    return `
+    <tr>
+      <td class="mono">${d.id}</td>
+      <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
+      <td>${d.docName}</td>
+      <td>${d.createdBy}</td>
+      <td>${fmtDate(d.createdDate)}</td>
+      <td>${trackStampCell(d,'trackClerkBy','trackClerkDate','trackClerkNote','ธุรการ','clerk')}</td>
+      <td>${trackStampCell(d,'trackAcct1By','trackAcct1Date','trackAcct1Note','นักบัญชี #1','acct1')}</td>
+      <td>${trackStampCell(d,'trackAcct2By','trackAcct2Date','trackAcct2Note','นักบัญชี #2','acct2')}</td>
+      <td>${complete ? '<span class="badge badge-forest">รับครบแล้ว</span>' : '<span class="badge badge-gold">รอรับเอกสาร</span>'}</td>
+    </tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="9">ไม่พบเอกสาร</td></tr>`;
+
+  return `
+  ${companyHeader}
+  <div class="card">
+    <div class="eyebrow">Tracking Invoice</div>
+    <h3 style="margin-top:4px;">ติดตามการรับเอกสารตัวจริง (${list.length})</h3>
+    <div class="helper">ติ๊กรับเมื่อได้รับเอกสารตัวจริงจาก user — ไม่จำเป็นต้องผ่านธุรการก่อนก็ได้ (ข้ามไปติ๊กนักบัญชีคนที่ 1 ตรงได้เลย) ถือว่า "รับครบ" เมื่อนักบัญชีคนที่ 1 และคนที่ 2 ติ๊กรับทั้งคู่${canEdit?'':' — บัญชีของคุณดูได้อย่างเดียว'}</div>
+    <hr class="div">
+    ${statCards}
+    ${filterBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th>ธุรการ</th><th>นักบัญชี #1</th><th>นักบัญชี #2</th><th>สถานะรับเอกสาร</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function trackStampCell(d, byField, dateField, noteField, label, stage){
+  const canEdit = canTrackDoc(d);
+  const noteBox = canEdit
+    ? `<input type="text" class="sap-input" style="width:130px;font-size:11px;margin-top:4px;" placeholder="โน้ต (ถ้ามี)" value="${d[noteField]||''}" onchange="saveTrackNote('${d.id}','${noteField}',this.value)">`
+    : (d[noteField] ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">📝 ${d[noteField]}</div>` : '');
+  if(d[byField]){
+    return `
+      <div style="white-space:nowrap;">
+        <div style="display:flex;align-items:center;gap:4px;">
+          <span class="badge badge-forest" title="${d[byField]} · ${d[dateField]||''}">✓ ${d[byField]}</span>
+          ${canEdit ? `<button class="icon-btn" style="width:22px;height:22px;" title="ยกเลิกรับเอกสาร" onclick="toggleTrackReceipt('${d.id}','${stage}')">✕</button>` : ''}
+        </div>
+        <div style="font-size:10.5px;color:var(--ink-soft);margin-top:2px;">${d[dateField]||''}</div>
+        ${noteBox}
+      </div>`;
+  }
+  return `
+    <div style="white-space:nowrap;">
+      ${canEdit ? `<button class="btn btn-sm btn-outline" onclick="toggleTrackReceipt('${d.id}','${stage}')">☐ รับ${label}</button>` : `<span style="color:var(--ink-soft);font-size:12px;">ยังไม่รับ</span>`}
+      ${noteBox}
+    </div>`;
+}
+function setTrackingCompany(v){ state.trackingCompany = v; render(); }
+function setTrackingSearch(field, val){ state.trackingSearch[field] = val; render(); }
+function setTrackingStatusFilter(val){ state.trackingSearch.status = state.trackingSearch.status===val ? '' : val; render(); }
+function clearTrackingSearch(){ state.trackingSearch = {type:'', name:'', createdBy:'', from:'', to:'', status:''}; render(); }
+async function saveTrackNote(id, field, value){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canTrackDoc(doc)){ showToast('คุณไม่มีสิทธิ์แก้ไขรายการนี้'); return; }
+  const patch = { id, [field]: value };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกโน้ตไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  doc[field] = value;
+}
+async function toggleTrackReceipt(id, stage){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canTrackDoc(doc)){ showToast('คุณไม่มีสิทธิ์ติ๊กรับเอกสารนี้'); return; }
+  const fieldMap = {
+    clerk: ['trackClerkBy','trackClerkDate'],
+    acct1: ['trackAcct1By','trackAcct1Date'],
+    acct2: ['trackAcct2By','trackAcct2Date'],
+  };
+  const pair = fieldMap[stage];
+  if(!pair) return;
+  const [byField, dateField] = pair;
+  const wasReceived = !!doc[byField];
+  const patch = { id };
+  patch[byField] = wasReceived ? '' : fullName(state.user);
+  patch[dateField] = wasReceived ? '' : nowStr();
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+  showToast(wasReceived ? 'ยกเลิกการรับเอกสารแล้ว' : 'บันทึกรับเอกสารเรียบร้อย');
+  render();
+}
+
+/* ============================= APPROVAL ============================= */
+/* Map: which tab is responsible for fixing & resubmitting an item rejected by the NEXT stage */
+const REJECT_HANDLED_BY_TAB = {
+  accountant: 'ตีกลับแก้ไข(ผู้ตรวจสอบ)',   // reviewer rejected -> accountant (previous stage) fixes & resubmits
+  reviewer:   'ตีกลับแก้ไข(ผู้อนุมัติ)',     // approver rejected -> reviewer (previous stage) fixes & resubmits
+  approver:   null,
+};
+const REJECT_REASON_FIELD = {
+  'ตีกลับแก้ไข(ผู้ตรวจสอบ)': {field:'reviewerNote', label:'ผู้ตรวจสอบ'},
+  'ตีกลับแก้ไข(ผู้อนุมัติ)': {field:'approverNote', label:'ผู้อนุมัติ'},
+};
+const RESUBMIT_CFG = {
+  'ตีกลับแก้ไข(ผู้ตรวจสอบ)': {next:'รอผู้ตรวจสอบ', actor:'accountantBy', date:'accountantDate', note:'accountantNote'},
+  'ตีกลับแก้ไข(ผู้อนุมัติ)': {next:'รอผู้อนุมัติ', actor:'reviewerBy', date:'reviewerDate', note:'reviewerNote'},
+};
+
+function approvalHTML(){
+  const tabMeta = {
+    accountant:{status:'รอนักบัญชี', label:'นักบัญชี'},
+    reviewer:{status:'รอผู้ตรวจสอบ', label:'ผู้ตรวจสอบ'},
+    approver:{status:'รอผู้อนุมัติ', label:'ผู้อนุมัติ'},
+  };
+  const allowed = allowedApprovalTabs();
+  const tabs = allowed.map(t=>`<div class="tab ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')">${tabMeta[t].label}</div>`).join('');
+  const meta = tabMeta[state.approvalTab];
+  const rejectBackStatus = REJECT_HANDLED_BY_TAB[state.approvalTab];
+
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="approval-company-select" onchange="setApprovalCompany(this.value)">
+      <option value="all" ${state.approvalCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.approvalCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+    <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่ออนุมัติทีละบริษัท</span>
+  </div>`;
+
+  let list = state.documents.filter(d=> d.status===meta.status || (rejectBackStatus && d.status===rejectBackStatus));
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.approvalCompany!=='all') list = list.filter(d=>d.companyCode===state.approvalCompany);
+
+  const s = state.approvalSearch;
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ประเภทเอกสาร</label><select id="appr-f-type" onchange="setApprovalSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร</label><input id="appr-f-name" type="text" placeholder="ค้นหาชื่อเอกสาร..." value="${s.name}" oninput="setApprovalSearch('name', this.value)"></div>
+    <div class="f-field"><label>Due วันชำระเงิน</label><input id="appr-f-due" type="date" value="${s.due}" onchange="setApprovalSearch('due', this.value)"></div>
+    <div class="f-field"><label>สร้างโดย</label><input id="appr-f-created" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setApprovalSearch('createdBy', this.value)"></div>
+    <button class="filter-clear" onclick="clearApprovalSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  const groups = groupByDue(list);
+  const bodyRows = groups.length ? groups.map(g=>{
+    const header = `<tr class="group-header"><td colspan="14">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+    const rows = g.items.map(d=>{
+      const isRejectedItem = d.status !== meta.status;
+      const expanded = state.expandedRow===d.id;
+
+      if(state.approvalDocEditId === d.id){
+        return `
+        <tr class="action-row">
+          <td colspan="14">
+            <form onsubmit="saveApprovalDocEdit(event,'${d.id}')">
+              <div class="form-grid">
+                <div class="field"><label>ประเภทเอกสาร</label><select name="docType">${state.docTypes.map(t=>`<option value="${t.key}" ${d.docType===t.key?'selected':''}>${t.label}</option>`).join('')}</select></div>
+                <div class="field"><label>รหัสบริษัท</label><select name="companyCode">${companySelectOptions(d.companyCode)}</select></div>
+                <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" value="${d.dueDate||''}"></div>
+                <div class="field full"><label>ชื่อเอกสาร</label><input type="text" name="docName" value="${d.docName}" required></div>
+                <div class="field full"><label>ลิงก์ไฟล์</label><input type="url" name="linkFile" value="${d.linkFile}" required placeholder="https://drive.google.com/..."></div>
+              </div>
+              <button class="btn btn-sm btn-approve" type="submit">บันทึกการแก้ไข</button>
+              <button class="btn btn-sm btn-outline" type="button" onclick="closeApprovalDocEdit()">ยกเลิก</button>
+            </form>
+          </td>
+        </tr>`;
+      }
+
+      const editBtn = canEditDocuments() ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openApprovalDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
+      const sapBtn = `<a class="icon-btn sap-link" title="เปิด SAP Fiori (FB03)" href="${SAP_FIORI_URL}" target="_blank" rel="noopener">SAP</a>`;
+      const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
+      const canAct = canActOnStage(d);
+      const actionBtn = canAct
+        ? `<button class="btn btn-sm btn-action" onclick="toggleRow('${d.id}')">${expanded?'ปิด':'ดำเนินการ'}</button>`
+        : `<span style="font-size:11.5px;color:var(--ink-soft);" title="เอกสารประเภท+บริษัทนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${assignedActorName(d)||'-'}</span>`;
+      const mainRow = `
+        <tr>
+          <td class="mono">${d.id}</td>
+          <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span>${(d.skipApprover==='TRUE'||d.skipApprover===true)?'<span title="ข้ามขั้นผู้อนุมัติ" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">⤳หัวหน้าแผนก</span>':''}${(d.skipFinance==='TRUE'||d.skipFinance===true)?'<span title="ไม่ส่งการเงิน" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">🚫การเงิน</span>':''}</td>
+          <td>${d.docName}${d.comment?`<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px;">${d.comment}</div>`:''}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}</td>
+          <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
+          <td>${fmtDate(d.dueDate)}</td>
+          <td>${d.createdBy}</td>
+          <td>${trailHTML(d)}</td>
+          <td>${amtInput(d,'vatAmount','0.00')}</td>
+          <td>${amtInput(d,'whtAmount','0.00')}</td>
+          <td>${amtInput(d,'baseAmount','0.00')}</td>
+          <td>${amtInput(d,'netAmount','0.00')}</td>
+          <td>
+            <select id="taxCode-${d.id}" style="width:100px;" onchange="applyTaxCalc('${d.id}')">
+              <option value="">— เลือก —</option>
+              <option value="V7" ${d.taxCode==='V7'?'selected':''}>V7 (VAT 7%)</option>
+              <option value="VX" ${d.taxCode==='VX'?'selected':''}>VX (ไม่มี VAT)</option>
+            </select>
+          </td>
+          <td style="text-align:right;white-space:nowrap;">${editBtn} ${sapBtn} ${pdfBtn} ${actionBtn}</td>
+        </tr>`;
+
+      let actionRow = '';
+      const vendorOptions = state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('');
+      const flagFields = (state.approvalTab==='accountant' || state.approvalTab==='reviewer') ? `
+          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
+            <div class="sap-wrap">
+              <label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ค้นหาได้ทั้งรหัส/ชื่อ)</span></label>
+              <input class="sap-input" id="vendor-${d.id}" list="vendor-dl-${d.id}" type="text" placeholder="พิมพ์รหัสหรือชื่อ Vendor..." value="${d.vendor||''}" oninput="onVendorInput('${d.id}')" style="width:220px;">
+              <datalist id="vendor-dl-${d.id}">${vendorOptions}</datalist>
+            </div>
+            <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="vendorName-${d.id}" type="text" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" value="${d.vendorName||''}" style="width:220px;"></div>
+          </div>
+          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px;font-size:12.5px;">
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="skipApprover-${d.id}" ${(d.skipApprover==='TRUE'||d.skipApprover===true)?'checked':''}> เลือกผู้อนุมัติ = หัวหน้าแผนกบัญชี (ข้ามขั้นผู้อนุมัติ)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="checkbox" id="skipFinance-${d.id}" ${(d.skipFinance==='TRUE'||d.skipFinance===true)?'checked':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)
+            </label>
+          </div>
+          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:12.5px;">
+            <span style="color:var(--ink-soft);">ประเภทการจ่าย:</span>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="radio" name="payType-${d.id}" value="1" ${d.payType==='1'?'checked':''}> 1 = Direct
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="radio" name="payType-${d.id}" value="2" ${d.payType==='2'?'checked':''}> 2 = Media
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+              <input type="radio" name="payType-${d.id}" value="D" ${d.payType==='D'?'checked':''}> D = Demand Draft
+            </label>
+            <span id="vendor-bank-${d.id}" style="color:var(--ink-soft);border-left:1px solid var(--line);padding-left:12px;">${vendorBankInfoText(d.vendor)}</span>
+          </div>` : '';
+      if(expanded && !isRejectedItem && canAct){
+        const sapField = state.approvalTab==='accountant' ? `
+          <div class="sap-wrap"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}"></div>` : '';
+        actionRow = `
+        <tr class="action-row">
+          <td colspan="14">
+            <div class="note-box">
+              ${sapField}
+              ${flagFields}
+              <textarea id="note-${d.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)"></textarea>
+              <button class="btn btn-sm btn-approve" onclick="processStage('${d.id}','approve')">✓ อนุมัติ / ส่งต่อ</button>
+              <button class="btn btn-sm btn-reject" onclick="processStage('${d.id}','reject')">↺ ตีกลับแก้ไข</button>
+              <button class="btn btn-sm btn-cancel" onclick="cancelDoc('${d.id}')">✕ ไม่อนุมัติ / ยกเลิกเอกสาร</button>
+            </div>
+          </td>
+        </tr>`;
+      } else if(expanded && isRejectedItem && canAct){
+        const reasonCfg = REJECT_REASON_FIELD[d.status];
+        const reasonText = reasonCfg ? (d[reasonCfg.field] || 'ไม่ได้ระบุเหตุผล') : '';
+        const sapField = state.approvalTab==='accountant' ? `
+          <div class="sap-wrap"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}"></div>` : '';
+        actionRow = `
+        <tr class="action-row">
+          <td colspan="14">
+            <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;">
+              <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจาก${reasonCfg?reasonCfg.label:''}:</strong> ${reasonText}
+            </div>
+            <div class="note-box">
+              ${sapField}
+              ${flagFields}
+              <textarea id="note-${d.id}" placeholder="บันทึกการแก้ไข / หมายเหตุก่อนส่งกลับ (ไม่บังคับ)"></textarea>
+              <button class="btn btn-sm btn-approve" onclick="resubmitFromStage('${d.id}')">↻ Resubmit ส่งต่ออนุมัติใหม่</button>
+              <button class="btn btn-sm btn-reject" onclick="forwardToSubmitter('${d.id}')">↺ ส่งกลับให้ผู้วางบิลแก้ไข</button>
+              <button class="btn btn-sm btn-cancel" onclick="cancelDoc('${d.id}')">✕ ไม่อนุมัติ / ยกเลิกเอกสาร</button>
+            </div>
+          </td>
+        </tr>`;
+      }
+      return mainRow + actionRow;
+    }).join('');
+    return header + rows;
+  }).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
+
+  return `
+  <div class="tabs">${tabs}</div>
+  ${companyHeader}
+  <div class="card">
+    <div class="eyebrow">Stage · ${meta.label}</div>
+    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})</h3>
+    ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" ในตารางนี้คือเอกสารที่ถูกตีกลับโดยขั้นตอนถัดไป ให้แก้ไขแล้วกด Resubmit เพื่อส่งต่ออนุมัติใหม่ได้ทันที ไม่ต้องวางบิลใหม่</div>' : ''}
+    ${canEditDocuments() ? '<div class="helper">คุณสามารถแก้ไขประเภทเอกสาร รหัสบริษัท ชื่อเอกสาร วันที่ Due และลิงก์ไฟล์ได้โดยกดไอคอนดินสอท้ายแถว</div>' : ''}
+    <hr class="div">
+    ${filterBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>Due</th><th>สร้างโดย</th><th>สถานะ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>Tax Code</th><th></th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function setApprovalCompany(v){ state.approvalCompany = v; state.expandedRow=null; render(); }
+function setApprovalSearch(field, val){ state.approvalSearch[field] = val; render(); }
+function clearApprovalSearch(){ state.approvalSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
+function toggleRow(id){ state.expandedRow = state.expandedRow===id ? null : id; render(); }
+
+/* ---- Approval-stage row edit: docType / docName / linkFile only (accountant / reviewer) ---- */
+function openApprovalDocEdit(id){
+  if(!canEditDocuments()) return;
+  state.expandedRow = null;
+  state.approvalDocEditId = id;
+  render();
+}
+function closeApprovalDocEdit(){ state.approvalDocEditId = null; render(); }
+async function saveApprovalDocEdit(e, id){
+  e.preventDefault();
+  if(!canEditDocuments()) return;
+  const f = new FormData(e.target);
+  const patch = {
+    id,
+    docType: f.get('docType'),
+    companyCode: f.get('companyCode'),
+    dueDate: f.get('dueDate'),
+    docName: f.get('docName'),
+    linkFile: f.get('linkFile'),
+    modifiedBy: fullName(state.user),
+    modifiedDate: nowStr(),
+  };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const doc = state.documents.find(x=>x.id===id);
+  if(doc) Object.assign(doc, patch);
+  state.approvalDocEditId = null;
+  showToast('บันทึกการแก้ไขเอกสารเรียบร้อย');
+  render();
+}
+
+/* ---- Document Approval Summary — printable/downloadable, same pattern as openPaymentReport ---- */
+function openApprovalReport(id){
+  const d = state.documents.find(x=>x.id===id);
+  if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
+  const fmt = str => { const dt = parseThaiDateStr(str); return dt ? fmtDate(dt) : (str||'-'); };
+  const num = v => parseFloat(v)||0;
+  const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const trailRows = [
+    ['นักบัญชี', d.accountantBy, d.accountantDate, d.accountantNote],
+    ['ผู้ตรวจสอบ', d.reviewerBy, d.reviewerDate, d.reviewerNote],
+    ['ผู้อนุมัติ', d.approverBy, d.approverDate, d.approverNote],
+  ].map(([label,by,date,note])=>`
+    <tr>
+      <td>${label}</td>
+      <td>${by||'-'}</td>
+      <td>${by?fmt(date):'-'}</td>
+      <td>${note||'-'}</td>
+    </tr>`).join('');
+  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+    <title>ใบสรุปการอนุมัติเอกสาร · ${d.id}</title>
+    <style>
+      body{font-family:'Segoe UI',Arial,sans-serif;padding:32px;color:#1a1a1a;}
+      h1{font-size:20px;text-align:center;margin-bottom:16px;}
+      .meta{font-size:13px;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:6px 28px;}
+      .meta span.label{color:#555;}
+      table.data,table.trail{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:24px;}
+      table.data th,table.data td,table.trail th,table.trail td{border-bottom:1px solid #333;padding:6px 8px;text-align:left;}
+      table.data thead th,table.trail thead th{border-bottom:2px solid #000;}
+      .sign-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:50px;text-align:center;font-size:13px;}
+      .sign-line{border-top:1px solid #333;margin:40px 12px 6px;}
+      .no-print{margin-top:24px;text-align:center;}
+      @media print{ .no-print{display:none;} body{padding:8px;} }
+    </style></head><body>
+    <h1>ใบสรุปการอนุมัติเอกสาร</h1>
+    <div class="meta">
+      <div><span class="label">บริษัท:</span> <b>${companyName(d.companyCode)}</b></div>
+      <div><span class="label">สร้างโดย:</span> <b>${d.createdBy||'-'}</b></div>
+      <div><span class="label">สถานะเอกสาร:</span> <b>${d.status}</b></div>
+      <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
+    </div>
+    <table class="data">
+      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>${d.id}</td>
+          <td>${docTypeInfo(d.docType).label}</td>
+          <td>${d.docName||'-'}</td>
+          <td>${d.docSAP||'-'}</td>
+          <td>${d.vendor||'-'}</td>
+          <td>${d.vendorName||'-'}</td>
+          <td>${payTypeLabel(d.payType)}</td>
+          <td>${fmt(d.dueDate)}</td>
+          <td style="text-align:right;">${money(num(d.vatAmount))}</td>
+          <td style="text-align:right;">${money(num(d.whtAmount))}</td>
+          <td style="text-align:right;">${money(num(d.baseAmount))}</td>
+          <td style="text-align:right;"><b>${money(num(d.netAmount))}</b></td>
+        </tr>
+      </tbody>
+    </table>
+    <table class="trail">
+      <thead><tr><th>ขั้นตอน</th><th>ผู้ดำเนินการ</th><th>วันที่</th><th>หมายเหตุ</th></tr></thead>
+      <tbody>${trailRows}</tbody>
+    </table>
+    <div class="sign-grid">
+      ${signBlock('ผู้จัดเตรียม', d.accountantBy, 'นักบัญชี')}
+      ${signBlock('ผู้ตรวจสอบ', d.reviewerBy, 'ผู้ตรวจสอบ')}
+      ${signBlock('ผู้อนุมัติ', d.approverBy, 'ผู้อนุมัติ')}
+    </div>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
+  </body></html>`;
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+}
+async function processStage(id, decision){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const noteEl = document.getElementById('note-'+id);
+  const note = noteEl ? noteEl.value : '';
+  const sapEl = document.getElementById('sap-'+id);
+  const vendorEl = document.getElementById('vendor-'+id);
+  const vendorNameEl = document.getElementById('vendorName-'+id);
+  const skipApproverEl = document.getElementById('skipApprover-'+id);
+  const skipFinanceEl = document.getElementById('skipFinance-'+id);
+  const skipApprover = skipApproverEl ? skipApproverEl.checked : (doc.skipApprover==='TRUE'||doc.skipApprover===true);
+  const skipFinance = skipFinanceEl ? skipFinanceEl.checked : (doc.skipFinance==='TRUE'||doc.skipFinance===true);
+  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+
+  // mandatory fields before the accountant can forward a document on to the reviewer
+  if(decision==='approve' && doc.status==='รอนักบัญชี'){
+    const sapVal = sapEl ? sapEl.value.trim() : (doc.docSAP||'');
+    const vendorVal = vendorEl ? vendorEl.value.trim() : (doc.vendor||'');
+    const vendorNameVal = vendorNameEl ? vendorNameEl.value.trim() : (doc.vendorName||'');
+    const missing = [];
+    if(!sapVal) missing.push('Document SAP');
+    if(!vendorVal) missing.push('Vendor');
+    if(!vendorNameVal) missing.push('Vendor Name');
+    if(!payTypeEl) missing.push('ประเภทการจ่าย');
+    if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อผู้ตรวจสอบ: '+missing.join(', ')); return; }
+  }
+
+  const cfg = {
+    'รอนักบัญชี': {actor:'accountantBy', date:'accountantDate', note:'accountantNote', reject:'ตีกลับแก้ไข(นักบัญชี)'},
+    'รอผู้ตรวจสอบ': {actor:'reviewerBy', date:'reviewerDate', note:'reviewerNote', reject:'ตีกลับแก้ไข(ผู้ตรวจสอบ)'},
+    'รอผู้อนุมัติ': {actor:'approverBy', date:'approverDate', note:'approverNote', reject:'ตีกลับแก้ไข(ผู้อนุมัติ)'},
+  }[doc.status];
+  if(!cfg) return;
+  const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  patch[cfg.actor] = fullName(state.user);
+  patch[cfg.date] = nowStr();
+  patch[cfg.note] = note;
+  if(sapEl){ patch.docSAP = sapEl.value.trim(); }
+  if(vendorEl){ patch.vendor = vendorEl.value.trim(); }
+  if(vendorNameEl){ patch.vendorName = vendorNameEl.value.trim(); }
+  // only write the flags back when their checkbox was actually shown on this form (accountant/reviewer stage),
+  // so the approver stage (which has no checkboxes) never overwrites what was decided earlier
+  if(skipApproverEl) patch.skipApprover = skipApprover ? 'TRUE' : '';
+  if(skipFinanceEl) patch.skipFinance = skipFinance ? 'TRUE' : '';
+  if(payTypeEl) patch.payType = payTypeEl.value;
+
+  if(decision!=='approve'){
+    patch.status = cfg.reject;
+  } else if(doc.status==='รอนักบัญชี'){
+    patch.status = 'รอผู้ตรวจสอบ';
+  } else if(doc.status==='รอผู้ตรวจสอบ'){
+    patch.status = skipApprover ? (skipFinance ? 'Complete' : 'รอชำระเงิน') : 'รอผู้อนุมัติ';
+  } else if(doc.status==='รอผู้อนุมัติ'){
+    patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
+  }
+
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast(decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
+  await refreshData();
+  render();
+}
+async function resubmitFromStage(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const cfg = RESUBMIT_CFG[doc.status];
+  if(!cfg) return;
+  const noteEl = document.getElementById('note-'+id);
+  const sapEl = document.getElementById('sap-'+id);
+  const vendorEl = document.getElementById('vendor-'+id);
+  const vendorNameEl = document.getElementById('vendorName-'+id);
+  const skipApproverEl = document.getElementById('skipApprover-'+id);
+  const skipFinanceEl = document.getElementById('skipFinance-'+id);
+  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+
+  // same mandatory-fields gate as the normal accountant → reviewer forward
+  if(cfg.next==='รอผู้ตรวจสอบ'){
+    const sapVal = sapEl ? sapEl.value.trim() : (doc.docSAP||'');
+    const vendorVal = vendorEl ? vendorEl.value.trim() : (doc.vendor||'');
+    const vendorNameVal = vendorNameEl ? vendorNameEl.value.trim() : (doc.vendorName||'');
+    const missing = [];
+    if(!sapVal) missing.push('Document SAP');
+    if(!vendorVal) missing.push('Vendor');
+    if(!vendorNameVal) missing.push('Vendor Name');
+    if(!payTypeEl) missing.push('ประเภทการจ่าย');
+    if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อผู้ตรวจสอบ: '+missing.join(', ')); return; }
+  }
+
+  const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr(), status: cfg.next };
+  patch[cfg.actor] = fullName(state.user);
+  patch[cfg.date] = nowStr();
+  if(noteEl && noteEl.value.trim()) patch[cfg.note] = noteEl.value.trim();
+  if(sapEl) patch.docSAP = sapEl.value.trim();
+  if(vendorEl) patch.vendor = vendorEl.value.trim();
+  if(vendorNameEl) patch.vendorName = vendorNameEl.value.trim();
+  if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
+  if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
+  if(payTypeEl) patch.payType = payTypeEl.value;
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast('ส่งเอกสารกลับเข้าสู่การอนุมัติเรียบร้อย · '+id);
+  await refreshData();
+  render();
+}
+async function forwardToSubmitter(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(doc && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const noteEl = document.getElementById('note-'+id);
+  const patch = { id, status:'ตีกลับแก้ไข(นักบัญชี)', modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  if(noteEl && noteEl.value.trim()) patch.accountantNote = noteEl.value.trim();
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast('ส่งกลับให้ผู้วางบิลแก้ไขแล้ว · '+id);
+  await refreshData();
+  render();
+}
+async function cancelDoc(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const confirmed = confirm('ยืนยันยกเลิกเอกสาร '+id+' ใช่หรือไม่?\nเอกสารจะถูกปิดถาวร ไม่สามารถส่งต่อหรือแก้ไขต่อได้อีก (เหมาะกับเอกสารที่คีย์ซ้ำหรือผิดพลาด)');
+  if(!confirmed) return;
+  const noteEl = document.getElementById('note-'+id);
+  const note = noteEl ? noteEl.value.trim() : '';
+  const patch = {
+    id, status:'ยกเลิก',
+    cancelledBy: fullName(state.user), cancelledDate: nowStr(), cancelNote: note,
+    modifiedBy: fullName(state.user), modifiedDate: nowStr(),
+  };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('ยกเลิกเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast('ยกเลิกเอกสาร '+id+' เรียบร้อย');
+  await refreshData();
+  render();
+}
+
+/* ============================= PAYMENT VOUCHER ============================= */
+function paymentHTML(){
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="payment-company-select" onchange="setPaymentCompany(this.value)">
+      <option value="all" ${state.paymentCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.paymentCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+    <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่อจ่ายเงินทีละบริษัท</span>
+  </div>`;
+
+  // enforce single-company batch payment: block selection entirely until a specific company is chosen
+  const noCompanyPicked = state.paymentCompany === 'all';
+  if(noCompanyPicked) state.paymentSelected = [];
+
+  let list = state.documents.filter(d=>d.status==='รอชำระเงิน');
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.paymentCompany!=='all') list = list.filter(d=>d.companyCode===state.paymentCompany);
+
+  const s = state.paymentSearch;
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+
+  // drop stale selections that fell out of the current filtered view
+  state.paymentSelected = state.paymentSelected.filter(id=>list.some(d=>d.id===id));
+  const selectedDocs = state.documents.filter(d=>state.paymentSelected.includes(d.id));
+  const selectedNetSum = selectedDocs.reduce((sum,d)=>sum+(parseFloat(d.netAmount)||0),0);
+  const allChecked = list.length>0 && list.every(d=>state.paymentSelected.includes(d.id));
+
+  const companyNotice = noCompanyPicked ? `<div class="helper" style="color:var(--stamp-red);">กรุณาเลือกบริษัทที่ต้องการรวบจ่ายก่อน (ห้ามรวบจ่ายข้ามบริษัทในใบ Doc Payment เดียวกัน) — เลือกจากช่อง "บริษัท" ด้านบน</div>` : '';
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ประเภทเอกสาร</label><select id="pay-f-type" onchange="setPaymentSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร</label><input id="pay-f-name" type="text" placeholder="ค้นหาชื่อเอกสาร..." value="${s.name}" oninput="setPaymentSearch('name', this.value)"></div>
+    <div class="f-field"><label>Due วันชำระเงิน</label><input id="pay-f-due" type="date" value="${s.due}" onchange="setPaymentSearch('due', this.value)"></div>
+    <div class="f-field"><label>สร้างโดย</label><input id="pay-f-created" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setPaymentSearch('createdBy', this.value)"></div>
+    <button class="filter-clear" onclick="clearPaymentSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  const groups = groupByDue(list);
+  const moneyText = v => (parseFloat(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const bodyRows = groups.length ? groups.map(g=>{
+    const header = `<tr class="group-header"><td colspan="16">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+    const rows = g.items.map(d=>{
+      const checked = state.paymentSelected.includes(d.id);
+      const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+      return `
+        <tr>
+          <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="togglePaymentSelect('${d.id}')"></td>
+          <td class="mono">${d.id}</td>
+          <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
+          <td>${d.docName}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}</td>
+          <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
+          <td>${d.approverBy||'-'}</td>
+          <td>${d.vendor||'-'}</td>
+          <td>${d.vendorName||'-'}</td>
+          <td>${payTypeLabel(d.payType)}</td>
+          <td class="mono">${(vRec&&vRec.bankAccount)||'-'}</td>
+          <td>${(vRec&&vRec.bankName)||'-'}</td>
+          <td style="text-align:right;">${moneyText(d.vatAmount)}</td>
+          <td style="text-align:right;">${moneyText(d.whtAmount)}</td>
+          <td style="text-align:right;">${moneyText(d.baseAmount)}</td>
+          <td style="text-align:right;"><b>${moneyText(d.netAmount)}</b></td>
+        </tr>`;
+    }).join('');
+    return header+rows;
+  }).join('') : `<tr class="empty-row"><td colspan="16">ไม่มีเอกสารรอชำระเงิน</td></tr>`;
+
+  const batchBar = `
+  <div class="note-box" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
+    <div style="font-size:13px;">
+      เลือกแล้ว <b>${state.paymentSelected.length}</b> รายการ
+      ${state.paymentSelected.length ? `· ยอดจ่ายสุทธิรวม <b>${selectedNetSum.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</b> บาท` : ''}
+    </div>
+    <div class="f-field" style="margin:0;">
+      <label>เลข Doc Payment</label>
+      <input id="payment-docnum" type="text" placeholder="ระบุเลขที่ Doc Payment" value="${state.paymentDocNumber}" oninput="setPaymentDocNumber(this.value)" style="width:200px;" ${noCompanyPicked?'disabled':''}>
+    </div>
+    <div class="f-field" style="margin:0;flex:1;min-width:220px;">
+      <label>ลิงก์ไฟล์ Doc Payment (สลิป/หลักฐานการโอน — ไม่บังคับ)</label>
+      <input id="payment-doclink" type="url" placeholder="https://drive.google.com/..." value="${state.paymentDocLink}" oninput="setPaymentDocLink(this.value)" ${noCompanyPicked?'disabled':''}>
+    </div>
+    <button class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim()) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
+  </div>`;
+
+  const paidList = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
+  const paidScoped = (!isAdmin() && state.user.companyCodes && state.user.companyCodes.length) ? paidList.filter(d=>state.user.companyCodes.includes(d.companyCode)) : paidList;
+  const batches = {};
+  paidScoped.forEach(d=>{
+    if(!batches[d.docPayment]) batches[d.docPayment] = {docPayment:d.docPayment, count:0, netSum:0, paymentDate:d.paymentDate||'', docPaymentLink:d.docPaymentLink||''};
+    batches[d.docPayment].count++;
+    batches[d.docPayment].netSum += (parseFloat(d.netAmount)||0);
+    if(d.docPaymentLink) batches[d.docPayment].docPaymentLink = d.docPaymentLink;
+    if((d.paymentDate||'') > batches[d.docPayment].paymentDate) batches[d.docPayment].paymentDate = d.paymentDate;
+  });
+  const batchRows = Object.values(batches).sort((a,b)=>(b.paymentDate||'').localeCompare(a.paymentDate||'')).slice(0,10);
+  const historyRows = batchRows.length ? batchRows.map(b=>{
+    if(state.paymentHistoryEditId === String(b.docPayment)){
+      return `
+      <tr class="action-row">
+        <td colspan="5">
+          <form onsubmit="saveBatchEdit(event,'${b.docPayment}')">
+            <div class="form-grid">
+              <div class="field"><label>เลข Doc Payment</label><input type="text" name="docPayment" value="${b.docPayment}" required></div>
+              <div class="field full"><label>ลิงก์ไฟล์ (สลิป/หลักฐานการโอน)</label><input type="url" name="docPaymentLink" value="${b.docPaymentLink||''}" placeholder="https://drive.google.com/..."></div>
+            </div>
+            <button class="btn btn-sm btn-approve" type="submit">บันทึก</button>
+            <button class="btn btn-sm btn-outline" type="button" onclick="closeBatchEdit()">ยกเลิก</button>
+          </form>
+        </td>
+      </tr>`;
+    }
+    return `
+    <tr>
+      <td class="mono">${b.docPayment}</td>
+      <td>${b.count} รายการ</td>
+      <td>${b.netSum.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+      <td>${b.paymentDate||'-'}</td>
+      <td style="white-space:nowrap;">
+        ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
+        <button class="icon-btn edit-icon" title="แก้ไขเลข Doc Payment / ลิงก์ไฟล์" onclick="openBatchEdit('${b.docPayment}')">${PENCIL_SVG}</button>
+        <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
+      </td>
+    </tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="5">ยังไม่มีประวัติการรวบจ่าย</td></tr>`;
+
+  return `
+  ${companyHeader}
+  <div class="card">
+    <div class="eyebrow">Payment Stage</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin-top:4px;">รายการรอชำระเงิน (${list.length})</h3>
+      <button class="btn btn-sm btn-outline" onclick="exportPaymentListToExcel()">⬇ Export Excel</button>
+    </div>
+    <div class="helper">ติ๊กเลือกเอกสารที่จะรวบจ่ายเป็น 1 Doc Payment กรอกเลข Doc Payment แล้วกดยืนยันรวบจ่าย — ยอด VAT/WHT/Base/สุทธิ และ Vendor ถูกกรอกไว้แล้วตั้งแต่ขั้นนักบัญชี/ผู้ตรวจสอบ แก้ไขจากหน้านี้ไม่ได้</div>
+    ${companyNotice}
+    <hr class="div">
+    ${filterBar}
+    ${batchBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>ผู้อนุมัติ</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
+      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllPayment(this.checked)" title="เลือกทั้งหมด"></th><th colspan="15"></th></tr></thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Payment History</div>
+    <h3 style="margin-top:4px;">ประวัติการรวบจ่ายล่าสุด</h3>
+    <div class="helper">แสดงแค่ 10 รายการล่าสุด — <a href="#" onclick="goView('report-payment');return false;" style="color:var(--blue);">ดูรายงานฉบับเต็มที่ Report Payment →</a></div>
+    <hr class="div">
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Doc Payment</th><th>จำนวนเอกสาร</th><th>ยอดจ่ายสุทธิรวม</th><th>วันที่จ่าย</th><th></th></tr></thead>
+      <tbody>${historyRows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function setPaymentCompany(v){ state.paymentCompany = v; state.expandedRow=null; state.paymentSelected=[]; render(); }
+function setPaymentSearch(field, val){ state.paymentSearch[field] = val; render(); }
+function clearPaymentSearch(){ state.paymentSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
+function setPaymentDocNumber(v){ state.paymentDocNumber = v; }
+function setPaymentDocLink(v){ state.paymentDocLink = v; }
+function togglePaymentSelect(id){
+  if(state.paymentCompany==='all') return; // must pick a single company before selecting
+  const i = state.paymentSelected.indexOf(id);
+  if(i===-1) state.paymentSelected.push(id); else state.paymentSelected.splice(i,1);
+  render();
+}
+function toggleSelectAllPayment(checked){
+  if(state.paymentCompany==='all') return; // must pick a single company before selecting
+  let list = state.documents.filter(d=>d.status==='รอชำระเงิน');
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.paymentCompany!=='all') list = list.filter(d=>d.companyCode===state.paymentCompany);
+  const s = state.paymentSearch;
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  state.paymentSelected = checked ? list.map(d=>d.id) : [];
+  render();
+}
+async function saveAmountField(id, field, value){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  const patch = { id, [field]: value, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกจำนวนเงินไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  doc[field] = value;
+}
+async function confirmBatchPayment(){
+  const docNum = state.paymentDocNumber.trim();
+  const docLink = state.paymentDocLink.trim();
+  if(!docNum || !state.paymentSelected.length) return;
+  if(state.paymentCompany==='all'){ showToast('กรุณาเลือกบริษัทก่อนรวบจ่าย ห้ามรวบจ่ายข้ามบริษัทในใบเดียวกัน'); return; }
+  const ids = state.paymentSelected.slice();
+  const selectedDocs = ids.map(id=>state.documents.find(d=>d.id===id)).filter(Boolean);
+  const companySet = new Set(selectedDocs.map(d=>d.companyCode));
+  if(companySet.size > 1){ showToast('พบเอกสารจากหลายบริษัทในรายการที่เลือก ห้ามรวบจ่ายข้ามบริษัท กรุณาตรวจสอบอีกครั้ง'); return; }
+  showBusyOverlay('กำลังดำเนินการรวบชุดจ่าย กรุณารอสักครู่... (0/'+ids.length+')');
+  let done = 0;
+  for(const id of ids){
+    const doc = state.documents.find(d=>d.id===id);
+    if(!doc) continue;
+    const patch = {
+      id, status:'Complete', docPayment: docNum, docPaymentLink: docLink,
+      paymentBy: fullName(state.user), paymentDate: nowStr(), timeApprove: nowStr(),
+      modifiedBy: fullName(state.user), modifiedDate: nowStr(),
+    };
+    const res = await apiCall('updateDocument', patch);
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกการจ่ายเงินไม่สำเร็จที่เอกสาร '+id+' ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+    done++;
+    showBusyOverlay('กำลังดำเนินการรวบชุดจ่าย กรุณารอสักครู่... ('+done+'/'+ids.length+')');
+  }
+  hideBusyOverlay();
+  showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ)');
+  state.paymentSelected = [];
+  state.paymentDocNumber = '';
+  state.paymentDocLink = '';
+  await refreshData();
+  render();
+  openPaymentReport(docNum);
+}
+
+/* ============================= REPORT PAYMENT ============================= */
+// paymentDate / accountantDate etc are stored via nowStr() = Date#toLocaleString('th-TH'),
+// e.g. "14/7/2569 00:35:42" — day/month/BuddhistYear. Parse back to a real Date for range filtering.
+function parseThaiDateStr(str){
+  if(!str) return null;
+  const m = String(str).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(!m) return null;
+  const day = parseInt(m[1],10), month = parseInt(m[2],10), buddhistYear = parseInt(m[3],10);
+  const d = new Date(buddhistYear-543, month-1, day);
+  return isNaN(d.getTime()) ? null : d;
+}
+function reportPaymentHTML(){
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="report-company-select" onchange="setReportCompany(this.value)">
+      <option value="all" ${state.reportCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.reportCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+  </div>`;
+
+  let docs = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    docs = docs.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.reportCompany!=='all') docs = docs.filter(d=>d.companyCode===state.reportCompany);
+
+  const s = state.reportSearch;
+  if(s.docPayment && s.docPayment.trim()) docs = docs.filter(d=>String(d.docPayment).toLowerCase().includes(s.docPayment.trim().toLowerCase()));
+  if(s.by && s.by.trim()) docs = docs.filter(d=>(d.paymentBy||'').toLowerCase().includes(s.by.trim().toLowerCase()));
+  if(s.from){ const from = new Date(s.from); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt >= from; }); }
+  if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
+
+  const num = v => parseFloat(v)||0;
+  const batches = {};
+  docs.forEach(d=>{
+    const key = String(d.docPayment);
+    if(!batches[key]) batches[key] = { docPayment:d.docPayment, count:0, vat:0, wht:0, base:0, net:0, paymentDate:d.paymentDate||'', paymentBy:d.paymentBy||'', companyCode:d.companyCode||'', payTypes:new Set(), docPaymentLink:d.docPaymentLink||'' };
+    const b = batches[key];
+    b.count++;
+    b.vat += num(d.vatAmount); b.wht += num(d.whtAmount); b.base += num(d.baseAmount); b.net += num(d.netAmount);
+    if(d.payType) b.payTypes.add(d.payType);
+    if(d.docPaymentLink) b.docPaymentLink = d.docPaymentLink;
+    if((d.paymentDate||'') > b.paymentDate) b.paymentDate = d.paymentDate;
+  });
+  const batchList = Object.values(batches).sort((a,b)=>(b.paymentDate||'').localeCompare(a.paymentDate||''));
+  const batchPayTypeLabel = b => b.payTypes.size===0 ? '-' : (b.payTypes.size===1 ? payTypeLabel([...b.payTypes][0]) : 'หลายประเภท');
+
+  const totalNet = batchList.reduce((sum,b)=>sum+b.net,0);
+  const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const summary = `
+  <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+    <div class="stat-card s-finance"><div class="num">${batchList.length}</div><div class="lbl">Doc Payment ทั้งหมด</div></div>
+    <div class="stat-card s-approver"><div class="num">${docs.length}</div><div class="lbl">เอกสารที่จ่ายแล้ว</div></div>
+    <div class="stat-card s-complete"><div class="num" style="font-size:22px;">${money(totalNet)}</div><div class="lbl">ยอดจ่ายสุทธิรวม (บาท)</div></div>
+  </div>`;
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ค้นหาเลข Doc Payment</label><input type="text" placeholder="เช่น 6100001621" value="${s.docPayment}" oninput="setReportSearch('docPayment', this.value)"></div>
+    <div class="f-field"><label>ผู้ทำรายการ</label><input type="text" placeholder="ชื่อผู้จ่ายเงิน..." value="${s.by}" oninput="setReportSearch('by', this.value)"></div>
+    <div class="f-field"><label>จากวันที่</label><input type="date" value="${s.from}" onchange="setReportSearch('from', this.value)"></div>
+    <div class="f-field"><label>ถึงวันที่</label><input type="date" value="${s.to}" onchange="setReportSearch('to', this.value)"></div>
+    <button class="filter-clear" onclick="clearReportSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  const rows = batchList.length ? batchList.map(b=>`
+    <tr>
+      <td class="mono">${b.docPayment}</td>
+      <td>${companyName(b.companyCode)}</td>
+      <td>${b.count} รายการ</td>
+      <td>${batchPayTypeLabel(b)}</td>
+      <td>${money(b.vat)}</td>
+      <td>${money(b.wht)}</td>
+      <td>${money(b.base)}</td>
+      <td><b>${money(b.net)}</b></td>
+      <td>${b.paymentBy||'-'}</td>
+      <td>${b.paymentDate||'-'}</td>
+      <td style="white-space:nowrap;">
+        ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
+        <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
+      </td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
+
+  return `
+  ${companyHeader}
+  <div class="card">
+    <div class="eyebrow">Report</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin-top:4px;">รายงานการรวบจ่ายเงินทั้งหมด</h3>
+      <button class="btn btn-sm btn-outline" onclick="exportReportPaymentToExcel()">⬇ Export Excel</button>
+    </div>
+    <hr class="div">
+    ${summary}
+    ${filterBar}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function setReportCompany(v){ state.reportCompany = v; render(); }
+function setReportSearch(field, val){ state.reportSearch[field] = val; render(); }
+function clearReportSearch(){ state.reportSearch = {docPayment:'', by:'', from:'', to:''}; render(); }
+
+/* ---- Excel export (SheetJS) — shared by Payment Voucher and Report Payment ---- */
+function exportAoaToExcel(aoa, filename, sheetName){
+  if(typeof XLSX === 'undefined'){ showToast('โหลดไลบรารี Excel ไม่สำเร็จ ลองรีเฟรชหน้าเว็บแล้วลองใหม่'); return; }
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName || 'Sheet1');
+  XLSX.writeFile(wb, filename);
+}
+function openBatchEdit(docPayment){
+  state.paymentHistoryEditId = String(docPayment);
+  render();
+}
+function closeBatchEdit(){
+  state.paymentHistoryEditId = null;
+  render();
+}
+async function saveBatchEdit(e, oldDocPayment){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const newDocPayment = f.get('docPayment').trim();
+  const newLink = f.get('docPaymentLink').trim();
+  if(!newDocPayment){ showToast('กรุณาระบุเลข Doc Payment'); return; }
+  const docs = state.documents.filter(d=>String(d.docPayment)===String(oldDocPayment));
+  if(!docs.length){ showToast('ไม่พบเอกสารของ Doc Payment นี้'); return; }
+  showBusyOverlay('กำลังบันทึกการแก้ไข กรุณารอสักครู่...');
+  for(const doc of docs){
+    const patch = {
+      id: doc.id, docPayment: newDocPayment, docPaymentLink: newLink,
+      modifiedBy: fullName(state.user), modifiedDate: nowStr(),
+    };
+    const res = await apiCall('updateDocument', patch);
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่เอกสาร '+doc.id+' ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  }
+  hideBusyOverlay();
+  showToast('แก้ไข Doc Payment เรียบร้อย');
+  state.paymentHistoryEditId = null;
+  await refreshData();
+  render();
+}
+function exportPaymentListToExcel(){
+  let list = state.documents.filter(d=>d.status==='รอชำระเงิน');
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.paymentCompany!=='all') list = list.filter(d=>d.companyCode===state.paymentCompany);
+  const s = state.paymentSearch;
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(!list.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
+  const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Due','ผู้อนุมัติ','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
+  const rows = list.map(d=>{
+    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    return [
+      d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'', d.dueDate||'',
+      d.approverBy||'', d.vendor||'', d.vendorName||'', payTypeLabel(d.payType),
+      (vRec&&vRec.bankAccount)||'', (vRec&&vRec.bankName)||'',
+      parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
+    ];
+  });
+  exportAoaToExcel([header, ...rows], 'PaymentVoucher_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Payment Voucher');
+}
+function exportReportPaymentToExcel(){
+  let docs = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    docs = docs.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.reportCompany!=='all') docs = docs.filter(d=>d.companyCode===state.reportCompany);
+  const s = state.reportSearch;
+  if(s.docPayment && s.docPayment.trim()) docs = docs.filter(d=>String(d.docPayment).toLowerCase().includes(s.docPayment.trim().toLowerCase()));
+  if(s.by && s.by.trim()) docs = docs.filter(d=>(d.paymentBy||'').toLowerCase().includes(s.by.trim().toLowerCase()));
+  if(s.from){ const from = new Date(s.from); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt >= from; }); }
+  if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
+  if(!docs.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
+  // export at document level (one row per document) so payType/amounts are exact, not aggregated
+  const header = ['Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย'];
+  const rows = docs.map(d=>[
+    d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
+    payTypeLabel(d.payType), parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
+    d.paymentBy||'', d.paymentDate||'',
+  ]);
+  exportAoaToExcel([header, ...rows], 'ReportPayment_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Report Payment');
+}
+
+function openPaymentReport(docPayment){
+  const docs = state.documents.filter(d=>String(d.docPayment)===String(docPayment));
+  if(!docs.length){ showToast('ไม่พบเอกสารของ Doc Payment นี้'); return; }
+  const num = v => parseFloat(v)||0;
+  const totals = docs.reduce((t,d)=>({
+    vat:t.vat+num(d.vatAmount), wht:t.wht+num(d.whtAmount), base:t.base+num(d.baseAmount), net:t.net+num(d.netAmount)
+  }), {vat:0,wht:0,base:0,net:0});
+  const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const rows = docs.map(d=>{
+    const paidDate = parseThaiDateStr(d.paymentDate);
+    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    return `
+    <tr>
+      <td>${paidDate ? fmtDate(paidDate) : (d.paymentDate||'-')}</td>
+      <td>${d.id}</td>
+      <td>${d.docName||'-'}</td>
+      <td>${d.docSAP||'-'}</td>
+      <td>${d.vendor||'-'}</td>
+      <td>${d.vendorName||'-'}</td>
+      <td>${(vRec&&vRec.bankAccount)||'-'}</td>
+      <td>${(vRec&&vRec.bankName)||'-'}</td>
+      <td>${d.createdBy||'-'}</td>
+      <td style="text-align:right;">${money(num(d.vatAmount))}</td>
+      <td style="text-align:right;">${money(num(d.whtAmount))}</td>
+      <td style="text-align:right;">${money(num(d.baseAmount))}</td>
+      <td style="text-align:right;">${money(num(d.netAmount))}</td>
+    </tr>`;
+  }).join('');
+  const lastDoc = docs[docs.length-1] || {};
+  const companyCode = docs[0].companyCode || '';
+  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+    <title>Journal Voucher Report · ${docPayment}</title>
+    <style>
+      body{font-family:'Segoe UI',Arial,sans-serif;padding:32px;color:#1a1a1a;}
+      h1{font-size:20px;text-align:center;margin-bottom:24px;}
+      .meta{font-size:13px;margin-bottom:16px;}
+      .meta div{margin-bottom:4px;}
+      table{width:100%;border-collapse:collapse;font-size:13px;}
+      th,td{border-bottom:1px solid #333;padding:6px 8px;text-align:left;}
+      thead th{border-bottom:2px solid #000;}
+      tfoot td{border-top:2px solid #000;border-bottom:none;font-weight:700;text-align:right;}
+      .sign-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-top:60px;text-align:center;font-size:13px;}
+      .sign-line{border-top:1px solid #333;margin:40px 12px 6px;}
+      .no-print{margin-top:24px;text-align:center;}
+      @media print{ .no-print{display:none;} body{padding:8px;} }
+    </style></head><body>
+    <h1>Journal Voucher Report</h1>
+    <div class="meta">
+      <div>Company Code: <b>${companyCode}</b> — ${companyName(companyCode)}</div>
+      <div>Doc Payment: <b>${docPayment}</b>${lastDoc.docPaymentLink?` &nbsp;·&nbsp; <a href="${lastDoc.docPaymentLink}" target="_blank" rel="noopener">ไฟล์สลิป/หลักฐานการโอน ↗</a>`:''}</div>
+    </div>
+    <table>
+      <thead><tr><th>Payment Date</th><th>Web Doc Number</th><th>ชื่อเอกสาร</th><th>FI Doc Number</th><th>Vendor</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Requester Name</th><th style="text-align:right;">Vat Amount</th><th style="text-align:right;">WHT Amount</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Net Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="9"></td><td>${money(totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.base)}</td><td>${money(totals.net)}</td></tr></tfoot>
+    </table>
+    <div class="sign-grid">
+      <div>ต้นฉบับอยู่ฝ่ายบัญชี<div class="sign-line"></div>${(()=>{const dt=parseThaiDateStr(lastDoc.paymentDate);return dt?fmtDate(dt):(lastDoc.paymentDate||'-');})()}</div>
+      ${signBlock('ผู้จัดเตรียม', lastDoc.paymentBy, 'เจ้าหน้าที่การเงิน')}
+      ${blankSignBlock('ผู้ตรวจสอบ', 'หัวหน้าแผนก')}
+      ${blankSignBlock('ผู้อนุมัติ', 'ผู้จัดการฝ่ายบัญชีและการเงิน')}
+    </div>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
+  </body></html>`;
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+}
+
+/* ============================= ADMIN: MEMBERS ============================= */
+function adminMembersHTML(){
+  return `
+  <div class="card">
+    <div class="eyebrow">New Member</div>
+    <h3 style="margin-top:4px;">เพิ่มสมาชิกใหม่</h3>
+    <div class="helper">ลงทะเบียนผู้ใช้งานสำหรับเข้าสู่ระบบ — ข้อมูลจะถูกจัดเก็บไว้แทน Google Drive สิทธิ์เริ่มต้นคือ "User" ไปตั้งค่า Role เพิ่มเติมได้ที่เมนู กำหนดสิทธิ์การใช้งาน</div>
+    <hr class="div">
+    <form onsubmit="addMember(event)">
+      <div class="form-grid">
+        <div class="field">
+          <label>ชื่อ (English เท่านั้น)</label>
+          <input type="text" name="firstName" pattern="[A-Za-z]+" title="กรุณากรอกเป็นภาษาอังกฤษเท่านั้น" placeholder="เช่น John" required>
+        </div>
+        <div class="field">
+          <label>นามสกุล (English เท่านั้น)</label>
+          <input type="text" name="lastName" pattern="[A-Za-z]+" title="กรุณากรอกเป็นภาษาอังกฤษเท่านั้น" placeholder="เช่น Smith" required>
+        </div>
+        <div class="field"><label>ตำแหน่ง</label><input type="text" name="position" required></div>
+        <div class="field"><label>Email</label><input type="email" name="email" required></div>
+        <div class="field"><label>เบอร์โทร (ถ้ามี)</label><input type="text" name="phone"></div>
+      </div>
+      <div class="field hint" style="margin-top:-8px;">รหัสสมาชิก (ID) จะถูกสร้างอัตโนมัติจาก ชื่อ + อักษรตัวแรกของนามสกุล เช่น John Smith → JohnS หากซ้ำระบบจะเพิ่มอักษรถัดไปของนามสกุลให้อัตโนมัติ</div>
+      <button class="btn btn-primary" type="submit">เพิ่มสมาชิก</button>
+    </form>
+  </div>
+  ${memberDirectoryCardHTML()}`;
+}
+async function addMember(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const fn = f.get('firstName').trim();
+  const ln = f.get('lastName').trim();
+  if(!isEnglishOnly(fn) || !isEnglishOnly(ln)){ showToast('กรุณากรอกชื่อและนามสกุลเป็นภาษาอังกฤษเท่านั้น'); return; }
+  const position = f.get('position'), email = f.get('email'), phone = f.get('phone')||'';
+  const res = await apiCall('addMember', { firstName:fn, lastName:ln, position, email, phone });
+  if(!res.success){
+    if(res.error==='name_must_be_english') showToast('กรุณากรอกชื่อและนามสกุลเป็นภาษาอังกฤษเท่านั้น');
+    else showToast('เพิ่มสมาชิกไม่สำเร็จ ลองใหม่อีกครั้ง');
+    return;
+  }
+  state.members.push({
+    id: res.id, firstName: fn, lastName: ln, position, email, phone,
+    role:'User', companyCodes:[], hasPassword:false,
+    createdDate: new Date().toLocaleDateString('th-TH'),
+  });
+  showToast('เพิ่มสมาชิก '+fn+' เรียบร้อย · รหัสสมาชิก '+res.id+' — แจ้งให้เขาไปตั้งรหัสผ่านที่หน้า Login');
+  e.target.reset();
+  render();
+}
+
+/* ============================= ADMIN: PERMISSIONS ============================= */
+function adminPermissionsHTML(){
+  const s = state.permSearch;
+  let filteredMembers = state.members.slice();
+  if(s.name && s.name.trim()){
+    const q = s.name.trim().toLowerCase();
+    filteredMembers = filteredMembers.filter(m=>`${m.firstName} ${m.lastName}`.toLowerCase().includes(q));
+  }
+  if(s.email && s.email.trim()){
+    const q = s.email.trim().toLowerCase();
+    filteredMembers = filteredMembers.filter(m=>(m.email||'').toLowerCase().includes(q));
+  }
+  const rows = filteredMembers.map(m=>{
+    const editing = state.permEditId === m.id;
+    if(!editing){
+      return `
+      <tr>
+        <td>${m.firstName} ${m.lastName}</td>
+        <td>${m.email}</td>
+        <td><span class="role-tag">${ROLE_LABELS[m.role]}</span></td>
+        <td>${(m.companyCodes||[]).join(', ')||'-'}${(m.canTrack===true||m.canTrack==='TRUE')?' <span class="badge badge-forest" title="มีสิทธิ์ติ๊กรับเอกสาร Tracking Invoice" style="margin-left:6px;">Tracking</span>':''}</td>
+        <td><button class="btn btn-sm btn-outline" onclick="editPerm('${m.id}')">แก้ไขสิทธิ์</button></td>
+      </tr>`;
+    }
+    const roleOptions = ROLE_ORDER.map(r=>`<option value="${r}" ${m.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join('');
+    const companyChecks = state.companies.map(c=>`
+      <label class="chip-check"><input type="checkbox" name="companyCodes" value="${c.code}" ${(m.companyCodes||[]).includes(c.code)?'checked':''}> ${c.code}</label>`).join('');
+    const SIGNING_ROLES = ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','เจ้าหน้าที่การเงิน'];
+    const signatureField = SIGNING_ROLES.includes(m.role) ? `
+      <div class="field" style="min-width:200px;">
+        <label>ลายเซ็นสำหรับแนบใน PDF</label>
+        ${m.signatureImage ? `<img src="${m.signatureImage}" style="height:44px;border:1px solid var(--line);border-radius:6px;padding:4px;background:#fff;display:block;margin-bottom:6px;">` : '<div class="helper" style="margin:0 0 6px;">ยังไม่มีลายเซ็น</div>'}
+        <input type="file" accept="image/*" onchange="uploadMemberSignature(event,'${m.id}')">
+        ${m.signatureImage ? `<button type="button" class="btn btn-sm btn-outline" style="margin-top:6px;" onclick="removeMemberSignature('${m.id}')">ลบลายเซ็น</button>` : ''}
+      </div>` : '';
+    return `
+      <tr class="action-row">
+        <td colspan="5">
+          <form onsubmit="savePermission(event,'${m.id}')">
+            <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+              <div class="field" style="min-width:220px;">
+                <label>${m.firstName} ${m.lastName} — Role</label>
+                <select name="role">${roleOptions}</select>
+              </div>
+              <div class="field" style="flex:1;min-width:240px;">
+                <label>ผูกกับรหัสบริษัท</label>
+                <div>${companyChecks}</div>
+              </div>
+              <div class="field" style="min-width:220px;">
+                <label>Tracking Invoice</label>
+                <label class="chip-check" style="display:flex;align-items:center;gap:6px;font-weight:400;">
+                  <input type="checkbox" name="canTrack" ${(m.canTrack===true||m.canTrack==='TRUE')?'checked':''}> มอบสิทธิ์ให้ติ๊กรับเอกสาร (เฉพาะบริษัทที่ผูกไว้ด้านซ้าย)
+                </label>
+              </div>
+              ${signatureField}
+            </div>
+            <button class="btn btn-sm btn-approve" type="submit">บันทึกสิทธิ์</button>
+            <button class="btn btn-sm btn-outline" type="button" onclick="editPerm(null)">ยกเลิก</button>
+          </form>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const filterBar = `
+  <div class="filter-bar">
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหาชื่อ</label><input type="text" placeholder="ชื่อ-สกุล..." value="${s.name}" oninput="setPermSearch('name', this.value)"></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหา Email</label><input type="text" placeholder="อีเมล..." value="${s.email}" oninput="setPermSearch('email', this.value)"></div>
+    <button class="filter-clear" onclick="clearPermSearch()">ล้างตัวกรอง</button>
+  </div>`;
+
+  return `
+  <div class="card">
+    <div class="eyebrow">Access Control</div>
+    <h3 style="margin-top:4px;">กำหนดสิทธิ์การใช้งาน (${filteredMembers.length}${filteredMembers.length!==state.members.length?' จาก '+state.members.length:''})</h3>
+    <div class="helper">ผูก Role และรหัสบริษัทให้กับสมาชิกแต่ละคน เพื่อควบคุมสิทธิ์การเห็นและดำเนินการเอกสารตามบริษัท</div>
+    <hr class="div">
+    ${filterBar}
+    <table>
+      <thead><tr><th>ชื่อ-สกุล</th><th>Email</th><th>Role ปัจจุบัน</th><th>รหัสบริษัท</th><th></th></tr></thead>
+      <tbody>${rows || `<tr class="empty-row"><td colspan="5">ไม่พบสมาชิกที่ตรงกับตัวกรอง</td></tr>`}</tbody>
+    </table>
+  </div>`;
+}
+function setPermSearch(field, val){ state.permSearch[field] = val; render(); }
+function clearPermSearch(){ state.permSearch = {name:'', email:''}; render(); }
+function editPerm(id){ state.permEditId = id; render(); }
+async function savePermission(e, id){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const role = f.get('role');
+  const companyCodes = f.getAll('companyCodes');
+  const canTrack = f.get('canTrack') === 'on';
+  const res = await apiCall('savePermission', { id, role, companyCodes, canTrack });
+  if(!res.success){ showToast('บันทึกสิทธิ์ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const m = state.members.find(x=>x.id===id);
+  if(m){ m.role = role; m.companyCodes = companyCodes; m.canTrack = canTrack; }
+  state.permEditId = null;
+  showToast('บันทึกสิทธิ์ของ '+(m?m.firstName:'')+' เรียบร้อย');
+  render();
+}
+
+/* ---- Signature image upload (compressed client-side to keep the Sheet cell small) ---- */
+function uploadMemberSignature(e, id){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    const img = new Image();
+    img.onload = async function(){
+      const maxW = 300;
+      const scale = Math.min(1, maxW/img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width*scale));
+      canvas.height = Math.max(1, Math.round(img.height*scale));
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.75); // JPEG keeps the base64 small enough for a Sheets cell
+      const res = await apiCall('saveMemberSignature', { id, signatureImage: dataUrl });
+      if(!res.success){ showToast('บันทึกลายเซ็นไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+      const m = state.members.find(x=>x.id===id);
+      if(m) m.signatureImage = dataUrl;
+      showToast('บันทึกลายเซ็นเรียบร้อย');
+      render();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+async function removeMemberSignature(id){
+  const res = await apiCall('saveMemberSignature', { id, signatureImage: '' });
+  if(!res.success){ showToast('ลบลายเซ็นไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  const m = state.members.find(x=>x.id===id);
+  if(m) m.signatureImage = '';
+  showToast('ลบลายเซ็นแล้ว');
+  render();
+}
+
+/* ============================= ADMIN: SETTINGS ============================= */
+function adminSettingsHTML(){
+  const companyRows = state.companies.map(c=>`
+    <tr>
+      <td class="mono">${c.code}</td>
+      <td>${c.name}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deleteCompany('${c.code}')">ลบ</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="3">ยังไม่มีรหัสบริษัท</td></tr>`;
+
+  const typeRows = state.docTypes.map(t=>`
+    <tr>
+      <td><span class="badge badge-${t.color}">${t.label}</span></td>
+      <td class="mono">${t.key}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deleteDocType('${t.key}')">ลบ</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="3">ยังไม่มีประเภทเอกสาร</td></tr>`;
+
+  const reviewerOptions = state.members.filter(m=>m.role==='ผู้ตรวจสอบ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
+  const approverOptions = state.members.filter(m=>m.role==='ผู้อนุมัติ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
+  const mappingRows = state.approvalMappings.map(mp=>{
+    const reviewerName = state.members.find(m=>m.id===mp.reviewerId);
+    const approverName = state.members.find(m=>m.id===mp.approverId);
+    return `
+    <tr>
+      <td><span class="badge badge-${docTypeInfo(mp.docType).color}">${docTypeInfo(mp.docType).label}</span></td>
+      <td>${companyName(mp.companyCode)}</td>
+      <td>${reviewerName ? fullName(reviewerName) : '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>'}</td>
+      <td>${approverName ? fullName(approverName) : '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>'}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deleteApprovalMapping('${mp.id}')">ลบ</button></td>
+    </tr>`;
+  }).join('') || `<tr class="empty-row"><td colspan="5">ยังไม่มี Mapping — คู่ที่ไม่ได้กำหนดจะเปิดให้ role ที่ตรงกันดำเนินการได้ตามปกติ</td></tr>`;
+
+  return `
+  <div class="card">
+    <div class="eyebrow">Company Codes</div>
+    <h3 style="margin-top:4px;">รหัสบริษัท</h3>
+    <hr class="div">
+    <form onsubmit="addCompany(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>รหัส</label><input type="text" name="code" placeholder="เช่น 5050" required></div>
+      <div class="field" style="margin-bottom:0;flex:1;min-width:220px;"><label>ชื่อบริษัท</label><input type="text" name="name" placeholder="ชื่อบริษัท" required></div>
+      <button class="btn btn-primary" type="submit">เพิ่มรหัสบริษัท</button>
+    </form>
+    <table>
+      <thead><tr><th>รหัส</th><th>ชื่อบริษัท</th><th></th></tr></thead>
+      <tbody>${companyRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Document Types</div>
+    <h3 style="margin-top:4px;">ประเภทเอกสาร</h3>
+    <hr class="div">
+    <form onsubmit="addDocType(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>ชื่อประเภท</label><input type="text" name="label" placeholder="เช่น ใบลา" required></div>
+      <div class="field" style="margin-bottom:0;"><label>สี</label>
+        <select name="color"><option value="blue">น้ำเงิน</option><option value="purple">ม่วง</option><option value="orange">ส้ม</option><option value="pink">ชมพู</option><option value="gold">ทอง</option></select>
+      </div>
+      <button class="btn btn-primary" type="submit">เพิ่มประเภทเอกสาร</button>
+    </form>
+    <table>
+      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th></th></tr></thead>
+      <tbody>${typeRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Approval Mapping</div>
+    <h3 style="margin-top:4px;">มอบหมายผู้ตรวจสอบ / ผู้อนุมัติ ตามประเภทเอกสาร + บริษัท</h3>
+    <div class="helper">เมื่อกำหนดคู่นี้ไว้ เฉพาะบุคคลที่ mapping เท่านั้นที่จะดำเนินการ (อนุมัติ/ตีกลับ) เอกสารประเภท+บริษัทนั้นได้ — คู่ที่ยังไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ (Admin ทำได้เสมอไม่ว่าจะ mapping ไว้หรือไม่)</div>
+    <hr class="div">
+    <form onsubmit="saveApprovalMapping(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>ประเภทเอกสาร</label><select name="docType" required>${state.docTypes.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>บริษัท</label><select name="companyCode" required>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้ตรวจสอบ</label><select name="reviewerId"><option value="">— ไม่กำหนด —</option>${reviewerOptions}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติ</label><select name="approverId"><option value="">— ไม่กำหนด —</option>${approverOptions}</select></div>
+      <button class="btn btn-primary" type="submit">บันทึก Mapping</button>
+    </form>
+    <table>
+      <thead><tr><th>ประเภทเอกสาร</th><th>บริษัท</th><th>ผู้ตรวจสอบ</th><th>ผู้อนุมัติ</th><th></th></tr></thead>
+      <tbody>${mappingRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Dashboard Quick Links</div>
+    <h3 style="margin-top:4px;">ลิงก์ไอคอนด่วนบนหน้าแดชบอร์ด</h3>
+    <div class="helper">ลิงก์ที่ใช้กับไอคอน 4 ตัวในแถบ "Recent Activity" ของหน้าแดชบอร์ด — แก้ไขได้ที่นี่โดยไม่ต้องแก้โค้ด เผื่อลิงก์เปลี่ยนหรือถูกย้ายที่อยู่ในอนาคต</div>
+    <hr class="div">
+    <form onsubmit="saveQuickLinks(event)">
+      <div class="field"><label>📁 Folder (ประสานงานบัญชี/การเงิน)</label><input type="url" name="folderUrl" value="${getQuickLink('folderUrl')}" required></div>
+      <div class="field"><label>💳 Payment Slip</label><input type="url" name="paymentSlipUrl" value="${getQuickLink('paymentSlipUrl')}" required></div>
+      <div class="field"><label>🧾 ใบเสร็จรับเงิน</label><input type="url" name="receiptUrl" value="${getQuickLink('receiptUrl')}" required></div>
+      <div class="field"><label>📑 WHT (ใบภาษีหัก ณ ที่จ่าย)</label><input type="url" name="whtUrl" value="${getQuickLink('whtUrl')}" required></div>
+      <button class="btn btn-primary" type="submit">บันทึกลิงก์</button>
+    </form>
+  </div>`;
+}
+async function saveQuickLinks(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const entries = ['folderUrl','paymentSlipUrl','receiptUrl','whtUrl'].map(k=>[k, f.get(k).trim()]);
+  for(const [key, value] of entries){
+    const res = await apiCall('saveAppSetting', { key, value });
+    if(!res.success){ showToast('บันทึกลิงก์ไม่สำเร็จที่ '+key+' ลองใหม่อีกครั้ง'); return; }
+    state.appSettings[key] = value;
+  }
+  showToast('บันทึกลิงก์ Quick Links เรียบร้อย');
+  render();
+}
+
+/* ============================= ADMIN: VENDOR MASTER ============================= */
+function adminVendorsHTML(){
+  const rows = state.vendors.slice().sort((a,b)=>String(a.vendorCode||'').localeCompare(String(b.vendorCode||''))).map(v=>`
+    <tr>
+      <td class="mono">${v.vendorCode}</td>
+      <td>${v.vendorName||'-'}</td>
+      <td>${v.bankAccount||'-'}</td>
+      <td>${v.bankName||'-'}</td>
+      <td>${v.createdBy||'-'}</td>
+      <td>${v.createdDate||'-'}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deleteVendor('${v.vendorCode}')">ลบ</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="7">ยังไม่มี Vendor ในระบบ</td></tr>`;
+
+  return `
+  <div class="card">
+    <div class="eyebrow">Vendor Master</div>
+    <h3 style="margin-top:4px;">เพิ่ม Vendor</h3>
+    <div class="helper">ข้อมูล Vendor นี้ใช้ค้นหาตอนกรอก Vendor/Vendor Name ในหน้าอนุมัติเอกสาร (นักบัญชี/ผู้ตรวจสอบ) — พิมพ์ค้นหาได้ทั้งรหัสและชื่อ ถ้าเลือกจาก dropdown ชื่อ Vendor/เลขที่บัญชี/ธนาคารจะเติมให้อัตโนมัติ แต่ยังพิมพ์เองได้ถ้าไม่เจอใน master</div>
+    <hr class="div">
+    <form onsubmit="addVendor(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>Vendor Code</label><input type="text" name="vendorCode" placeholder="เช่น V0001" required></div>
+      <div class="field" style="margin-bottom:0;flex:1;min-width:200px;"><label>Vendor Name</label><input type="text" name="vendorName" placeholder="ชื่อ Vendor" required></div>
+      <div class="field" style="margin-bottom:0;"><label>เลขที่บัญชี (ถ้ามี)</label><input type="text" name="bankAccount" placeholder="เลขที่บัญชีธนาคาร"></div>
+      <div class="field" style="margin-bottom:0;"><label>ชื่อธนาคาร (ถ้ามี)</label><input type="text" name="bankName" placeholder="เช่น ธ.กสิกรไทย จำกัด (มหาชน) / ภูเขียว"></div>
+      <button class="btn btn-primary" type="submit">เพิ่ม Vendor</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Bulk Upload</div>
+    <h3 style="margin-top:4px;">อัปโหลดรายชื่อ Vendor เป็นชุด</h3>
+    <div class="helper">รองรับไฟล์ .xlsx หรือ .csv — ต้องมีคอลัมน์: Vendor (รหัส), Vendor Name, เลขที่บัญชี (ไม่บังคับ), ชื่อธนาคาร/bankName (ไม่บังคับ) — ถ้ารหัส Vendor ซ้ำกับที่มีอยู่แล้ว ระบบจะอัปเดตข้อมูลทับให้อัตโนมัติ ไม่สร้างซ้ำ</div>
+    <hr class="div">
+    <input type="file" id="vendor-upload-file" accept=".xlsx,.xls,.csv" onchange="uploadVendorFile(event)">
+    <div id="vendor-upload-status" style="margin-top:8px;font-size:12.5px;color:var(--ink-soft);"></div>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Vendor List</div>
+    <h3 style="margin-top:4px;">รายชื่อ Vendor ทั้งหมด (${state.vendors.length})</h3>
+    <hr class="div">
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Vendor Code</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+async function addVendor(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const vendorCode = f.get('vendorCode').trim();
+  const vendorName = f.get('vendorName').trim();
+  const bankAccount = f.get('bankAccount').trim();
+  const bankName = f.get('bankName').trim();
+  if(state.vendors.some(v=>String(v.vendorCode).toLowerCase()===vendorCode.toLowerCase())){
+    showToast('มีรหัส Vendor นี้อยู่แล้ว — บันทึกนี้จะอัปเดตข้อมูลเดิมทับ');
+  }
+  const res = await apiCall('saveVendor', { vendorCode, vendorName, bankAccount, bankName, createdBy: fullName(state.user) });
+  if(!res.success){ showToast('บันทึก Vendor ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('บันทึก Vendor เรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deleteVendor(vendorCode){
+  const res = await apiCall('deleteVendor', { vendorCode });
+  if(!res.success){ showToast('ลบ Vendor ไม่สำเร็จ'); return; }
+  showToast('ลบ Vendor แล้ว');
+  await refreshData();
+  render();
+}
+function uploadVendorFile(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('vendor-upload-status');
+  if(statusEl) statusEl.textContent = 'กำลังอ่านไฟล์...';
+  const reader = new FileReader();
+  reader.onload = async function(ev){
+    try{
+      if(typeof XLSX === 'undefined'){ if(statusEl) statusEl.textContent='โหลดไลบรารีอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'; return; }
+      const data = new Uint8Array(ev.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const aoa = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
+      if(!aoa.length){ if(statusEl) statusEl.textContent='ไฟล์ว่างเปล่า'; return; }
+      const header = aoa[0].map(h=>String(h).trim().toLowerCase());
+      const findCol = names => header.findIndex(h=>names.some(n=>h.includes(n)));
+      const codeIdx = findCol(['vendor code','vendor','รหัส']);
+      const nameIdx = findCol(['vendor name','ชื่อ']);
+      const bankIdx = findCol(['เลขที่บัญชี','bankaccount','account']);
+      const bankNameIdx = findCol(['bankname','ธนาคาร']);
+      if(codeIdx===-1 || nameIdx===-1){ if(statusEl) statusEl.textContent='ไม่พบคอลัมน์ Vendor / Vendor Name ในไฟล์ กรุณาตรวจสอบหัวคอลัมน์'; return; }
+      const rows = aoa.slice(1)
+        .filter(r=>r[codeIdx] && String(r[codeIdx]).trim())
+        .map(r=>({
+          vendorCode: String(r[codeIdx]).trim(),
+          vendorName: String(r[nameIdx]||'').trim(),
+          bankAccount: bankIdx!==-1 ? String(r[bankIdx]||'').trim() : '',
+          bankName: bankNameIdx!==-1 ? String(r[bankNameIdx]||'').trim() : '',
+        }));
+      if(!rows.length){ if(statusEl) statusEl.textContent='ไม่พบข้อมูล Vendor ในไฟล์'; return; }
+      showBusyOverlay('กำลังอัปโหลด Vendor Master ('+rows.length+' รายการ) กรุณารอสักครู่...');
+      const res = await apiCall('bulkUploadVendors', { rows, createdBy: fullName(state.user) });
+      hideBusyOverlay();
+      if(!res.success){ if(statusEl) statusEl.textContent='อัปโหลดไม่สำเร็จ ลองใหม่อีกครั้ง'; return; }
+      if(statusEl) statusEl.textContent = 'อัปโหลดสำเร็จ '+rows.length+' รายการ';
+      showToast('อัปโหลด Vendor Master เรียบร้อย ('+rows.length+' รายการ)');
+      e.target.value = '';
+      await refreshData();
+      render();
+    }catch(err){
+      if(statusEl) statusEl.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function addCompany(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const code = f.get('code').trim();
+  const name = f.get('name');
+  if(state.companies.some(c=>c.code===code)){ showToast('มีรหัสบริษัทนี้อยู่แล้ว'); return; }
+  const res = await apiCall('addCompany', { code, name });
+  if(!res.success){ showToast(res.error==='duplicate' ? 'มีรหัสบริษัทนี้อยู่แล้ว' : 'เพิ่มรหัสบริษัทไม่สำเร็จ'); return; }
+  showToast('เพิ่มรหัสบริษัท '+code+' เรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deleteCompany(code){
+  const res = await apiCall('deleteCompany', { code });
+  if(!res.success){ showToast('ลบรหัสบริษัทไม่สำเร็จ'); return; }
+  showToast('ลบรหัสบริษัท '+code+' แล้ว');
+  await refreshData();
+  render();
+}
+async function addDocType(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const label = f.get('label').trim();
+  const key = label.replace(/\s+/g,'_');
+  const color = f.get('color');
+  if(state.docTypes.some(t=>t.key===key)){ showToast('มีประเภทเอกสารนี้อยู่แล้ว'); return; }
+  const res = await apiCall('addDocType', { key, label, color });
+  if(!res.success){ showToast('เพิ่มประเภทเอกสารไม่สำเร็จ'); return; }
+  showToast('เพิ่มประเภทเอกสาร '+label+' เรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deleteDocType(key){
+  const res = await apiCall('deleteDocType', { key });
+  if(!res.success){ showToast('ลบประเภทเอกสารไม่สำเร็จ'); return; }
+  showToast('ลบประเภทเอกสารแล้ว');
+  await refreshData();
+  render();
+}
+async function saveApprovalMapping(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const docType = f.get('docType');
+  const companyCode = f.get('companyCode');
+  const reviewerId = f.get('reviewerId') || '';
+  const approverId = f.get('approverId') || '';
+  const res = await apiCall('saveApprovalMapping', { docType, companyCode, reviewerId, approverId });
+  if(!res.success){ showToast('บันทึก Mapping ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('บันทึก Mapping เรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deleteApprovalMapping(id){
+  const res = await apiCall('deleteApprovalMapping', { id });
+  if(!res.success){ showToast('ลบ Mapping ไม่สำเร็จ'); return; }
+  showToast('ลบ Mapping แล้ว');
+  await refreshData();
+  render();
+}
+
+/* ============================= INIT ============================= */
+loadAll();
+</script>
+</body>
+</html>
