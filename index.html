@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบอนุมัติเอกสาร | Document Flow</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+Thai:wght@500;600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap');
 
@@ -517,7 +518,7 @@ function showInfoModal(title, bodyHtml){
     el.style.cssText = 'position:fixed;inset:0;background:rgba(21,34,56,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;';
     document.body.appendChild(el);
   }
-  el.innerHTML = `<div style="background:#fff;padding:22px 26px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,0.25);max-width:600px;width:92%;max-height:80vh;overflow:auto;">
+  el.innerHTML = `<div style="background:#fff;padding:22px 26px;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,0.25);max-width:1200px;width:94vw;max-height:88vh;overflow:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h3 style="margin:0;font-size:15px;">${title}</h3>
       <button class="icon-btn" onclick="hideBusyOverlay()" title="ปิด">✕</button>
@@ -549,19 +550,18 @@ function viewSapLines(id){
     </table>`;
   showInfoModal('รายละเอียด SAP Docs ที่ถูก Split', body);
 }
+function existingSapLinesAsStaging(doc){
+  return parseSapLines(doc).map(l=>({
+    webDoc:'', fiDoc:l.fiDoc||'', vendor:l.vendor||'', vendorName:l.vendorName||'',
+    vat:l.vat||0, wht:l.wht||0, base:l.base||0, net:l.net||0, checked:true,
+  }));
+}
 function uploadSapDataForDoc(e, id){
   const file = e.target.files && e.target.files[0];
   if(!file) return;
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
   const statusEl = document.getElementById('sap-import-status-'+id);
-  const sapEl = document.getElementById('sap-'+id);
-  const targetSap = (sapEl && sapEl.value.trim()) || doc.docSAP || '';
-  if(!targetSap){
-    if(statusEl) statusEl.textContent = 'กรุณากรอก Document SAP ก่อนอัปโหลดไฟล์';
-    e.target.value = '';
-    return;
-  }
   if(statusEl) statusEl.textContent = 'กำลังอ่านไฟล์...';
   const reader = new FileReader();
   reader.onload = function(ev){
@@ -585,14 +585,16 @@ function uploadSapDataForDoc(e, id){
       const iAmount = colIdx('amount');
       const iNet = colIdx('net amount');
 
-      // only keep the rows in this file whose Web Doc Number matches THIS document's Document SAP
-      const matchingRows = aoa.slice(headerIdx+1).filter(r=>r[iWebDoc] && String(r[iWebDoc]).trim()===targetSap);
-      if(!matchingRows.length){
-        if(statusEl) statusEl.textContent = `ไม่พบข้อมูลที่ตรงกับ Document SAP "${targetSap}" ในไฟล์นี้`;
+      // no longer filtered by Web Doc Number match — show every row in the file, let the
+      // accountant tick which ones actually belong to this document
+      const dataRows = aoa.slice(headerIdx+1).filter(r=>r.some(c=>String(c).trim()!==''));
+      if(!dataRows.length){
+        if(statusEl) statusEl.textContent = 'ไม่พบข้อมูลในไฟล์';
         e.target.value = '';
         return;
       }
-      const lines = matchingRows.map(r=>({
+      const newLines = dataRows.map(r=>({
+        webDoc: iWebDoc!==-1 ? String(r[iWebDoc]||'').trim() : '',
         fiDoc: iFiDoc!==-1 ? String(r[iFiDoc]||'').trim() : '',
         vendor: iVendor!==-1 ? String(r[iVendor]||'').trim() : '',
         vendorName: iRequester!==-1 ? String(r[iRequester]||'').trim() : '',
@@ -600,21 +602,35 @@ function uploadSapDataForDoc(e, id){
         wht: iWht!==-1 ? (parseFloat(r[iWht])||0) : 0,
         base: iAmount!==-1 ? (parseFloat(String(r[iAmount]).replace(/,/g,''))||0) : 0,
         net: iNet!==-1 ? (parseFloat(String(r[iNet]).replace(/,/g,''))||0) : 0,
+        checked: false,
       }));
       e.target.value = '';
-      showSapImportPreview(id, targetSap, lines);
+      // seed with whatever was already saved for this document (ticked, removable) plus the newly-parsed rows
+      showSapImportPreview(id, existingSapLinesAsStaging(doc).concat(newLines));
     }catch(err){
       if(statusEl) statusEl.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message;
     }
   };
   reader.readAsArrayBuffer(file);
 }
-function showSapImportPreview(id, targetSap, lines){
-  state.pendingSapImport = { id, targetSap, lines };
+function openManualSapEntry(id){
+  const doc = state.documents.find(d=>d.id===id);
+  showSapImportPreview(id, doc ? existingSapLinesAsStaging(doc) : []);
+}
+function showSapImportPreview(id, lines){
+  state.pendingSapImport = { id, lines };
+  renderSapImportModal();
+}
+function renderSapImportModal(){
+  const pending = state.pendingSapImport;
+  if(!pending) return;
+  const { id, lines } = pending;
   const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const rows = lines.map((l,i)=>`
     <tr>
-      <td style="text-align:center;"><input type="checkbox" id="sap-import-chk-${i}" checked></td>
+      <td style="text-align:center;"><input type="checkbox" id="sap-import-chk-${i}" ${l.checked?'checked':''} onchange="setSapImportChecked(${i},this.checked)"></td>
+      <td class="mono">${id}-${i+1}</td>
+      <td>${l.webDoc||'-'}</td>
       <td>${l.fiDoc||'-'}</td>
       <td>${l.vendor||'-'}</td>
       <td>${l.vendorName||'-'}</td>
@@ -622,12 +638,18 @@ function showSapImportPreview(id, targetSap, lines){
       <td style="text-align:right;">${money(l.wht)}</td>
       <td style="text-align:right;">${money(l.base)}</td>
       <td style="text-align:right;">${money(l.net)}</td>
-    </tr>`).join('');
+      <td style="text-align:center;"><button class="icon-btn" title="ลบแถวนี้" onclick="removeSapImportLine(${i})">✕</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="11">ยังไม่มีรายการ — อัปโหลดไฟล์หรือเพิ่มแถวเองด้านล่าง</td></tr>`;
+
+  const vendorOptions = state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('');
   const body = `
-    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">พบข้อมูลที่ตรงกับ Document SAP "<b>${targetSap}</b>" ทั้งหมด ${lines.length} รายการ — ติ๊กเลือกรายการที่ต้องการนำเข้าเข้าเอกสาร ${id}</div>
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">รายการทั้งหมด ${lines.length} รายการ (รวมรายการที่เคยบันทึกไว้แล้ว ถ้ามี) — ติ๊กเลือกเฉพาะแถวที่ต้องการเก็บไว้เป็น SAP Line ของเอกสาร <b>${id}</b> ถอดติ๊กหรือกด ✕ เพื่อลบรายการที่ไม่ต้องการออก แล้วกดยืนยันเพื่อบันทึกทับของเดิม (Sub ID จะเรียงใหม่เป็น ${id}-1, ${id}-2 ...)</div>
+    <div class="table-scroll" style="max-height:420px;overflow:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr>
-        <th style="text-align:center;border-bottom:1px solid var(--line);padding:6px;"><input type="checkbox" checked onchange="toggleAllSapImportChecks(this.checked,${lines.length})"></th>
+        <th style="text-align:center;border-bottom:1px solid var(--line);padding:6px;"><input type="checkbox" ${lines.length && lines.every(l=>l.checked)?'checked':''} onchange="toggleAllSapImportChecks(this.checked)"></th>
+        <th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Sub ID</th>
+        <th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Web Doc Number</th>
         <th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">FI Doc Number</th>
         <th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor</th>
         <th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor Name</th>
@@ -635,20 +657,72 @@ function showSapImportPreview(id, targetSap, lines){
         <th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">WHT</th>
         <th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Base</th>
         <th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Net</th>
+        <th style="border-bottom:1px solid var(--line);padding:6px;"></th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    </div>
+
+    <div style="margin-top:16px;padding:12px;background:var(--paper);border-radius:8px;">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:8px;">+ เพิ่มแถวเอง (ไม่ต้องมีไฟล์ก็ได้)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="sap-wrap"><label>FI Doc Number</label><input id="manual-fidoc" type="text" class="sap-input" style="width:120px;" placeholder="เลขที่ FI Doc"></div>
+        <div class="sap-wrap">
+          <label>Vendor</label>
+          <input id="manual-vendor" type="text" class="sap-input" style="width:160px;" list="manual-vendor-dl" placeholder="ค้นหารหัส/ชื่อ" oninput="onManualVendorInput()">
+          <datalist id="manual-vendor-dl">${vendorOptions}</datalist>
+        </div>
+        <div class="sap-wrap"><label>Vendor Name</label><input id="manual-vendorname" type="text" class="sap-input" style="width:160px;" placeholder="ชื่อ Vendor"></div>
+        <div class="sap-wrap"><label>VAT</label><input id="manual-vat" type="number" step="0.01" class="sap-input" style="width:90px;" placeholder="0.00"></div>
+        <div class="sap-wrap"><label>WHT</label><input id="manual-wht" type="number" step="0.01" class="sap-input" style="width:90px;" placeholder="0.00"></div>
+        <div class="sap-wrap"><label>Base</label><input id="manual-base" type="number" step="0.01" class="sap-input" style="width:90px;" placeholder="0.00"></div>
+        <div class="sap-wrap"><label>Net</label><input id="manual-net" type="number" step="0.01" class="sap-input" style="width:90px;" placeholder="0.00"></div>
+        <button class="btn btn-sm btn-outline" onclick="addManualSapLine()">+ เพิ่มแถว</button>
+      </div>
+    </div>
+
     <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn btn-sm btn-outline" onclick="cancelSapImport()">ยกเลิก</button>
       <button class="btn btn-sm btn-approve" onclick="confirmSapImport()">✓ ยืนยันนำเข้ารายการที่ติ๊กไว้</button>
     </div>`;
   showInfoModal('ตรวจสอบข้อมูล SAP ก่อนนำเข้า', body);
 }
-function toggleAllSapImportChecks(checked, count){
-  for(let i=0;i<count;i++){
-    const el = document.getElementById('sap-import-chk-'+i);
-    if(el) el.checked = checked;
+function setSapImportChecked(i, checked){
+  if(!state.pendingSapImport) return;
+  state.pendingSapImport.lines[i].checked = checked;
+}
+function toggleAllSapImportChecks(checked){
+  if(!state.pendingSapImport) return;
+  state.pendingSapImport.lines.forEach(l=>{ l.checked = checked; });
+  renderSapImportModal();
+}
+function removeSapImportLine(i){
+  if(!state.pendingSapImport) return;
+  state.pendingSapImport.lines.splice(i,1);
+  renderSapImportModal();
+}
+function onManualVendorInput(){
+  const el = document.getElementById('manual-vendor');
+  if(!el) return;
+  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  if(match){
+    el.value = match.vendorCode;
+    const nameEl = document.getElementById('manual-vendorname');
+    if(nameEl) nameEl.value = match.vendorName;
   }
+}
+function addManualSapLine(){
+  if(!state.pendingSapImport) return;
+  const fiDoc = (document.getElementById('manual-fidoc')||{}).value || '';
+  const vendor = (document.getElementById('manual-vendor')||{}).value || '';
+  const vendorName = (document.getElementById('manual-vendorname')||{}).value || '';
+  const vat = parseFloat((document.getElementById('manual-vat')||{}).value) || 0;
+  const wht = parseFloat((document.getElementById('manual-wht')||{}).value) || 0;
+  const base = parseFloat((document.getElementById('manual-base')||{}).value) || 0;
+  const net = parseFloat((document.getElementById('manual-net')||{}).value) || 0;
+  if(!fiDoc.trim() && !vendor.trim() && !net){ showToast('กรุณากรอกอย่างน้อย FI Doc Number หรือยอดเงิน'); return; }
+  state.pendingSapImport.lines.push({ webDoc:'', fiDoc:fiDoc.trim(), vendor:vendor.trim(), vendorName:vendorName.trim(), vat, wht, base, net, checked:true });
+  renderSapImportModal();
 }
 function cancelSapImport(){
   state.pendingSapImport = null;
@@ -657,15 +731,16 @@ function cancelSapImport(){
 async function confirmSapImport(){
   const pending = state.pendingSapImport;
   if(!pending) return;
-  const { id, targetSap, lines } = pending;
-  const selected = lines.filter((l,i)=>{ const el = document.getElementById('sap-import-chk-'+i); return el ? el.checked : true; });
+  const { id, lines } = pending;
+  const selected = lines.filter(l=>l.checked);
   if(!selected.length){ showToast('กรุณาติ๊กเลือกอย่างน้อย 1 รายการ'); return; }
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
   const statusEl = document.getElementById('sap-import-status-'+id);
-  const sums = selected.reduce((t,l)=>({vat:t.vat+l.vat, wht:t.wht+l.wht, base:t.base+l.base, net:t.net+l.net}), {vat:0,wht:0,base:0,net:0});
+  const finalLines = selected.map((l,i)=>({ subId: id+'-'+(i+1), fiDoc:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
+  const sums = finalLines.reduce((t,l)=>({vat:t.vat+l.vat, wht:t.wht+l.wht, base:t.base+l.base, net:t.net+l.net}), {vat:0,wht:0,base:0,net:0});
   const patch = {
-    id, docSAP: targetSap, sapLines: JSON.stringify(selected),
+    id, sapLines: JSON.stringify(finalLines),
     vatAmount: sums.vat.toFixed(2), whtAmount: sums.wht.toFixed(2), baseAmount: sums.base.toFixed(2), netAmount: sums.net.toFixed(2),
     modifiedBy: fullName(state.user), modifiedDate: nowStr(),
   };
@@ -1668,9 +1743,34 @@ function approvalHTML(){
       const actionBtn = canAct
         ? `<button class="btn btn-sm btn-action" onclick="toggleRow('${d.id}')">${expanded?'ปิด':'ดำเนินการ'}</button>`
         : `<span style="font-size:11.5px;color:var(--ink-soft);" title="เอกสารประเภท+บริษัทนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${assignedActorName(d)||'-'}</span>`;
+      const sapSubRows = (function(){
+        const lines = parseSapLines(d);
+        if(lines.length<=1) return '';
+        return lines.map((l,i)=>{
+          const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+          const subId = l.subId || (d.id+'-'+(i+1));
+          return `
+        <tr style="background:var(--paper);font-size:12px;">
+          <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
+          <td style="color:var(--ink-soft);">SAP Line</td>
+          <td>${l.vendorName||'-'}</td>
+          <td class="sap-cell">${l.fiDoc||'-'}</td>
+          <td></td>
+          <td></td>
+          <td>${l.vendor||'-'}</td>
+          <td></td>
+          <td style="text-align:right;">${money(l.vat)}</td>
+          <td style="text-align:right;">${money(l.wht)}</td>
+          <td style="text-align:right;">${money(l.base)}</td>
+          <td style="text-align:right;"><b>${money(l.net)}</b></td>
+          <td></td>
+          <td></td>
+        </tr>`;
+        }).join('');
+      })();
       const mainRow = `
         <tr>
-          <td class="mono">${d.id}</td>
+          <td class="mono" style="font-weight:700;color:var(--navy);font-size:13.5px;">${d.id}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span>${(d.skipApprover==='TRUE'||d.skipApprover===true)?'<span title="ข้ามขั้นผู้อนุมัติ" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">⤳หัวหน้าแผนก</span>':''}${(d.skipFinance==='TRUE'||d.skipFinance===true)?'<span title="ไม่ส่งการเงิน" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">🚫การเงิน</span>':''}</td>
           <td>${d.docName}${d.comment?`<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px;">${d.comment}</div>`:''}</td>
           <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
@@ -1732,12 +1832,15 @@ function approvalHTML(){
       if(expanded && !isRejectedItem && canAct){
         const sapField = state.approvalTab==='accountant' ? `
           <div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:6px;">ข้อมูลเอกสาร SAP</div>
-          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;">
-            <div class="sap-wrap"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}"></div>
-            <div class="sap-wrap">
-              <label>นำเข้าไฟล์ SAP (Excel) สำหรับ ID นี้</label>
-              <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')">
-              <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:3px;"></div>
+          <div style="width:100%;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:4px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+            <div class="sap-wrap" style="width:200px;"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}" style="width:100%;"></div>
+            <div style="flex:1;min-width:280px;">
+              <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
+                <button type="button" class="btn btn-sm btn-outline" onclick="openManualSapEntry('${d.id}')" style="white-space:nowrap;">+ เพิ่มเอง</button>
+              </div>
+              <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
             </div>
           </div>` : '';
         actionRow = `
@@ -1762,12 +1865,15 @@ function approvalHTML(){
         const reasonText = reasonCfg ? (d[reasonCfg.field] || 'ไม่ได้ระบุเหตุผล') : '';
         const sapField = state.approvalTab==='accountant' ? `
           <div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:6px;">ข้อมูลเอกสาร SAP</div>
-          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;">
-            <div class="sap-wrap"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}"></div>
-            <div class="sap-wrap">
-              <label>นำเข้าไฟล์ SAP (Excel) สำหรับ ID นี้</label>
-              <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')">
-              <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:3px;"></div>
+          <div style="width:100%;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:4px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+            <div class="sap-wrap" style="width:200px;"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}" style="width:100%;"></div>
+            <div style="flex:1;min-width:280px;">
+              <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
+                <button type="button" class="btn btn-sm btn-outline" onclick="openManualSapEntry('${d.id}')" style="white-space:nowrap;">+ เพิ่มเอง</button>
+              </div>
+              <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
             </div>
           </div>` : '';
         actionRow = `
@@ -1791,7 +1897,7 @@ function approvalHTML(){
           </td>
         </tr>`;
       }
-      return mainRow + actionRow;
+      return mainRow + sapSubRows + actionRow;
     }).join('');
     return header + rows;
   }).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
@@ -2295,13 +2401,33 @@ function voucherReportHTML(){
     const header = `<tr class="group-header"><td colspan="12">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
       const checked = state.voucherReportSelected.includes(d.id);
+      const lines = parseSapLines(d);
+      const subRows = lines.length>1 ? lines.map((l,i)=>{
+        const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const subId = l.subId || (d.id+'-'+(i+1));
+        return `
+        <tr style="background:var(--paper);font-size:12px;">
+          <td></td>
+          <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
+          <td style="color:var(--ink-soft);">SAP Line</td>
+          <td>${l.vendorName||'-'}</td>
+          <td class="sap-cell">${l.fiDoc||'-'}</td>
+          <td>${l.vendor||'-'}</td>
+          <td>${l.vendorName||'-'}</td>
+          <td></td>
+          <td style="text-align:right;">${money(l.vat)}</td>
+          <td style="text-align:right;">${money(l.wht)}</td>
+          <td style="text-align:right;">${money(l.base)}</td>
+          <td style="text-align:right;"><b>${money(l.net)}</b></td>
+        </tr>`;
+      }).join('') : '';
       return `
         <tr>
           <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleVoucherReportSelect('${d.id}')"></td>
           <td class="mono">${d.id}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
-          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length}</span>` : ''; })()}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${d.approverBy||'-'}</td>
@@ -2309,7 +2435,7 @@ function voucherReportHTML(){
           <td style="text-align:right;">${moneyText(d.whtAmount)}</td>
           <td style="text-align:right;">${moneyText(d.baseAmount)}</td>
           <td style="text-align:right;"><b>${moneyText(d.netAmount)}</b></td>
-        </tr>`;
+        </tr>${subRows}`;
     }).join('');
     return header+rows;
   }).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบเอกสาร</td></tr>`;
@@ -2370,19 +2496,154 @@ function toggleSelectAllVoucherReport(checked){
   state.voucherReportSelected = checked ? list.map(d=>d.id) : [];
   render();
 }
-function exportVoucherReportToExcel(){
+async function exportVoucherReportToExcel(){
   const docs = state.documents.filter(d=>state.voucherReportSelected.includes(d.id));
   if(!docs.length){ showToast('กรุณาเลือกเอกสารก่อน'); return; }
-  const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','SAP','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
-  const rows = docs.map(d=>{
-    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
-    return [
-      d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'', d.vendor||'', d.vendorName||'',
-      payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'', (vRec&&vRec.bankName)||'',
-      parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
-    ];
+  if(typeof ExcelJS === 'undefined'){ showToast('โหลดไลบรารี Excel ไม่สำเร็จ ลองรีเฟรชหน้าเว็บแล้วลองใหม่'); return; }
+
+  // flatten by SAP line, same logic as the printed PDF summary
+  const lineRows = [];
+  docs.forEach(d=>{
+    const lines = parseSapLines(d);
+    if(lines.length>1){
+      lines.forEach(l=>{
+        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
+      });
+    } else {
+      const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+      lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'-', d.vendor||'-', d.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0]);
+    }
   });
-  exportAoaToExcel([header, ...rows], 'ใบสำคัญจ่าย_'+new Date().toISOString().slice(0,10)+'.xlsx', 'ใบสำคัญจ่าย');
+  const totals = lineRows.reduce((t,r)=>({vat:t.vat+r[9], wht:t.wht+r[10], base:t.base+r[11], net:t.net+r[12]}), {vat:0,wht:0,base:0,net:0});
+
+  const companyCode = docs[0].companyCode || '';
+  const title = state.voucherReportTitle.trim();
+  const COLS = 13;
+  const thin = {style:'thin', color:{argb:'FFB9B2A0'}};
+  const border = {top:thin, left:thin, bottom:thin, right:thin};
+  const navy = 'FF152238';
+  const paper = 'FFFBF8F1';
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('ใบสำคัญจ่าย');
+  ws.columns = [
+    {width:8},{width:14},{width:30},{width:16},{width:12},{width:20},{width:12},{width:14},{width:20},{width:10},{width:10},{width:12},{width:12}
+  ];
+
+  let r = 1;
+  ws.mergeCells(r,1,r,COLS);
+  ws.getCell(r,1).value = 'ใบสรุปใบสำคัญจ่าย';
+  ws.getCell(r,1).font = {bold:true, size:16, name:'Tahoma'};
+  ws.getCell(r,1).alignment = {horizontal:'center'};
+  r += 2;
+
+  ws.getCell(r,1).value = `Company Code: ${companyCode} — ${companyName(companyCode)}`;
+  ws.getCell(r,1).font = {bold:true, size:11, name:'Tahoma'};
+  ws.mergeCells(r,1,r,COLS);
+  r++;
+  if(title){
+    ws.getCell(r,1).value = `อ้างอิง: ${title}`;
+    ws.getCell(r,1).font = {size:11, name:'Tahoma'};
+    ws.mergeCells(r,1,r,COLS);
+    r++;
+  }
+  ws.getCell(r,1).value = `จำนวนเอกสาร: ${docs.length} รายการ · ออกโดย: ${fullName(state.user)} · วันที่ออกรายงาน: ${fmtDate(new Date())}`;
+  ws.getCell(r,1).font = {size:11, name:'Tahoma'};
+  ws.mergeCells(r,1,r,COLS);
+  r += 2;
+
+  const headerRowIdx = r;
+  const headers = ['ID','ประเภท','ชื่อเอกสาร','SAP','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
+  headers.forEach((h,i)=>{
+    const cell = ws.getCell(headerRowIdx, i+1);
+    cell.value = h;
+    cell.font = {bold:true, color:{argb:'FFFFFFFF'}, name:'Tahoma', size:10.5};
+    cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:navy}};
+    cell.border = border;
+    cell.alignment = {vertical:'middle', horizontal: i>=9 ? 'right' : 'left'};
+  });
+  r++;
+
+  const moneyFmt = '#,##0.00';
+  lineRows.forEach((row, idx)=>{
+    row.forEach((val,i)=>{
+      const cell = ws.getCell(r, i+1);
+      cell.value = val;
+      cell.border = border;
+      cell.font = {name:'Tahoma', size:10.5};
+      if(i>=9){ cell.numFmt = moneyFmt; cell.alignment = {horizontal:'right'}; }
+      if(idx % 2 === 1) cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:paper}};
+    });
+    r++;
+  });
+
+  // totals row
+  ws.mergeCells(r,1,r,9);
+  const totalLabelCell = ws.getCell(r,1);
+  totalLabelCell.value = 'รวม';
+  totalLabelCell.font = {bold:true, name:'Tahoma', size:10.5};
+  totalLabelCell.alignment = {horizontal:'right'};
+  [totals.vat, totals.wht, totals.base, totals.net].forEach((v,i)=>{
+    const cell = ws.getCell(r, 10+i);
+    cell.value = v;
+    cell.numFmt = moneyFmt;
+    cell.font = {bold:true, name:'Tahoma', size:10.5};
+    cell.alignment = {horizontal:'right'};
+  });
+  for(let c=1;c<=COLS;c++){ ws.getCell(r,c).border = {top:{style:'double', color:{argb:'FF152238'}}}; }
+  r += 3;
+
+  // signature blocks (4 columns of roughly equal width, matching the printed PDF report)
+  const blocks = [
+    {cols:[1,4], label:'ต้นฉบับอยู่ฝ่ายบัญชี', name:'', role:'', dateLine:true},
+    {cols:[5,7], label:'ผู้จัดเตรียม', name: docs[docs.length-1].accountantBy||'', role:'นักบัญชี'},
+    {cols:[8,10], label:'ผู้ตรวจสอบ', name: docs[docs.length-1].reviewerBy||'', role:'ผู้ตรวจสอบ'},
+    {cols:[11,13], label:'ผู้อนุมัติ', name: docs[docs.length-1].approverBy||'', role:'ผู้อนุมัติ'},
+  ];
+  const labelRow = r;
+  blocks.forEach(b=>{
+    ws.mergeCells(labelRow,b.cols[0],labelRow,b.cols[1]);
+    const cell = ws.getCell(labelRow,b.cols[0]);
+    cell.value = b.label;
+    cell.font = {name:'Tahoma', size:10.5};
+    cell.alignment = {horizontal:'center'};
+  });
+  r += 3;
+  const lineRow = r;
+  blocks.forEach(b=>{
+    for(let c=b.cols[0]; c<=b.cols[1]; c++){ ws.getCell(lineRow,c).border = {top:{style:'thin', color:{argb:'FF333333'}}}; }
+  });
+  r++;
+  const nameRow = r;
+  blocks.forEach(b=>{
+    ws.mergeCells(nameRow,b.cols[0],nameRow,b.cols[1]);
+    const cell = ws.getCell(nameRow,b.cols[0]);
+    cell.value = b.dateLine ? fmtDate(new Date()) : (b.name||'-');
+    cell.font = {name:'Tahoma', size:10.5};
+    cell.alignment = {horizontal:'center'};
+  });
+  if(blocks.some(b=>b.role)){
+    r++;
+    const roleRow = r;
+    blocks.forEach(b=>{
+      if(!b.role) return;
+      ws.mergeCells(roleRow,b.cols[0],roleRow,b.cols[1]);
+      const cell = ws.getCell(roleRow,b.cols[0]);
+      cell.value = b.role;
+      cell.font = {name:'Tahoma', size:9.5, color:{argb:'FF726C5E'}};
+      cell.alignment = {horizontal:'center'};
+    });
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {type:'application/octet-stream'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ใบสำคัญจ่าย_'+new Date().toISOString().slice(0,10)+'.xlsx';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 function generateVoucherSummary(){
   const docs = state.documents.filter(d=>state.voucherReportSelected.includes(d.id));
