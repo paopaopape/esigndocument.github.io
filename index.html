@@ -2325,6 +2325,7 @@ function voucherReportHTML(){
       <input id="voucher-title" type="text" placeholder="เช่น รอบตรวจสอบ 21-31 ก.ค. 2569" value="${state.voucherReportTitle}" oninput="setVoucherReportTitle(this.value)" ${noCompanyPicked?'disabled':''}>
     </div>
     <button class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.voucherReportSelected.length) ? '' : 'disabled'} onclick="generateVoucherSummary()">📄 ออกใบสรุป</button>
+    <button class="btn btn-sm btn-outline" ${(!noCompanyPicked && state.voucherReportSelected.length) ? '' : 'disabled'} onclick="exportVoucherReportToExcel()">↓ Export Excel</button>
   </div>`;
 
   return `
@@ -2368,6 +2369,20 @@ function toggleSelectAllVoucherReport(checked){
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   state.voucherReportSelected = checked ? list.map(d=>d.id) : [];
   render();
+}
+function exportVoucherReportToExcel(){
+  const docs = state.documents.filter(d=>state.voucherReportSelected.includes(d.id));
+  if(!docs.length){ showToast('กรุณาเลือกเอกสารก่อน'); return; }
+  const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','SAP','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
+  const rows = docs.map(d=>{
+    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    return [
+      d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'', d.vendor||'', d.vendorName||'',
+      payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'', (vRec&&vRec.bankName)||'',
+      parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
+    ];
+  });
+  exportAoaToExcel([header, ...rows], 'ใบสำคัญจ่าย_'+new Date().toISOString().slice(0,10)+'.xlsx', 'ใบสำคัญจ่าย');
 }
 function generateVoucherSummary(){
   const docs = state.documents.filter(d=>state.voucherReportSelected.includes(d.id));
