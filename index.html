@@ -430,7 +430,7 @@ async function refreshData(){
       if(d.docPayment===undefined) d.docPayment='';
       if(d.skipApprover===undefined) d.skipApprover='';
       if(d.skipFinance===undefined) d.skipFinance='';
-      if(d.payType===undefined) d.payType='';
+      if(d.payType===undefined || d.payType===null) d.payType=''; else d.payType=String(d.payType);
       if(d.cancelledBy===undefined) d.cancelledBy='';
       if(d.cancelledDate===undefined) d.cancelledDate='';
       if(d.cancelNote===undefined) d.cancelNote='';
@@ -1706,7 +1706,7 @@ function approvalHTML(){
             <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="vendorName-${d.id}" type="text" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" value="${d.vendorName||''}" style="width:220px;"></div>
             <span id="vendor-bank-${d.id}" style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">${vendorBankInfoText(d.vendor)}</span>
           </div>
-          ${sectionLabel('ประเภทการจ่าย')}
+          ${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
           <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
             <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
               <input type="radio" name="payType-${d.id}" value="1" ${d.payType==='1'?'checked':''}> 1 = Direct
@@ -1854,7 +1854,7 @@ async function saveApprovalDocEdit(e, id){
 function openApprovalReport(id){
   const d = state.documents.find(x=>x.id===id);
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
-  const fmt = str => { const dt = parseThaiDateStr(str); return dt ? fmtDate(dt) : (str||'-'); };
+  const fmt = str => { if(!str) return '-'; const dt = parseThaiDateStr(str); return fmtDate(dt || str); };
   const num = v => parseFloat(v)||0;
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const trailRows = [
@@ -1981,7 +1981,9 @@ async function processStage(id, decision){
     patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
   }
 
+  showBusyOverlay(decision==='approve' ? 'กำลังบันทึกการอนุมัติ กรุณารอสักครู่...' : 'กำลังบันทึกการตีกลับ กรุณารอสักครู่...');
   const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast(decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
@@ -2025,7 +2027,9 @@ async function resubmitFromStage(id){
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
   if(payTypeEl) patch.payType = payTypeEl.value;
+  showBusyOverlay('กำลังบันทึกการ Resubmit กรุณารอสักครู่...');
   const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งเอกสารกลับเข้าสู่การอนุมัติเรียบร้อย · '+id);
@@ -2038,7 +2042,9 @@ async function forwardToSubmitter(id){
   const noteEl = document.getElementById('note-'+id);
   const patch = { id, status:'ตีกลับแก้ไข(นักบัญชี)', modifiedBy: fullName(state.user), modifiedDate: nowStr() };
   if(noteEl && noteEl.value.trim()) patch.accountantNote = noteEl.value.trim();
+  showBusyOverlay('กำลังส่งกลับให้ผู้วางบิลแก้ไข กรุณารอสักครู่...');
   const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งกลับให้ผู้วางบิลแก้ไขแล้ว · '+id);
@@ -2058,7 +2064,9 @@ async function cancelDoc(id){
     cancelledBy: fullName(state.user), cancelledDate: nowStr(), cancelNote: note,
     modifiedBy: fullName(state.user), modifiedDate: nowStr(),
   };
+  showBusyOverlay('กำลังยกเลิกเอกสาร กรุณารอสักครู่...');
   const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
   if(!res.success){ showToast('ยกเลิกเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ยกเลิกเอกสาร '+id+' เรียบร้อย');
