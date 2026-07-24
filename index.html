@@ -440,6 +440,7 @@ async function refreshData(){
       if(d.vendorName===undefined) d.vendorName='';
       if(d.taxCode===undefined) d.taxCode='';
       if(d.sapLines===undefined) d.sapLines='';
+      if(d.webDocNo===undefined) d.webDocNo='';
       if(d.trackClerkBy===undefined) d.trackClerkBy='';
       if(d.trackClerkDate===undefined) d.trackClerkDate='';
       if(d.trackAcct1By===undefined) d.trackAcct1By='';
@@ -1834,6 +1835,7 @@ function approvalHTML(){
           <div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:6px;">ข้อมูลเอกสาร SAP</div>
           <div style="width:100%;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:4px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
             <div class="sap-wrap" style="width:200px;"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}" style="width:100%;"></div>
+            <div class="sap-wrap" style="width:220px;"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="webDocNo-${d.id}" type="text" placeholder="เช่น EXP1160260211R0012" value="${d.webDocNo||''}" style="width:100%;"></div>
             <div style="flex:1;min-width:280px;">
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -1867,6 +1869,7 @@ function approvalHTML(){
           <div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:6px;">ข้อมูลเอกสาร SAP</div>
           <div style="width:100%;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:4px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
             <div class="sap-wrap" style="width:200px;"><label>Document SAP</label><input class="sap-input" id="sap-${d.id}" type="text" placeholder="ระบุเลขที่ SAP" value="${d.docSAP||''}" style="width:100%;"></div>
+            <div class="sap-wrap" style="width:220px;"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="webDocNo-${d.id}" type="text" placeholder="เช่น EXP1160260211R0012" value="${d.webDocNo||''}" style="width:100%;"></div>
             <div style="flex:1;min-width:280px;">
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -1997,13 +2000,14 @@ function openApprovalReport(id){
       <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
     </div>
     <table class="data">
-      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         <tr>
           <td>${d.id}</td>
           <td>${docTypeInfo(d.docType).label}</td>
           <td>${d.docName||'-'}</td>
           <td>${d.docSAP||'-'}</td>
+          <td>${d.webDocNo||'-'}</td>
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
@@ -2037,6 +2041,7 @@ async function processStage(id, decision){
   const noteEl = document.getElementById('note-'+id);
   const note = noteEl ? noteEl.value : '';
   const sapEl = document.getElementById('sap-'+id);
+  const webDocNoEl = document.getElementById('webDocNo-'+id);
   const vendorEl = document.getElementById('vendor-'+id);
   const vendorNameEl = document.getElementById('vendorName-'+id);
   const skipApproverEl = document.getElementById('skipApprover-'+id);
@@ -2069,6 +2074,7 @@ async function processStage(id, decision){
   patch[cfg.date] = nowStr();
   patch[cfg.note] = note;
   if(sapEl){ patch.docSAP = sapEl.value.trim(); }
+  if(webDocNoEl){ patch.webDocNo = webDocNoEl.value.trim(); }
   if(vendorEl){ patch.vendor = vendorEl.value.trim(); }
   if(vendorNameEl){ patch.vendorName = vendorNameEl.value.trim(); }
   // only write the flags back when their checkbox was actually shown on this form (accountant/reviewer stage),
@@ -2104,6 +2110,7 @@ async function resubmitFromStage(id){
   if(!cfg) return;
   const noteEl = document.getElementById('note-'+id);
   const sapEl = document.getElementById('sap-'+id);
+  const webDocNoEl = document.getElementById('webDocNo-'+id);
   const vendorEl = document.getElementById('vendor-'+id);
   const vendorNameEl = document.getElementById('vendorName-'+id);
   const skipApproverEl = document.getElementById('skipApprover-'+id);
@@ -2128,6 +2135,7 @@ async function resubmitFromStage(id){
   patch[cfg.date] = nowStr();
   if(noteEl && noteEl.value.trim()) patch[cfg.note] = noteEl.value.trim();
   if(sapEl) patch.docSAP = sapEl.value.trim();
+  if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
   if(vendorEl) patch.vendor = vendorEl.value.trim();
   if(vendorNameEl) patch.vendorName = vendorNameEl.value.trim();
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
@@ -2229,7 +2237,7 @@ function paymentHTML(){
   const groups = groupByDue(list);
   const moneyText = v => (parseFloat(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const bodyRows = groups.length ? groups.map(g=>{
-    const header = `<tr class="group-header"><td colspan="16">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+    const header = `<tr class="group-header"><td colspan="17">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
       const checked = state.paymentSelected.includes(d.id);
       const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
@@ -2240,6 +2248,7 @@ function paymentHTML(){
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
           <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length}</span>` : ''; })()}</td>
+          <td>${d.webDocNo||'-'}</td>
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${d.approverBy||'-'}</td>
           <td>${d.vendor||'-'}</td>
@@ -2254,7 +2263,7 @@ function paymentHTML(){
         </tr>`;
     }).join('');
     return header+rows;
-  }).join('') : `<tr class="empty-row"><td colspan="16">ไม่มีเอกสารรอชำระเงิน</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="17">ไม่มีเอกสารรอชำระเงิน</td></tr>`;
 
   const batchBar = `
   <div class="note-box" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
@@ -2329,8 +2338,8 @@ function paymentHTML(){
     ${batchBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>ผู้อนุมัติ</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
-      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllPayment(this.checked)" title="เลือกทั้งหมด"></th><th colspan="15"></th></tr></thead>
+      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>ไฟล์</th><th>ผู้อนุมัติ</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
+      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllPayment(this.checked)" title="เลือกทั้งหมด"></th><th colspan="16"></th></tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
     </div>
@@ -2398,7 +2407,7 @@ function voucherReportHTML(){
   const moneyText = v => (parseFloat(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const groups = groupByDue(list);
   const bodyRows = groups.length ? groups.map(g=>{
-    const header = `<tr class="group-header"><td colspan="12">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+    const header = `<tr class="group-header"><td colspan="13">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
       const checked = state.voucherReportSelected.includes(d.id);
       const lines = parseSapLines(d);
@@ -2412,6 +2421,7 @@ function voucherReportHTML(){
           <td style="color:var(--ink-soft);">SAP Line</td>
           <td>${l.vendorName||'-'}</td>
           <td class="sap-cell">${l.fiDoc||'-'}</td>
+          <td></td>
           <td>${l.vendor||'-'}</td>
           <td>${l.vendorName||'-'}</td>
           <td></td>
@@ -2428,6 +2438,7 @@ function voucherReportHTML(){
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
           <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
+          <td>${d.webDocNo||'-'}</td>
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${d.approverBy||'-'}</td>
@@ -2438,7 +2449,7 @@ function voucherReportHTML(){
         </tr>${subRows}`;
     }).join('');
     return header+rows;
-  }).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบเอกสาร</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="13">ไม่พบเอกสาร</td></tr>`;
 
   const actionBar = `
   <div class="note-box" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
@@ -2466,8 +2477,8 @@ function voucherReportHTML(){
     ${actionBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>ผู้อนุมัติ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
-      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllVoucherReport(this.checked)" title="เลือกทั้งหมด"></th><th colspan="11"></th></tr></thead>
+      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ผู้อนุมัติ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
+      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllVoucherReport(this.checked)" title="เลือกทั้งหมด"></th><th colspan="12"></th></tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
     </div>
@@ -2508,18 +2519,18 @@ async function exportVoucherReportToExcel(){
     if(lines.length>1){
       lines.forEach(l=>{
         const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
-        lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
+        lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
       });
     } else {
       const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
-      lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'-', d.vendor||'-', d.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0]);
+      lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'-', d.webDocNo||'-', d.vendor||'-', d.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0]);
     }
   });
-  const totals = lineRows.reduce((t,r)=>({vat:t.vat+r[9], wht:t.wht+r[10], base:t.base+r[11], net:t.net+r[12]}), {vat:0,wht:0,base:0,net:0});
+  const totals = lineRows.reduce((t,r)=>({vat:t.vat+r[10], wht:t.wht+r[11], base:t.base+r[12], net:t.net+r[13]}), {vat:0,wht:0,base:0,net:0});
 
   const companyCode = docs[0].companyCode || '';
   const title = state.voucherReportTitle.trim();
-  const COLS = 13;
+  const COLS = 14;
   const thin = {style:'thin', color:{argb:'FFB9B2A0'}};
   const border = {top:thin, left:thin, bottom:thin, right:thin};
   const navy = 'FF152238';
@@ -2528,7 +2539,7 @@ async function exportVoucherReportToExcel(){
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('ใบสำคัญจ่าย');
   ws.columns = [
-    {width:8},{width:14},{width:30},{width:16},{width:12},{width:20},{width:12},{width:14},{width:20},{width:10},{width:10},{width:12},{width:12}
+    {width:8},{width:14},{width:30},{width:16},{width:18},{width:12},{width:20},{width:12},{width:14},{width:20},{width:10},{width:10},{width:12},{width:12}
   ];
 
   let r = 1;
@@ -2554,14 +2565,14 @@ async function exportVoucherReportToExcel(){
   r += 2;
 
   const headerRowIdx = r;
-  const headers = ['ID','ประเภท','ชื่อเอกสาร','SAP','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
+  const headers = ['ID','ประเภท','ชื่อเอกสาร','SAP','Web Doc No.','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
   headers.forEach((h,i)=>{
     const cell = ws.getCell(headerRowIdx, i+1);
     cell.value = h;
     cell.font = {bold:true, color:{argb:'FFFFFFFF'}, name:'Tahoma', size:10.5};
     cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:navy}};
     cell.border = border;
-    cell.alignment = {vertical:'middle', horizontal: i>=9 ? 'right' : 'left'};
+    cell.alignment = {vertical:'middle', horizontal: i>=10 ? 'right' : 'left'};
   });
   r++;
 
@@ -2572,20 +2583,20 @@ async function exportVoucherReportToExcel(){
       cell.value = val;
       cell.border = border;
       cell.font = {name:'Tahoma', size:10.5};
-      if(i>=9){ cell.numFmt = moneyFmt; cell.alignment = {horizontal:'right'}; }
+      if(i>=10){ cell.numFmt = moneyFmt; cell.alignment = {horizontal:'right'}; }
       if(idx % 2 === 1) cell.fill = {type:'pattern', pattern:'solid', fgColor:{argb:paper}};
     });
     r++;
   });
 
   // totals row
-  ws.mergeCells(r,1,r,9);
+  ws.mergeCells(r,1,r,10);
   const totalLabelCell = ws.getCell(r,1);
   totalLabelCell.value = 'รวม';
   totalLabelCell.font = {bold:true, name:'Tahoma', size:10.5};
   totalLabelCell.alignment = {horizontal:'right'};
   [totals.vat, totals.wht, totals.base, totals.net].forEach((v,i)=>{
-    const cell = ws.getCell(r, 10+i);
+    const cell = ws.getCell(r, 11+i);
     cell.value = v;
     cell.numFmt = moneyFmt;
     cell.font = {bold:true, name:'Tahoma', size:10.5};
@@ -2599,7 +2610,7 @@ async function exportVoucherReportToExcel(){
     {cols:[1,4], label:'ต้นฉบับอยู่ฝ่ายบัญชี', name:'', role:'', dateLine:true},
     {cols:[5,7], label:'ผู้จัดเตรียม', name: docs[docs.length-1].accountantBy||'', role:'นักบัญชี'},
     {cols:[8,10], label:'ผู้ตรวจสอบ', name: docs[docs.length-1].reviewerBy||'', role:'ผู้ตรวจสอบ'},
-    {cols:[11,13], label:'ผู้อนุมัติ', name: docs[docs.length-1].approverBy||'', role:'ผู้อนุมัติ'},
+    {cols:[11,14], label:'ผู้อนุมัติ', name: docs[docs.length-1].approverBy||'', role:'ผู้อนุมัติ'},
   ];
   const labelRow = r;
   blocks.forEach(b=>{
@@ -2666,6 +2677,7 @@ function generateVoucherSummary(){
           <td>${docTypeInfo(d.docType).label}</td>
           <td>${d.docName||'-'}</td>
           <td>${l.fiDoc||'-'}</td>
+          <td>${d.webDocNo||'-'}</td>
           <td>${l.vendor||'-'}</td>
           <td>${l.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
@@ -2685,6 +2697,7 @@ function generateVoucherSummary(){
       <td>${docTypeInfo(d.docType).label}</td>
       <td>${d.docName||'-'}</td>
       <td>${d.docSAP||'-'}</td>
+      <td>${d.webDocNo||'-'}</td>
       <td>${d.vendor||'-'}</td>
       <td>${d.vendorName||'-'}</td>
       <td>${payTypeLabel(d.payType)}</td>
@@ -2720,9 +2733,9 @@ function generateVoucherSummary(){
       <div>จำนวนเอกสาร: <b>${docs.length}</b> รายการ · ออกโดย: <b>${fullName(state.user)}</b> · วันที่ออกรายงาน: <b>${fmtDate(new Date())}</b></div>
     </div>
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>Bank</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>Bank</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="9"></td><td>${money(totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.base)}</td><td>${money(totals.net)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="10"></td><td>${money(totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.base)}</td><td>${money(totals.net)}</td></tr></tfoot>
     </table>
     <div class="sign-grid">
       <div>ต้นฉบับอยู่ฝ่ายบัญชี<div class="sign-line"></div>${fmtDate(new Date())}</div>
@@ -2965,11 +2978,11 @@ function exportPaymentListToExcel(){
   if(s.due) list = list.filter(d=>d.dueDate===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   if(!list.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
-  const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Due','ผู้อนุมัติ','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
+  const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Web Doc No.','Due','ผู้อนุมัติ','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
   const rows = list.map(d=>{
     const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
     return [
-      d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'', d.dueDate||'',
+      d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'', d.webDocNo||'', d.dueDate||'',
       d.approverBy||'', d.vendor||'', d.vendorName||'', payTypeLabel(d.payType),
       (vRec&&vRec.bankAccount)||'', (vRec&&vRec.bankName)||'',
       parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
