@@ -2070,8 +2070,13 @@ async function processStage(id, decision){
   }[doc.status];
   if(!cfg) return;
   const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
-  patch[cfg.actor] = fullName(state.user);
-  patch[cfg.date] = nowStr();
+  if(decision==='approve'){
+    // only stamp the "signed" actor/date fields on an actual approval — these are what the
+    // printed reports use to decide whose signature/name to show, so rejecting must never
+    // populate them (a reject is not a sign-off).
+    patch[cfg.actor] = fullName(state.user);
+    patch[cfg.date] = nowStr();
+  }
   patch[cfg.note] = note;
   if(sapEl){ patch.docSAP = sapEl.value.trim(); }
   if(webDocNoEl){ patch.webDocNo = webDocNoEl.value.trim(); }
