@@ -987,6 +987,7 @@ function sidebarHTML(){
         ['admin-permissions','กำหนดสิทธิ์การใช้งาน'],
         ['admin-settings','ตั้งค่าทั่วไป'],
         ['admin-vendors','Vendor Master'],
+        ['admin-notifications','แจ้งเตือนทางอีเมล'],
       ].map(([v,l])=>`<div class="nav-item ${state.view===v?'active':''}" onclick="goView('${v}')">${l}</div>`).join('');
       nav.push(`<div class="nav-sub">${subs}</div>`);
     }
@@ -1026,6 +1027,7 @@ function topbarHTML(){
     'admin-permissions':['Admin · กำหนดสิทธิ์การใช้งาน','ผูก Role และรหัสบริษัทให้สมาชิก'],
     'admin-settings':['Admin · ตั้งค่าทั่วไป','จัดการรหัสบริษัทและประเภทเอกสาร'],
     'admin-vendors':['Admin · Vendor Master','จัดการรายชื่อ Vendor สำหรับใช้ค้นหาตอนอนุมัติเอกสาร'],
+    'admin-notifications':['Admin · แจ้งเตือนทางอีเมล','ตั้งค่าการส่งอีเมลแจ้งเตือนนักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติ'],
   };
   const [t,s] = titles[state.view] || ['',''];
   const initials = (state.user.firstName||'?').slice(0,1);
@@ -1054,6 +1056,7 @@ function viewHTML(){
     case 'admin-permissions': return adminPermissionsHTML();
     case 'admin-settings': return adminSettingsHTML();
     case 'admin-vendors': return adminVendorsHTML();
+    case 'admin-notifications': return adminNotificationsHTML();
     default: return '';
   }
 }
@@ -3525,6 +3528,187 @@ function uploadVendorFile(e){
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+/* ============================= ADMIN: EMAIL NOTIFICATIONS ============================= */
+const DEFAULT_EMAIL_SUBJECT_TEMPLATE = '[Document Flow] เอกสารรอ{{stageLabel}}ดำเนินการ · {{id}}';
+const DEFAULT_EMAIL_BODY_TEMPLATE = `เรียน {{stageLabel}}
+
+มีเอกสารรอดำเนินการในระบบ MITRPHOL · E-SIGN Document Flow ดังนี้
+
+ID: {{id}}
+ชื่อเอกสาร: {{docName}}
+ประเภทเอกสาร: {{docType}}
+รหัสบริษัท: {{companyCode}}
+สร้างโดย: {{createdBy}}
+ยอดจ่ายสุทธิ: {{netAmount}}
+
+กรุณาเข้าสู่ระบบ Document Flow เพื่อตรวจสอบและดำเนินการต่อ`;
+function adminNotificationsHTML(){
+  const s = state.appSettings;
+  const on = k => s[k]==='TRUE';
+  const toggle = (key, label, checked) => `
+    <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${checked?'var(--paper)':'transparent'};border:1px solid var(--line);border-radius:8px;cursor:pointer;margin-bottom:8px;">
+      <input type="checkbox" id="notif-${key}" ${checked?'checked':''} onchange="toggleNotifPreview(this)">
+      <span>${label}</span>
+    </label>`;
+  const subjectVal = s.emailSubjectTemplate || DEFAULT_EMAIL_SUBJECT_TEMPLATE;
+  const bodyVal = s.emailBodyTemplate || DEFAULT_EMAIL_BODY_TEMPLATE;
+  return `
+  <div class="card">
+    <div class="eyebrow">Email Notifications</div>
+    <h3 style="margin-top:4px;">การแจ้งเตือนทางอีเมล</h3>
+    <div class="helper">เมื่อเปิดใช้งาน ระบบจะส่งอีเมลแจ้งเตือนอัตโนมัติจากฝั่ง Server (Apps Script) ไปยังผู้มีสิทธิ์ดำเนินการในขั้นตอนนั้นๆ ทันทีที่เอกสารเข้าสู่คิวรอ — ถ้าเอกสารมีการมอบหมายเฉพาะเจาะจงไว้ใน Approval Mapping จะส่งหาเฉพาะคนที่ถูกมอบหมายเท่านั้น ถ้าไม่มีการมอบหมายจะส่งหาทุกคนที่มี Role ตรงกันและมีรหัสบริษัทตรงกับเอกสารนั้น</div>
+    <hr class="div">
+    <form onsubmit="saveNotificationSettings(event)">
+      <div class="field">
+        ${toggle('emailNotifyEnabled', 'เปิดใช้งานการแจ้งเตือนทางอีเมลทั้งหมด', on('emailNotifyEnabled'))}
+      </div>
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">แจ้งเตือนตามขั้นตอน (เลือกได้มากกว่า 1 ข้อ)</div>
+      ${toggle('emailNotifyAccountant', 'มีเอกสารใหม่รอนักบัญชีดำเนินการ', on('emailNotifyAccountant'))}
+      ${toggle('emailNotifyReviewer', 'มีเอกสารรอผู้ตรวจสอบดำเนินการ', on('emailNotifyReviewer'))}
+      ${toggle('emailNotifyApprover', 'มีเอกสารรอผู้อนุมัติดำเนินการ', on('emailNotifyApprover'))}
+      <button class="btn btn-primary" type="submit" style="margin-top:16px;">บันทึกการตั้งค่า</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Email Template</div>
+    <h3 style="margin-top:4px;">รูปแบบอีเมลที่ส่ง (แก้ไขได้)</h3>
+    <div class="helper">ปรับข้อความหัวเรื่องและเนื้อหาอีเมลที่จะส่งได้เอง — ใช้ตัวแปรด้านล่างแทรกลงในข้อความ ระบบจะแทนที่ด้วยข้อมูลจริงของเอกสารตอนส่งจริง</div>
+    <hr class="div">
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+      ${['{{id}}','{{docName}}','{{docType}}','{{companyCode}}','{{createdBy}}','{{netAmount}}','{{stageLabel}}'].map(v=>`<code style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:3px 7px;font-size:11.5px;color:var(--navy);">${v}</code>`).join('')}
+    </div>
+    <form onsubmit="saveEmailTemplate(event)">
+      <div class="field">
+        <label>หัวเรื่องอีเมล (Subject)</label>
+        <input type="text" id="email-subject-template" value="${subjectVal.replace(/"/g,'&quot;')}" style="width:100%;">
+      </div>
+      <div class="field">
+        <label>เนื้อหาอีเมล (Body)</label>
+        <textarea id="email-body-template" style="width:100%;min-height:220px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;">${bodyVal}</textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">บันทึกรูปแบบอีเมล</button>
+      <button class="btn btn-outline" type="button" onclick="resetEmailTemplate()">คืนค่าเริ่มต้น</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Daily Digest</div>
+    <h3 style="margin-top:4px;">สรุปรายวัน (แจ้งเตือนตามตารางเวลา)</h3>
+    <div class="helper">แยกต่างหากจากการแจ้งเตือนแบบทันทีด้านบน — อันนี้จะส่งอีเมล "สรุปยอดค้าง" ให้แต่ละคนตามวัน/เวลาที่ตั้งไว้ เช่น "สวัสดีตอนเช้า คุณสมชาย วันนี้คุณมีเอกสารรอตรวจสอบ 5 รายการ" พร้อมตารางรายการและลิงก์เข้าเว็บแอป</div>
+    <hr class="div">
+    <form onsubmit="saveDigestSettings(event)">
+      <div class="field">
+        ${toggle('digestEnabled', 'เปิดใช้งานสรุปรายวัน', on('digestEnabled'))}
+      </div>
+
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">วันที่ส่ง</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${[['MON','จ'],['TUE','อ'],['WED','พ'],['THU','พฤ'],['FRI','ศ'],['SAT','ส'],['SUN','อา']].map(([code,label])=>{
+          const days = (s.digestDays||'MON,TUE,WED,THU,FRI').split(',');
+          const checked = days.includes(code);
+          return `<label style="display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11.5px;cursor:pointer;">
+            <input type="checkbox" class="digest-day-chk" value="${code}" ${checked?'checked':''}>
+            <span>${label}</span>
+          </label>`;
+        }).join('')}
+      </div>
+
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">เวลาที่ส่ง</div>
+      ${toggle('digestMorningEnabled', 'ช่วงเช้า (ประมาณ 08:00 น.)', on('digestMorningEnabled'))}
+      ${toggle('digestAfternoonEnabled', 'ช่วงบ่าย (ประมาณ 13:00 น.)', on('digestAfternoonEnabled'))}
+
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ส่งให้ Role ไหนบ้าง</div>
+      ${toggle('digestRoleAccountant', 'นักบัญชี (สรุปเอกสารรอนักบัญชี)', on('digestRoleAccountant'))}
+      ${toggle('digestRoleReviewer', 'ผู้ตรวจสอบ (สรุปเอกสารรอผู้ตรวจสอบ)', on('digestRoleReviewer'))}
+      ${toggle('digestRoleApprover', 'ผู้อนุมัติ (สรุปเอกสารรอผู้อนุมัติ)', on('digestRoleApprover'))}
+
+      <div class="field" style="margin-top:16px;">
+        <label>ลิงก์เว็บแอป (แสดงในอีเมลให้กดเข้าระบบ)</label>
+        <input type="url" id="digest-app-link" value="${(s.appLinkUrl||'https://paopaopape.github.io/esigndocument.github.io/').replace(/"/g,'&quot;')}" style="width:100%;">
+      </div>
+
+      <button class="btn btn-primary" type="submit" style="margin-top:12px;">บันทึกการตั้งค่าสรุปรายวัน</button>
+      <button class="btn btn-approve" type="button" onclick="installDigestTriggers()">⚡ เปิดใช้งาน Trigger อัตโนมัติ</button>
+    </form>
+    <div style="margin-top:14px;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--ink-soft);">
+      <b style="color:var(--gold);">สำคัญ:</b> หลังบันทึกการตั้งค่าแล้ว ต้องกดปุ่ม <b>"⚡ เปิดใช้งาน Trigger อัตโนมัติ"</b> อีกครั้งเสมอ เพื่อให้ระบบสร้าง/อัปเดตตัวจับเวลาจริงฝั่ง Server — แค่บันทึกฟอร์มอย่างเดียวจะยังไม่ทำงานจริงจนกว่าจะกดปุ่มนี้ ระบบจะรันเวลาให้โดยประมาณ (คลาดเคลื่อนได้ไม่กี่นาที เป็นข้อจำกัดของ Google Apps Script)
+    </div>
+  </div>
+  <div class="card">
+    <div class="eyebrow">ข้อควรทราบ</div>
+    <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--ink-soft);">
+      <li>อีเมลจะถูกส่งจากบัญชี Google ที่ใช้ deploy Apps Script ของระบบนี้ — ผู้รับจะเห็น "From" เป็นอีเมลนั้น ไม่ใช่จากระบบ Outlook ขององค์กร</li>
+      <li>บัญชี Google ทั่วไปส่งอีเมลได้ประมาณ 100 ฉบับ/วัน (บัญชี Google Workspace ขององค์กรได้มากกว่านี้)</li>
+      <li>ผู้รับต้องมีอีเมลบันทึกไว้ในหน้า "เพิ่ม Member" ให้ครบถ้วนก่อน ถึงจะได้รับการแจ้งเตือน</li>
+    </ul>
+  </div>`;
+}
+function resetEmailTemplate(){
+  document.getElementById('email-subject-template').value = DEFAULT_EMAIL_SUBJECT_TEMPLATE;
+  document.getElementById('email-body-template').value = DEFAULT_EMAIL_BODY_TEMPLATE;
+}
+async function saveEmailTemplate(e){
+  e.preventDefault();
+  const subject = document.getElementById('email-subject-template').value;
+  const body = document.getElementById('email-body-template').value;
+  showBusyOverlay('กำลังบันทึกรูปแบบอีเมล กรุณารอสักครู่...');
+  const res1 = await apiCall('saveAppSetting', { key:'emailSubjectTemplate', value: subject });
+  const res2 = await apiCall('saveAppSetting', { key:'emailBodyTemplate', value: body });
+  hideBusyOverlay();
+  if(!res1.success || !res2.success){ showToast('บันทึกรูปแบบอีเมลไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.appSettings.emailSubjectTemplate = subject;
+  state.appSettings.emailBodyTemplate = body;
+  showToast('บันทึกรูปแบบอีเมลเรียบร้อย');
+  render();
+}
+async function saveDigestSettings(e){
+  e.preventDefault();
+  const dayChecks = document.querySelectorAll('.digest-day-chk');
+  const days = Array.from(dayChecks).filter(c=>c.checked).map(c=>c.value).join(',');
+  const appLink = document.getElementById('digest-app-link').value.trim();
+  const boolKeys = ['digestEnabled','digestMorningEnabled','digestAfternoonEnabled','digestRoleAccountant','digestRoleReviewer','digestRoleApprover'];
+  showBusyOverlay('กำลังบันทึกการตั้งค่าสรุปรายวัน กรุณารอสักครู่...');
+  for(const key of boolKeys){
+    const el = document.getElementById('notif-'+key);
+    const value = (el && el.checked) ? 'TRUE' : '';
+    const res = await apiCall('saveAppSetting', { key, value });
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่ '+key); return; }
+    state.appSettings[key] = value;
+  }
+  const res2 = await apiCall('saveAppSetting', { key:'digestDays', value: days });
+  const res3 = await apiCall('saveAppSetting', { key:'appLinkUrl', value: appLink });
+  hideBusyOverlay();
+  if(!res2.success || !res3.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.appSettings.digestDays = days;
+  state.appSettings.appLinkUrl = appLink;
+  showToast('บันทึกการตั้งค่าสรุปรายวันเรียบร้อย — อย่าลืมกด "เปิดใช้งาน Trigger อัตโนมัติ" ด้วย');
+  render();
+}
+async function installDigestTriggers(){
+  showBusyOverlay('กำลังตั้งค่า Trigger อัตโนมัติ กรุณารอสักครู่...');
+  const res = await apiCall('installDigestTriggers', {});
+  hideBusyOverlay();
+  if(!res.success){ showToast('ตั้งค่า Trigger ไม่สำเร็จ: '+(res.error||'ลองใหม่อีกครั้ง')); return; }
+  showToast('เปิดใช้งาน Trigger เรียบร้อย ('+res.count+' ตัว) — ระบบจะเริ่มส่งสรุปรายวันตามตารางที่ตั้งไว้');
+}
+function toggleNotifPreview(el){
+  el.closest('label').style.background = el.checked ? 'var(--paper)' : 'transparent';
+}
+async function saveNotificationSettings(e){
+  e.preventDefault();
+  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover'];
+  showBusyOverlay('กำลังบันทึกการตั้งค่า กรุณารอสักครู่...');
+  for(const key of keys){
+    const el = document.getElementById('notif-'+key);
+    const value = (el && el.checked) ? 'TRUE' : '';
+    const res = await apiCall('saveAppSetting', { key, value });
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่ '+key+' ลองใหม่อีกครั้ง'); return; }
+    state.appSettings[key] = value;
+  }
+  hideBusyOverlay();
+  showToast('บันทึกการตั้งค่าแจ้งเตือนทางอีเมลเรียบร้อย');
+  render();
 }
 
 async function addCompany(e){
