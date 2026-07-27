@@ -398,7 +398,7 @@ function companySelectOptions(selected){
 }
 
 /* ============================= API (Google Apps Script backend) ============================= */
-const API_URL = 'https://script.google.com/macros/s/AKfycbzaVyG1CAbVFaKRt2VXMj9m3Gos3tioxwm5iDpf2DfHs34ZyuOwdc96YPiAiKR3VnRq/exec';
+const API_URL = 'https://script.google.com/macros/s/AKfycbzVoY6kSxdJpaHZPf08BWSUvJG6zmysnA2Rn9S5jKslPJxuobJSdFzE4SWRbCbdqWL3/exec';
 
 async function apiCall(action, payload){
   try{
@@ -3625,9 +3625,17 @@ function adminNotificationsHTML(){
         }).join('')}
       </div>
 
-      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">เวลาที่ส่ง</div>
-      ${toggle('digestMorningEnabled', 'ช่วงเช้า (ประมาณ 08:00 น.)', on('digestMorningEnabled'))}
-      ${toggle('digestAfternoonEnabled', 'ช่วงบ่าย (ประมาณ 13:00 น.)', on('digestAfternoonEnabled'))}
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">เวลาที่ส่ง (ติ๊กเลือกได้หลายช่วง)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+        ${Array.from({length:10},(_,i)=>i+8).map(h=>{ // 8..17
+          const hours = (s.digestHours||'8,13').split(',').map(x=>x.trim());
+          const checked = hours.includes(String(h));
+          return `<label style="display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;cursor:pointer;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:${checked?'var(--paper)':'transparent'};">
+            <input type="checkbox" class="digest-hour-chk" value="${h}" ${checked?'checked':''} onchange="this.closest('label').style.background=this.checked?'var(--paper)':'transparent'">
+            <span>${String(h).padStart(2,'0')}:00</span>
+          </label>`;
+        }).join('')}
+      </div>
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ส่งให้ Role ไหนบ้าง</div>
       ${toggle('digestRoleAccountant', 'นักบัญชี (สรุปเอกสารรอนักบัญชี)', on('digestRoleAccountant'))}
@@ -3677,8 +3685,10 @@ async function saveDigestSettings(e){
   e.preventDefault();
   const dayChecks = document.querySelectorAll('.digest-day-chk');
   const days = Array.from(dayChecks).filter(c=>c.checked).map(c=>c.value).join(',');
+  const hourChecks = document.querySelectorAll('.digest-hour-chk');
+  const hours = Array.from(hourChecks).filter(c=>c.checked).map(c=>c.value).join(',');
   const appLink = document.getElementById('digest-app-link').value.trim();
-  const boolKeys = ['digestEnabled','digestMorningEnabled','digestAfternoonEnabled','digestRoleAccountant','digestRoleReviewer','digestRoleApprover'];
+  const boolKeys = ['digestEnabled','digestRoleAccountant','digestRoleReviewer','digestRoleApprover'];
   showBusyOverlay('กำลังบันทึกการตั้งค่าสรุปรายวัน กรุณารอสักครู่...');
   for(const key of boolKeys){
     const el = document.getElementById('notif-'+key);
@@ -3689,10 +3699,12 @@ async function saveDigestSettings(e){
   }
   const res2 = await apiCall('saveAppSetting', { key:'digestDays', value: days });
   const res3 = await apiCall('saveAppSetting', { key:'appLinkUrl', value: appLink });
+  const res4 = await apiCall('saveAppSetting', { key:'digestHours', value: hours });
   hideBusyOverlay();
-  if(!res2.success || !res3.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  if(!res2.success || !res3.success || !res4.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.appSettings.digestDays = days;
   state.appSettings.appLinkUrl = appLink;
+  state.appSettings.digestHours = hours;
   showToast('บันทึกการตั้งค่าสรุปรายวันเรียบร้อย — อย่าลืมกด "เปิดใช้งาน Trigger อัตโนมัติ" ด้วย');
   render();
 }
