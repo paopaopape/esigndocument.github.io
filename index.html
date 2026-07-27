@@ -387,6 +387,22 @@ function blankSignBlock(positionLabel, roleTag){
   return `<div>${positionLabel}<div class="sign-line"></div>&nbsp;<br><span style="color:#666;">${roleTag}</span></div>`;
 }
 function nowStr(){ return new Date().toLocaleString('th-TH'); }
+function appendNoteText(existing, newText){
+  if(!newText || !newText.trim()) return existing || '';
+  const entry = '['+nowStr()+'] '+newText.trim();
+  return (existing && existing.trim()) ? (existing + '\n' + entry) : entry;
+}
+function fmtDateTime(str){
+  if(!str) return '-';
+  // Thai-format from nowStr(): "D/M/BE, HH:MM:SS" or "D/M/BE HH:MM:SS"
+  const m = String(str).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[, ]+(\d{1,2}):(\d{2})/);
+  if(m){
+    const day = m[1].padStart(2,'0'), month = m[2].padStart(2,'0'), year = m[3];
+    const hh = m[4].padStart(2,'0'), mm = m[5];
+    return `${day}-${month}-${year} ${hh}:${mm} น.`;
+  }
+  return fmtDate(str); // fallback — no time portion available (e.g. plain ISO date)
+}
 function fullName(u){ return u ? (u.firstName+' '+u.lastName) : ''; }
 function docTypeInfo(key){ return state.docTypes.find(d=>d.key===key) || {label:key, color:'gold'}; }
 function companyName(code){ const c = state.companies.find(c=>c.code===code); return c ? c.code+' · '+c.name : code; }
@@ -1866,9 +1882,15 @@ function approvalHTML(){
               ${sapField}
               ${flagFields}
               <div style="width:100%;margin-top:12px;">
+                ${(function(){
+                  const noteFieldMap = {'รอนักบัญชี':'accountantNote','รอผู้ตรวจสอบ':'reviewerNote','รอผู้อนุมัติ':'approverNote'};
+                  const existing = d[noteFieldMap[d.status]];
+                  return existing ? `<div style="background:var(--paper);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:var(--ink-soft);white-space:pre-line;max-height:120px;overflow:auto;"><b style="color:var(--gold);text-transform:uppercase;font-size:10px;letter-spacing:.04em;">ประวัติความเห็นก่อนหน้า</b><br>${existing}</div>` : '';
+                })()}
                 <textarea id="note-${d.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
               </div>
               <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                <button class="btn btn-sm btn-outline" onclick="saveDraftChanges('${d.id}')">💾 บันทึกแก้ไข (ยังไม่ส่งต่อ)</button>
                 <button class="btn btn-sm btn-approve" onclick="processStage('${d.id}','approve')">✓ อนุมัติ / ส่งต่อ</button>
                 <button class="btn btn-sm btn-reject" onclick="processStage('${d.id}','reject')">↺ ตีกลับแก้ไข</button>
                 <button class="btn btn-sm btn-cancel" onclick="cancelDoc('${d.id}')">✕ ไม่อนุมัติ / ยกเลิกเอกสาร</button>
@@ -1896,7 +1918,7 @@ function approvalHTML(){
         actionRow = `
         <tr class="action-row">
           <td colspan="14">
-            <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;">
+            <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
               <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจาก${reasonCfg?reasonCfg.label:''}:</strong> ${reasonText}
             </div>
             <div class="note-box">
@@ -1906,6 +1928,7 @@ function approvalHTML(){
                 <textarea id="note-${d.id}" placeholder="บันทึกการแก้ไข / หมายเหตุก่อนส่งกลับ (ไม่บังคับ)" style="width:100%;"></textarea>
               </div>
               <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+                <button class="btn btn-sm btn-outline" onclick="saveDraftChanges('${d.id}')">💾 บันทึกแก้ไข (ยังไม่ส่งต่อ)</button>
                 <button class="btn btn-sm btn-approve" onclick="resubmitFromStage('${d.id}')">↻ Resubmit ส่งต่ออนุมัติใหม่</button>
                 <button class="btn btn-sm btn-reject" onclick="forwardToSubmitter('${d.id}')">↺ ส่งกลับให้ผู้วางบิลแก้ไข</button>
                 <button class="btn btn-sm btn-cancel" onclick="cancelDoc('${d.id}')">✕ ไม่อนุมัติ / ยกเลิกเอกสาร</button>
@@ -1988,8 +2011,8 @@ function openApprovalReport(id){
     <tr>
       <td>${label}</td>
       <td>${by||'-'}</td>
-      <td>${by?fmt(date):'-'}</td>
-      <td>${note||'-'}</td>
+      <td>${by?fmtDateTime(date):'-'}</td>
+      <td style="white-space:pre-line;">${note||'-'}</td>
     </tr>`).join('');
   const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
     <title>ใบสรุปการอนุมัติเอกสาร · ${d.id}</title>
@@ -2091,7 +2114,7 @@ async function processStage(id, decision){
     patch[cfg.actor] = fullName(state.user);
     patch[cfg.date] = nowStr();
   }
-  patch[cfg.note] = note;
+  if(note && note.trim()){ patch[cfg.note] = appendNoteText(doc[cfg.note], note); }
   if(sapEl){ patch.docSAP = sapEl.value.trim(); }
   if(webDocNoEl){ patch.webDocNo = webDocNoEl.value.trim(); }
   if(vendorEl){ patch.vendor = vendorEl.value.trim(); }
@@ -2152,7 +2175,7 @@ async function resubmitFromStage(id){
   const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr(), status: cfg.next };
   patch[cfg.actor] = fullName(state.user);
   patch[cfg.date] = nowStr();
-  if(noteEl && noteEl.value.trim()) patch[cfg.note] = noteEl.value.trim();
+  if(noteEl && noteEl.value.trim()) patch[cfg.note] = appendNoteText(doc[cfg.note], noteEl.value);
   if(sapEl) patch.docSAP = sapEl.value.trim();
   if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
   if(vendorEl) patch.vendor = vendorEl.value.trim();
@@ -2174,7 +2197,7 @@ async function forwardToSubmitter(id){
   if(doc && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
   const noteEl = document.getElementById('note-'+id);
   const patch = { id, status:'ตีกลับแก้ไข(นักบัญชี)', modifiedBy: fullName(state.user), modifiedDate: nowStr() };
-  if(noteEl && noteEl.value.trim()) patch.accountantNote = noteEl.value.trim();
+  if(noteEl && noteEl.value.trim()) patch.accountantNote = appendNoteText(doc ? doc.accountantNote : '', noteEl.value);
   showBusyOverlay('กำลังส่งกลับให้ผู้วางบิลแก้ไข กรุณารอสักครู่...');
   const res = await apiCall('updateDocument', patch);
   hideBusyOverlay();
@@ -2793,6 +2816,43 @@ function toggleSelectAllPayment(checked){
   if(s.due) list = list.filter(d=>d.dueDate===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   state.paymentSelected = checked ? list.map(d=>d.id) : [];
+  render();
+}
+async function saveDraftChanges(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  const getVal = elId => { const el = document.getElementById(elId); return el ? el.value : undefined; };
+  const vat = getVal('amt-vatAmount-'+id), wht = getVal('amt-whtAmount-'+id), base = getVal('amt-baseAmount-'+id), net = getVal('amt-netAmount-'+id);
+  if(vat!==undefined) patch.vatAmount = vat;
+  if(wht!==undefined) patch.whtAmount = wht;
+  if(base!==undefined) patch.baseAmount = base;
+  if(net!==undefined) patch.netAmount = net;
+  const sapEl = document.getElementById('sap-'+id);
+  const webDocNoEl = document.getElementById('webDocNo-'+id);
+  const vendorEl = document.getElementById('vendor-'+id);
+  const vendorNameEl = document.getElementById('vendorName-'+id);
+  const skipApproverEl = document.getElementById('skipApprover-'+id);
+  const skipFinanceEl = document.getElementById('skipFinance-'+id);
+  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+  const taxCodeEl = document.getElementById('taxCode-'+id);
+  if(sapEl) patch.docSAP = sapEl.value.trim();
+  if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
+  if(vendorEl) patch.vendor = vendorEl.value.trim();
+  if(vendorNameEl) patch.vendorName = vendorNameEl.value.trim();
+  if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
+  if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
+  if(payTypeEl) patch.payType = payTypeEl.value;
+  if(taxCodeEl) patch.taxCode = taxCodeEl.value;
+
+  showBusyOverlay('กำลังบันทึกการแก้ไข กรุณารอสักครู่...');
+  const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+  showToast('บันทึกการแก้ไขเรียบร้อย — กดปุ่มดาวน์โหลด/ตรวจสอบตัวเลขได้เลย ยังไม่ส่งต่อจนกว่าจะกดปุ่มอนุมัติ');
+  await refreshData();
   render();
 }
 async function saveAmountField(id, field, value){
