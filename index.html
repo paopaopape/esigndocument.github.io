@@ -3617,7 +3617,7 @@ ID: {{id}}
 กรุณาเข้าสู่ระบบ Document Flow เพื่อตรวจสอบและดำเนินการต่อ`;
 function adminNotificationsHTML(){
   const s = state.appSettings;
-  const on = k => s[k]==='TRUE';
+  const on = k => s[k]===true || s[k]==='TRUE' || s[k]==='true';
   const toggle = (key, label, checked) => `
     <label style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:${checked?'var(--paper)':'transparent'};border:1px solid var(--line);border-radius:8px;cursor:pointer;margin-bottom:8px;">
       <input type="checkbox" id="notif-${key}" ${checked?'checked':''} onchange="toggleNotifPreview(this)">
