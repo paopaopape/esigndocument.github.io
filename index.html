@@ -66,6 +66,19 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 .sidebar-toggle:hover{background:rgba(239,233,218,0.12);}
 .sidebar-expand-btn{position:fixed;top:16px;left:16px;z-index:600;width:32px;height:32px;border-radius:8px;background:var(--navy);color:#EFE9DA;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--shadow);}
 .sidebar-expand-btn:hover{background:var(--navy-light);}
+.calc-fab{position:fixed;bottom:20px;right:20px;width:52px;height:52px;border-radius:50%;background:var(--navy);color:#fff;border:none;font-size:24px;box-shadow:0 4px 14px rgba(0,0,0,0.3);cursor:pointer;z-index:9000;display:flex;align-items:center;justify-content:center;}
+.calc-fab:hover{background:var(--navy-light);}
+.calc-window{position:fixed;display:none;flex-direction:column;background:#fff;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,0.35);z-index:9001;width:270px;min-width:230px;min-height:380px;resize:both;overflow:hidden;font-family:'IBM Plex Mono',monospace;border:1px solid var(--line);}
+.calc-header{background:var(--navy);color:#fff;padding:9px 10px;display:flex;align-items:center;justify-content:space-between;cursor:move;user-select:none;font-size:12px;font-weight:600;flex-shrink:0;}
+.calc-header button{background:transparent;border:none;color:#fff;font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;}
+.calc-header button:hover{opacity:0.7;}
+.calc-display{padding:16px 14px;text-align:right;font-size:26px;background:#F5F2EA;word-break:break-all;flex-shrink:0;border-bottom:1px solid var(--line);color:var(--navy);}
+.calc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);flex:1;}
+.calc-btn{background:#fff;border:none;font-size:16px;cursor:pointer;color:var(--navy);}
+.calc-btn:hover{background:var(--paper);}
+.calc-btn.calc-op{background:#EFE9DA;color:var(--navy);font-weight:600;}
+.calc-btn.calc-eq{background:var(--gold);color:#fff;font-weight:700;}
+.calc-btn.calc-clear{background:var(--stamp-red);color:#fff;}
 .sidebar-brand{padding:22px 20px 16px;border-bottom:1px solid rgba(255,255,255,0.08);}
 .sidebar-brand .mark{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold);letter-spacing:.12em;}
 .sidebar-brand h2{color:#fff;font-size:17px;margin-top:4px;}
@@ -795,6 +808,7 @@ function render(){
 
   if(state.loading){ root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8792A8;background:var(--navy);font-family:IBM Plex Mono,monospace;font-size:13px;">กำลังโหลดระบบ...</div>'; return; }
   if(!state.user){ root.innerHTML = loginHTML(); return; }
+  initCalculatorWidget();
   root.innerHTML = layoutHTML();
 
   if(activeId){
@@ -957,6 +971,149 @@ async function doSetPassword(e){
   render();
 }
 function doLogout(){ clearSession(); state.user=null; state.authView='login'; render(); }
+
+/* ============================= FLOATING CALCULATOR WIDGET ============================= */
+/* Deliberately kept OUTSIDE the main state/render() cycle — attached directly to
+   document.body so it is never touched by root.innerHTML = layoutHTML(), meaning its
+   position, size, and current calculation survive every re-render of the app underneath it. */
+let calcState = { display:'0', prevValue:null, operator:null, waitingForOperand:false };
+
+function initCalculatorWidget(){
+  if(document.getElementById('calc-fab')) return; // already created — no-op on every later render()
+
+  const fab = document.createElement('button');
+  fab.id = 'calc-fab';
+  fab.className = 'calc-fab';
+  fab.innerHTML = '🧮';
+  fab.title = 'เครื่องคิดเลข';
+  fab.onclick = toggleCalcWindow;
+  document.body.appendChild(fab);
+
+  const win = document.createElement('div');
+  win.id = 'calc-window';
+  win.className = 'calc-window';
+  win.style.top = '90px';
+  win.style.right = '84px';
+  win.innerHTML = `
+    <div class="calc-header" id="calc-drag-handle">
+      <span>🧮 เครื่องคิดเลข</span>
+      <button onclick="toggleCalcWindow()" title="ปิด">✕</button>
+    </div>
+    <div class="calc-display" id="calc-display">0</div>
+    <div class="calc-grid">
+      <button class="calc-btn calc-clear" onclick="calcClear()">C</button>
+      <button class="calc-btn calc-op" onclick="calcBackspace()">⌫</button>
+      <button class="calc-btn calc-op" onclick="calcOperator('%')">%</button>
+      <button class="calc-btn calc-op" onclick="calcOperator('÷')">÷</button>
+
+      <button class="calc-btn" onclick="calcInput('7')">7</button>
+      <button class="calc-btn" onclick="calcInput('8')">8</button>
+      <button class="calc-btn" onclick="calcInput('9')">9</button>
+      <button class="calc-btn calc-op" onclick="calcOperator('×')">×</button>
+
+      <button class="calc-btn" onclick="calcInput('4')">4</button>
+      <button class="calc-btn" onclick="calcInput('5')">5</button>
+      <button class="calc-btn" onclick="calcInput('6')">6</button>
+      <button class="calc-btn calc-op" onclick="calcOperator('-')">−</button>
+
+      <button class="calc-btn" onclick="calcInput('1')">1</button>
+      <button class="calc-btn" onclick="calcInput('2')">2</button>
+      <button class="calc-btn" onclick="calcInput('3')">3</button>
+      <button class="calc-btn calc-op" onclick="calcOperator('+')">+</button>
+
+      <button class="calc-btn" onclick="calcInput('0')" style="grid-column:span 2;">0</button>
+      <button class="calc-btn" onclick="calcInput('.')">.</button>
+      <button class="calc-btn calc-eq" onclick="calcEquals()">=</button>
+    </div>`;
+  document.body.appendChild(win);
+  makeCalcDraggable(win, document.getElementById('calc-drag-handle'));
+}
+function toggleCalcWindow(){
+  const win = document.getElementById('calc-window');
+  if(!win) return;
+  win.style.display = win.style.display === 'flex' ? 'none' : 'flex';
+}
+function makeCalcDraggable(win, handle){
+  let dragging = false, offsetX = 0, offsetY = 0;
+  const start = (clientX, clientY) => {
+    dragging = true;
+    const rect = win.getBoundingClientRect();
+    offsetX = clientX - rect.left;
+    offsetY = clientY - rect.top;
+    win.style.right = 'auto'; // switch from right-anchored to free left/top positioning once dragged
+  };
+  const move = (clientX, clientY) => {
+    if(!dragging) return;
+    const maxX = window.innerWidth - 60, maxY = window.innerHeight - 40;
+    const x = Math.max(0, Math.min(maxX, clientX - offsetX));
+    const y = Math.max(0, Math.min(maxY, clientY - offsetY));
+    win.style.left = x + 'px';
+    win.style.top = y + 'px';
+  };
+  const end = () => { dragging = false; };
+  handle.addEventListener('mousedown', e => { start(e.clientX, e.clientY); e.preventDefault(); });
+  document.addEventListener('mousemove', e => move(e.clientX, e.clientY));
+  document.addEventListener('mouseup', end);
+  handle.addEventListener('touchstart', e => { const t=e.touches[0]; start(t.clientX, t.clientY); }, {passive:true});
+  document.addEventListener('touchmove', e => { const t=e.touches[0]; move(t.clientX, t.clientY); }, {passive:true});
+  document.addEventListener('touchend', end);
+}
+function calcRenderDisplay(){
+  const el = document.getElementById('calc-display');
+  if(el) el.textContent = calcState.display;
+}
+function calcInput(digit){
+  if(calcState.waitingForOperand){
+    calcState.display = digit === '.' ? '0.' : digit;
+    calcState.waitingForOperand = false;
+  } else {
+    if(digit === '.' && calcState.display.includes('.')) return;
+    calcState.display = (calcState.display === '0' && digit !== '.') ? digit : calcState.display + digit;
+  }
+  calcRenderDisplay();
+}
+function calcBackspace(){
+  calcState.display = calcState.display.length > 1 ? calcState.display.slice(0,-1) : '0';
+  calcRenderDisplay();
+}
+function calcClear(){
+  calcState = { display:'0', prevValue:null, operator:null, waitingForOperand:false };
+  calcRenderDisplay();
+}
+function calcCompute(a, b, op){
+  switch(op){
+    case '+': return a + b;
+    case '-': return a - b;
+    case '×': return a * b;
+    case '÷': return b === 0 ? 0 : a / b;
+    case '%': return a % b;
+    default: return b;
+  }
+}
+function calcOperator(op){
+  const inputValue = parseFloat(calcState.display);
+  if(calcState.operator && calcState.waitingForOperand){ calcState.operator = op; return; }
+  if(calcState.prevValue == null){
+    calcState.prevValue = inputValue;
+  } else if(calcState.operator){
+    calcState.prevValue = calcCompute(calcState.prevValue, inputValue, calcState.operator);
+    calcState.display = String(Math.round(calcState.prevValue*10000)/10000);
+  }
+  calcState.waitingForOperand = true;
+  calcState.operator = op;
+  calcRenderDisplay();
+}
+function calcEquals(){
+  const inputValue = parseFloat(calcState.display);
+  if(calcState.operator!=null && calcState.prevValue!=null){
+    const result = calcCompute(calcState.prevValue, inputValue, calcState.operator);
+    calcState.display = String(Math.round(result*10000)/10000);
+    calcState.prevValue = null;
+    calcState.operator = null;
+    calcState.waitingForOperand = true;
+    calcRenderDisplay();
+  }
+}
 
 /* ============================= LAYOUT ============================= */
 function canSeeApproval(){ return ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','Admin'].includes(state.user.role); }
@@ -3709,9 +3866,10 @@ function adminNotificationsHTML(){
 
       <button class="btn btn-primary" type="submit" style="margin-top:12px;">บันทึกการตั้งค่าสรุปรายวัน</button>
       <button class="btn btn-approve" type="button" onclick="installDigestTriggers()">⚡ เปิดใช้งาน Trigger อัตโนมัติ</button>
+      <button class="btn btn-outline" type="button" onclick="sendDigestNowManual()">📨 ส่งแจ้งเตือนตอนนี้ (นอกรอบ)</button>
     </form>
     <div style="margin-top:14px;background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--ink-soft);">
-      <b style="color:var(--gold);">สำคัญ:</b> หลังบันทึกการตั้งค่าแล้ว ต้องกดปุ่ม <b>"⚡ เปิดใช้งาน Trigger อัตโนมัติ"</b> อีกครั้งเสมอ เพื่อให้ระบบสร้าง/อัปเดตตัวจับเวลาจริงฝั่ง Server — แค่บันทึกฟอร์มอย่างเดียวจะยังไม่ทำงานจริงจนกว่าจะกดปุ่มนี้ ระบบจะรันเวลาให้โดยประมาณ (คลาดเคลื่อนได้ไม่กี่นาที เป็นข้อจำกัดของ Google Apps Script)
+      <b style="color:var(--gold);">สำคัญ:</b> หลังบันทึกการตั้งค่าแล้ว ต้องกดปุ่ม <b>"⚡ เปิดใช้งาน Trigger อัตโนมัติ"</b> อีกครั้งเสมอ เพื่อให้ระบบสร้าง/อัปเดตตัวจับเวลาจริงฝั่ง Server — แค่บันทึกฟอร์มอย่างเดียวจะยังไม่ทำงานจริงจนกว่าจะกดปุ่มนี้ ระบบจะรันเวลาให้โดยประมาณ (คลาดเคลื่อนได้ไม่กี่นาที เป็นข้อจำกัดของ Google Apps Script) — ถ้าอยากส่งแจ้งเตือนทันทีนอกรอบเวลาที่ตั้งไว้ (เช่น เคสด่วน หรืออยากเตือนซ้ำระหว่างวัน) กดปุ่ม <b>"📨 ส่งแจ้งเตือนตอนนี้ (นอกรอบ)"</b> ได้เลย ส่งจริงตาม Role ที่ติ๊กไว้ทันที ไม่สนวัน/เวลาที่ตั้งไว้
     </div>
   </div>
   <div class="card">
@@ -3774,6 +3932,14 @@ async function installDigestTriggers(){
   hideBusyOverlay();
   if(!res.success){ showToast('ตั้งค่า Trigger ไม่สำเร็จ: '+(res.error||'ลองใหม่อีกครั้ง')); return; }
   showToast('เปิดใช้งาน Trigger เรียบร้อย ('+res.count+' ตัว) — ระบบจะเริ่มส่งสรุปรายวันตามตารางที่ตั้งไว้');
+}
+async function sendDigestNowManual(){
+  showBusyOverlay('กำลังส่งแจ้งเตือน กรุณารอสักครู่...');
+  const res = await apiCall('sendDigestNow', {});
+  hideBusyOverlay();
+  if(!res.success){ showToast('ส่งไม่สำเร็จ: '+(res.error||'ลองใหม่อีกครั้ง')); return; }
+  if(res.skipped === 'no_roles_enabled'){ showToast('ยังไม่ได้ติ๊ก Role ไหนไว้เลย กรุณาติ๊กแล้วบันทึกก่อนส่ง'); return; }
+  showToast('ส่งแจ้งเตือนเรียบร้อย ('+res.sent+' ฉบับ) — ถ้า 0 ฉบับ แปลว่าตอนนี้ไม่มีใครมีเอกสารค้างอยู่จริง');
 }
 function toggleNotifPreview(el){
   el.closest('label').style.background = el.checked ? 'var(--paper)' : 'transparent';
