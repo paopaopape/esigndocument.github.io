@@ -283,6 +283,7 @@ let state = {
   voucherReportSearch:{type:'', name:'', due:'', createdBy:''},
   pendingSapImport:null,
   sidebarCollapsed:false,
+  expandedSapLine:null,
   reportCompany:'all',
   trackingCompany:'all',
   reportSearch:{docPayment:'', by:'', from:'', to:''},
@@ -462,7 +463,7 @@ function docTypeInfo(key){ return state.docTypes.find(d=>d.key===key) || {label:
 function companyName(code){ const c = state.companies.find(c=>c.code===code); return c ? c.code+' · '+c.name : code; }
 function isEnglishOnly(str){ return /^[A-Za-z]+$/.test((str||'').trim()); }
 function canEditMemberDetails(){ return isAdmin(); }
-function canEditDocuments(){ return ['นักบัญชี','ผู้ตรวจสอบ'].includes(state.user.role); }
+function canEditDocuments(){ return ['นักบัญชี','ผู้ตรวจสอบ','Admin'].includes(state.user.role); }
 function companySelectOptions(selected){
   return state.companies.map(c=>`<option value="${c.code}" ${selected===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('');
 }
@@ -594,6 +595,227 @@ function parseSapLines(d){
   if(!d || !d.sapLines) return [];
   try{ const arr = JSON.parse(d.sapLines); return Array.isArray(arr) ? arr : []; }catch(e){ return []; }
 }
+
+/* ---------- inline-editable SAP line rows (accountant tab) ---------- */
+function sapLineAmtInput(docId, idx, field, value){
+  const display = (value===''||value===undefined||value===null) ? '' : formatMoney(value);
+  return `<input type="text" inputmode="decimal" id="sapline-${field}-${docId}-${idx}" class="sap-input" style="width:95px;text-align:right;" value="${display}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="sapLineAmtLocalUpdate(this,'${docId}',${idx},'${field}')">`;
+}
+function sapLineAmtLocalUpdate(el, docId, idx, field){
+  // local-only: just reformat the display and recompute the aggregate totals shown up top —
+  // nothing is sent to the server here, so typing across several fields never flickers/re-renders
+  const raw = unformatMoney(el.value);
+  el.value = raw==='' ? '' : formatMoney(raw);
+  recomputeSapLineTotalsLive(docId);
+  markSapLinesUnsaved(docId);
+}
+function recomputeSapLineTotalsLive(docId){
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return;
+  const lines = parseSapLines(doc);
+  let sumVat=0, sumWht=0, sumBase=0, sumNet=0;
+  lines.forEach((l,i)=>{
+    const vEl = document.getElementById('sapline-vat-'+docId+'-'+i);
+    const wEl = document.getElementById('sapline-wht-'+docId+'-'+i);
+    const bEl = document.getElementById('sapline-base-'+docId+'-'+i);
+    const nEl = document.getElementById('sapline-net-'+docId+'-'+i);
+    sumVat += vEl ? (parseFloat(unformatMoney(vEl.value))||0) : (parseFloat(l.vat)||0);
+    sumWht += wEl ? (parseFloat(unformatMoney(wEl.value))||0) : (parseFloat(l.wht)||0);
+    sumBase += bEl ? (parseFloat(unformatMoney(bEl.value))||0) : (parseFloat(l.base)||0);
+    sumNet += nEl ? (parseFloat(unformatMoney(nEl.value))||0) : (parseFloat(l.net)||0);
+  });
+  const mainVat = document.getElementById('amt-vatAmount-'+docId);
+  const mainWht = document.getElementById('amt-whtAmount-'+docId);
+  const mainBase = document.getElementById('amt-baseAmount-'+docId);
+  const mainNet = document.getElementById('amt-netAmount-'+docId);
+  if(mainVat) mainVat.value = formatMoney(sumVat);
+  if(mainWht) mainWht.value = formatMoney(sumWht);
+  if(mainBase) mainBase.value = formatMoney(sumBase);
+  if(mainNet) mainNet.value = formatMoney(sumNet);
+}
+function markSapLinesUnsaved(docId){
+  const btn = document.getElementById('sapline-save-btn-'+docId);
+  if(!btn) return;
+  btn.classList.remove('btn-outline');
+  btn.classList.add('btn-approve');
+  btn.textContent = '💾 บันทึกรายการ SAP (มีการแก้ไขที่ยังไม่บันทึก)';
+}
+function gatherCurrentSapLinesFromDOM(docId){
+  // reads whatever is currently displayed on screen for every line (including any edits still
+  // pending save) rather than trusting the last-saved doc.sapLines — so no in-progress edit is
+  // ever silently lost by another save action (add/remove/detail-edit) firing first
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return [];
+  const lines = parseSapLines(doc);
+  return lines.map((l,i)=>{
+    const vEl = document.getElementById('sapline-vat-'+docId+'-'+i);
+    const wEl = document.getElementById('sapline-wht-'+docId+'-'+i);
+    const bEl = document.getElementById('sapline-base-'+docId+'-'+i);
+    const nEl = document.getElementById('sapline-net-'+docId+'-'+i);
+    const taxEl = document.getElementById('sapline-tax-'+docId+'-'+i);
+    const fiDocEl = document.getElementById('sapline-fidoc-'+docId+'-'+i);
+    const webDocNoEl = document.getElementById('sapline-webdocno-'+docId+'-'+i);
+    const vendorEl = document.getElementById('sapline-vendor-'+docId+'-'+i);
+    const vendorNameEl = document.getElementById('sapline-vendorname-'+docId+'-'+i);
+    return Object.assign({}, l, {
+      vat: vEl ? (parseFloat(unformatMoney(vEl.value))||0) : (parseFloat(l.vat)||0),
+      wht: wEl ? (parseFloat(unformatMoney(wEl.value))||0) : (parseFloat(l.wht)||0),
+      base: bEl ? (parseFloat(unformatMoney(bEl.value))||0) : (parseFloat(l.base)||0),
+      net: nEl ? (parseFloat(unformatMoney(nEl.value))||0) : (parseFloat(l.net)||0),
+      taxCode: taxEl ? taxEl.value : (l.taxCode||''),
+      fiDoc: fiDocEl ? fiDocEl.value.trim() : (l.fiDoc||''),
+      webDocNo: webDocNoEl ? webDocNoEl.value.trim() : (l.webDocNo||''),
+      vendor: vendorEl ? vendorEl.value.trim() : (l.vendor||''),
+      vendorName: vendorNameEl ? vendorNameEl.value.trim() : (l.vendorName||''),
+    });
+  });
+}
+async function saveSapLineRowsNow(docId){
+  const lines = gatherCurrentSapLinesFromDOM(docId);
+  await saveSapLinesToDoc(docId, lines);
+}
+async function saveSapLinesToDoc(docId, lines){
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return;
+  const patch = { id: docId, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  if(lines.length >= 2){
+    // genuine split — keep the breakdown, aggregate totals feed the main fields
+    lines.forEach((l,i)=>{ l.subId = docId+'-'+(i+1); });
+    const sums = lines.reduce((t,l)=>({vat:t.vat+(parseFloat(l.vat)||0), wht:t.wht+(parseFloat(l.wht)||0), base:t.base+(parseFloat(l.base)||0), net:t.net+(parseFloat(l.net)||0)}), {vat:0,wht:0,base:0,net:0});
+    patch.sapLines = JSON.stringify(lines);
+    patch.vatAmount = sums.vat.toFixed(2);
+    patch.whtAmount = sums.wht.toFixed(2);
+    patch.baseAmount = sums.base.toFixed(2);
+    patch.netAmount = sums.net.toFixed(2);
+  } else if(lines.length === 1){
+    // back down to a single line — collapse into the simple main fields, no separate breakdown needed
+    const l = lines[0];
+    patch.sapLines = '';
+    patch.docSAP = l.fiDoc || doc.docSAP || '';
+    patch.webDocNo = l.webDocNo || doc.webDocNo || '';
+    patch.vendor = l.vendor || doc.vendor || '';
+    patch.vendorName = l.vendorName || doc.vendorName || '';
+    patch.vatAmount = (parseFloat(l.vat)||0).toFixed(2);
+    patch.whtAmount = (parseFloat(l.wht)||0).toFixed(2);
+    patch.baseAmount = (parseFloat(l.base)||0).toFixed(2);
+    patch.netAmount = (parseFloat(l.net)||0).toFixed(2);
+  } else {
+    patch.sapLines = '';
+  }
+  showBusyOverlay('กำลังบันทึกรายการ SAP กรุณารอสักครู่...');
+  const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+  showToast('บันทึกรายการ SAP เรียบร้อย');
+  render();
+}
+async function addSapLineInline(docId){
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return;
+  let lines = parseSapLines(doc);
+  if(lines.length === 0){
+    // first split ever for this document — seed line 1 from whatever is already in the main
+    // fields (prefer live unsaved input values if present) so no data is lost, then add a
+    // blank line 2 for the accountant to fill in
+    const readAmt = (elId, fallback) => {
+      const el = document.getElementById(elId);
+      const v = el ? unformatMoney(el.value) : '';
+      return v!=='' ? (parseFloat(v)||0) : (parseFloat(fallback)||0);
+    };
+    const webDocNoEl = document.getElementById('webDocNo-'+docId);
+    const line1 = {
+      subId: docId+'-1',
+      fiDoc: doc.docSAP || '',
+      webDocNo: (webDocNoEl ? webDocNoEl.value.trim() : '') || doc.webDocNo || '',
+      vendor: doc.vendor || '',
+      vendorName: doc.vendorName || '',
+      vat: readAmt('amt-vatAmount-'+docId, doc.vatAmount),
+      wht: readAmt('amt-whtAmount-'+docId, doc.whtAmount),
+      base: readAmt('amt-baseAmount-'+docId, doc.baseAmount),
+      net: readAmt('amt-netAmount-'+docId, doc.netAmount),
+      taxCode: doc.taxCode || '',
+    };
+    const line2 = { subId: docId+'-2', fiDoc:'', webDocNo:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' };
+    lines = [line1, line2];
+  } else {
+    lines = gatherCurrentSapLinesFromDOM(docId); // preserve any pending unsaved edits before adding
+    lines.push({ subId:'', fiDoc:'', webDocNo:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' });
+  }
+  await saveSapLinesToDoc(docId, lines);
+}
+async function removeSapLine(docId, idx){
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return;
+  const lines = gatherCurrentSapLinesFromDOM(docId);
+  if(!lines[idx]) return;
+  if(!confirm('ยืนยันลบบรรทัด SAP นี้ใช่หรือไม่?')) return;
+  lines.splice(idx,1);
+  await saveSapLinesToDoc(docId, lines);
+}
+function toggleSapLineDetailLocal(docId, idx){
+  const row = document.getElementById('sapline-detail-'+docId+'-'+idx);
+  if(!row) return;
+  row.style.display = (row.style.display === 'none' || !row.style.display) ? 'table-row' : 'none';
+}
+function onSapLineVendorInput(docId, idx){
+  const el = document.getElementById('sapline-vendor-'+docId+'-'+idx);
+  if(!el) return;
+  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  if(match){
+    el.value = match.vendorCode;
+    const nameEl = document.getElementById('sapline-vendorname-'+docId+'-'+idx);
+    if(nameEl) nameEl.value = match.vendorName;
+  }
+}
+function saveSapLineDetailsLocal(docId, idx){
+  // local-only, mirrors sapLineAmtLocalUpdate — nothing is sent to the server here, the real
+  // save happens once via the "บันทึกรายการ SAP" button at the bottom
+  const doc = state.documents.find(d=>d.id===docId);
+  if(!doc) return;
+  const lines = parseSapLines(doc);
+  if(!lines[idx]) return;
+  const fiDocEl = document.getElementById('sapline-fidoc-'+docId+'-'+idx);
+  const webDocNoEl = document.getElementById('sapline-webdocno-'+docId+'-'+idx);
+  const vendorEl = document.getElementById('sapline-vendor-'+docId+'-'+idx);
+  const vendorNameEl = document.getElementById('sapline-vendorname-'+docId+'-'+idx);
+  if(fiDocEl) lines[idx].fiDoc = fiDocEl.value.trim();
+  if(webDocNoEl) lines[idx].webDocNo = webDocNoEl.value.trim();
+  if(vendorEl) lines[idx].vendor = vendorEl.value.trim();
+  if(vendorNameEl) lines[idx].vendorName = vendorNameEl.value.trim();
+  doc.sapLines = JSON.stringify(lines); // kept in memory only until the explicit Save button runs
+
+  // reflect the edit directly on the visible row — no re-render needed
+  const fiDocDisplay = document.getElementById('sapline-fidoc-display-'+docId+'-'+idx);
+  const vendorNameDisplay = document.getElementById('sapline-vendorname-display-'+docId+'-'+idx);
+  if(fiDocDisplay) fiDocDisplay.textContent = lines[idx].fiDoc || '-';
+  if(vendorNameDisplay) vendorNameDisplay.textContent = lines[idx].vendorName || '-';
+
+  toggleSapLineDetailLocal(docId, idx); // close the panel
+  markSapLinesUnsaved(docId);
+}
+function applySapLineTaxCalcLocal(docId, idx, taxCode){
+  // local-only, mirrors sapLineAmtLocalUpdate — computes Base/VAT from Net right in the
+  // browser and only marks the row unsaved; the actual save happens via the Save button
+  if(!taxCode) return;
+  const netEl = document.getElementById('sapline-net-'+docId+'-'+idx);
+  const net = netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0;
+  let base, vat;
+  if(taxCode==='V7'){
+    base = Math.round(net*100/107*100)/100;
+    vat = Math.round((net-base)*100)/100;
+  } else { // VX — no VAT
+    base = net;
+    vat = 0;
+  }
+  const baseEl = document.getElementById('sapline-base-'+docId+'-'+idx);
+  const vatEl = document.getElementById('sapline-vat-'+docId+'-'+idx);
+  if(baseEl) baseEl.value = formatMoney(base);
+  if(vatEl) vatEl.value = formatMoney(vat);
+  recomputeSapLineTotalsLive(docId);
+  markSapLinesUnsaved(docId);
+}
+
 function showInfoModal(title, bodyHtml){
   let el = document.getElementById('busy-overlay');
   if(!el){
@@ -1577,7 +1799,7 @@ function dashDocRowHTML(d){
       <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
       <td>${d.docName}</td>
       <td>${fmtDate(d.dueDate)}</td>
-      <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}</td>
+      <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
       <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
       <td class="comment-cell">${d.comment || '-'}</td>
       <td>${trailHTML(d)}</td>
@@ -1994,12 +2216,16 @@ function approvalHTML(){
         ? `<button class="btn btn-sm btn-action" onclick="toggleRow('${d.id}')">${expanded?'ปิด':'ดำเนินการ'}</button>`
         : `<span style="font-size:11.5px;color:var(--ink-soft);" title="เอกสารประเภท+บริษัทนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${assignedActorName(d)||'-'}</span>`;
       const sapSubRows = (function(){
+        if(!expanded) return ''; // keep the collapsed list clean — the 📎 badge + modal cover quick viewing
         const lines = parseSapLines(d);
-        if(lines.length<=1) return '';
-        return lines.map((l,i)=>{
-          const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const canEditLines = state.approvalTab==='accountant' && canEditDocuments() && canActOnStage(d);
+        const showBreakdown = lines.length >= 2; // 1 line is the normal simple case — no separate breakdown needed
+        if(!showBreakdown && !canEditLines) return '';
+        const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+        let rows = !showBreakdown ? '' : lines.map((l,i)=>{
           const subId = l.subId || (d.id+'-'+(i+1));
-          return `
+          if(!canEditLines){
+            return `
         <tr style="background:var(--paper);font-size:12px;">
           <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
           <td style="color:var(--ink-soft);">SAP Line</td>
@@ -2016,7 +2242,62 @@ function approvalHTML(){
           <td></td>
           <td></td>
         </tr>`;
+          }
+          const editKey = d.id+'-'+i;
+          const detailRow = `
+        <tr style="background:#fff;display:none;" id="sapline-detail-${d.id}-${i}" data-sapline-detail="1">
+          <td colspan="14" style="padding:10px 14px;">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+              <div class="sap-wrap"><label>FI Doc Number</label><input class="sap-input" id="sapline-fidoc-${d.id}-${i}" type="text" value="${l.fiDoc||''}" style="width:140px;"></div>
+              <div class="sap-wrap"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="sapline-webdocno-${d.id}-${i}" type="text" value="${l.webDocNo||''}" style="width:150px;"></div>
+              <div class="sap-wrap">
+                <label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ค้นหาได้)</span></label>
+                <input class="sap-input" id="sapline-vendor-${d.id}-${i}" list="sapline-vendor-dl-${d.id}-${i}" type="text" value="${l.vendor||''}" oninput="onSapLineVendorInput('${d.id}',${i})" style="width:170px;">
+                <datalist id="sapline-vendor-dl-${d.id}-${i}">${state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('')}</datalist>
+              </div>
+              <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="sapline-vendorname-${d.id}-${i}" type="text" value="${l.vendorName||''}" style="width:170px;"></div>
+              <button class="btn btn-sm btn-approve" onclick="saveSapLineDetailsLocal('${d.id}',${i})">✓ ยืนยัน (ยังไม่บันทึกขึ้นระบบ)</button>
+              <button class="btn btn-sm btn-outline" onclick="toggleSapLineDetailLocal('${d.id}',${i})">ปิด</button>
+            </div>
+          </td>
+        </tr>`;
+          return `
+        <tr style="background:var(--paper);font-size:12px;">
+          <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
+          <td style="color:var(--ink-soft);">SAP Line</td>
+          <td id="sapline-vendorname-display-${d.id}-${i}">${l.vendorName||'-'}</td>
+          <td class="sap-cell" id="sapline-fidoc-display-${d.id}-${i}">${l.fiDoc||'-'}</td>
+          <td></td>
+          <td></td>
+          <td>${l.vendor||'-'}</td>
+          <td></td>
+          <td>${sapLineAmtInput(d.id,i,'vat',l.vat)}</td>
+          <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}</td>
+          <td>${sapLineAmtInput(d.id,i,'base',l.base)}</td>
+          <td>${sapLineAmtInput(d.id,i,'net',l.net)}</td>
+          <td>
+            <select id="sapline-tax-${d.id}-${i}" style="width:90px;" onchange="applySapLineTaxCalcLocal('${d.id}',${i},this.value)">
+              <option value="">— เลือก —</option>
+              <option value="V7" ${l.taxCode==='V7'?'selected':''}>V7</option>
+              <option value="VX" ${l.taxCode==='VX'?'selected':''}>VX</option>
+            </select>
+          </td>
+          <td style="white-space:nowrap;">
+            <button class="icon-btn" title="แก้ไข FI Doc/Vendor" onclick="toggleSapLineDetailLocal('${d.id}',${i})">✏️</button>
+            <button class="icon-btn" title="ลบบรรทัดนี้" onclick="removeSapLine('${d.id}',${i})">✕</button>
+          </td>
+        </tr>${detailRow}`;
         }).join('');
+        if(canEditLines){
+          rows += `
+        <tr style="background:#fff;">
+          <td colspan="14" style="text-align:center;padding:8px;">
+            <button class="btn btn-sm btn-outline" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
+            ${showBreakdown ? `<button class="btn btn-sm btn-outline" id="sapline-save-btn-${d.id}" onclick="saveSapLineRowsNow('${d.id}')" style="margin-left:8px;">💾 บันทึกรายการ SAP</button>` : ''}
+          </td>
+        </tr>`;
+        }
+        return rows;
       })();
       const mainRow = `
         <tr>
@@ -2089,8 +2370,8 @@ function approvalHTML(){
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
                 <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
-                <button type="button" class="btn btn-sm btn-outline" onclick="openManualSapEntry('${d.id}')" style="white-space:nowrap;">+ เพิ่มเอง</button>
               </div>
+              <div style="font-size:11px;color:var(--ink-soft);margin-top:5px;">หรือเลื่อนลงไปกด "+ เพิ่มเอง" ใต้แถวเอกสารนี้เพื่อพิมพ์ทีละบรรทัดตรงในตารางได้เลย ไม่ต้องอัปโหลดไฟล์</div>
               <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
             </div>
           </div>` : '';
@@ -2129,8 +2410,8 @@ function approvalHTML(){
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
                 <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
-                <button type="button" class="btn btn-sm btn-outline" onclick="openManualSapEntry('${d.id}')" style="white-space:nowrap;">+ เพิ่มเอง</button>
               </div>
+              <div style="font-size:11px;color:var(--ink-soft);margin-top:5px;">หรือเลื่อนลงไปกด "+ เพิ่มเอง" ใต้แถวเอกสารนี้เพื่อพิมพ์ทีละบรรทัดตรงในตารางได้เลย ไม่ต้องอัปโหลดไฟล์</div>
               <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
             </div>
           </div>` : '';
@@ -2258,6 +2539,27 @@ function openApprovalReport(id){
     <table class="data">
       <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
+        ${(function(){
+          const lines = parseSapLines(d);
+          if(lines.length>1){
+            return lines.map(l=>`
+        <tr>
+          <td>${l.subId||d.id}</td>
+          <td>${docTypeInfo(d.docType).label}</td>
+          <td>${d.docName||'-'}</td>
+          <td>${l.fiDoc||'-'}</td>
+          <td>${l.webDocNo||d.webDocNo||'-'}</td>
+          <td>${l.vendor||'-'}</td>
+          <td>${l.vendorName||'-'}</td>
+          <td>${payTypeLabel(d.payType)}</td>
+          <td>${fmt(d.dueDate)}</td>
+          <td style="text-align:right;">${money(num(l.vat))}</td>
+          <td style="text-align:right;">${money(num(l.wht))}</td>
+          <td style="text-align:right;">${money(num(l.base))}</td>
+          <td style="text-align:right;"><b>${money(num(l.net))}</b></td>
+        </tr>`).join('');
+          }
+          return `
         <tr>
           <td>${d.id}</td>
           <td>${docTypeInfo(d.docType).label}</td>
@@ -2272,7 +2574,8 @@ function openApprovalReport(id){
           <td style="text-align:right;">${money(num(d.whtAmount))}</td>
           <td style="text-align:right;">${money(num(d.baseAmount))}</td>
           <td style="text-align:right;"><b>${money(num(d.netAmount))}</b></td>
-        </tr>
+        </tr>`;
+        })()}
       </tbody>
     </table>
     <table class="trail">
@@ -2510,13 +2813,38 @@ function paymentHTML(){
     const rows = g.items.map(d=>{
       const checked = state.paymentSelected.includes(d.id);
       const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
+      const lines = parseSapLines(d);
+      const subRows = lines.length>1 ? lines.map(l=>{
+        const money2 = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        return `
+        <tr style="background:var(--paper);font-size:12px;">
+          <td></td>
+          <td class="mono" style="color:var(--blue);">↳ ${l.subId||''}</td>
+          <td style="color:var(--ink-soft);">SAP Line</td>
+          <td>${l.vendorName||'-'}</td>
+          <td class="sap-cell">${l.fiDoc||'-'}</td>
+          <td>${l.webDocNo||d.webDocNo||'-'}</td>
+          <td></td>
+          <td></td>
+          <td>${l.vendor||'-'}</td>
+          <td>${l.vendorName||'-'}</td>
+          <td>${payTypeLabel(d.payType)}</td>
+          <td class="mono">${(vRec&&vRec.bankAccount)||'-'}</td>
+          <td>${(vRec&&vRec.bankName)||'-'}</td>
+          <td style="text-align:right;">${money2(l.vat)}</td>
+          <td style="text-align:right;">${money2(l.wht)}</td>
+          <td style="text-align:right;">${money2(l.base)}</td>
+          <td style="text-align:right;"><b>${money2(l.net)}</b></td>
+        </tr>`;
+      }).join('') : '';
       return `
         <tr>
           <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="togglePaymentSelect('${d.id}')"></td>
           <td class="mono">${d.id}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
-          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length}</span>` : ''; })()}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
           <td>${d.webDocNo||'-'}</td>
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${d.approverBy||'-'}</td>
@@ -2529,7 +2857,7 @@ function paymentHTML(){
           <td style="text-align:right;">${moneyText(d.whtAmount)}</td>
           <td style="text-align:right;">${moneyText(d.baseAmount)}</td>
           <td style="text-align:right;"><b>${moneyText(d.netAmount)}</b></td>
-        </tr>`;
+        </tr>${subRows}`;
     }).join('');
     return header+rows;
   }).join('') : `<tr class="empty-row"><td colspan="17">ไม่มีเอกสารรอชำระเงิน</td></tr>`;
