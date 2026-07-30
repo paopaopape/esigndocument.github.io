@@ -2537,12 +2537,14 @@ function openApprovalReport(id){
       <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
     </div>
     <table class="data">
-      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         ${(function(){
           const lines = parseSapLines(d);
           if(lines.length>1){
-            return lines.map(l=>`
+            return lines.map(l=>{
+              const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+              return `
         <tr>
           <td>${l.subId||d.id}</td>
           <td>${docTypeInfo(d.docType).label}</td>
@@ -2552,13 +2554,17 @@ function openApprovalReport(id){
           <td>${l.vendor||'-'}</td>
           <td>${l.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
+          <td>${(vRec&&vRec.bankAccount)||'-'}</td>
+          <td>${(vRec&&vRec.bankName)||'-'}</td>
           <td>${fmt(d.dueDate)}</td>
           <td style="text-align:right;">${money(num(l.vat))}</td>
           <td style="text-align:right;">${money(num(l.wht))}</td>
           <td style="text-align:right;">${money(num(l.base))}</td>
           <td style="text-align:right;"><b>${money(num(l.net))}</b></td>
-        </tr>`).join('');
+        </tr>`;
+            }).join('');
           }
+          const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
           return `
         <tr>
           <td>${d.id}</td>
@@ -2569,6 +2575,8 @@ function openApprovalReport(id){
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
+          <td>${bankAcct||'-'}</td>
+          <td>${bankName||'-'}</td>
           <td>${fmt(d.dueDate)}</td>
           <td style="text-align:right;">${money(num(d.vatAmount))}</td>
           <td style="text-align:right;">${money(num(d.whtAmount))}</td>
