@@ -331,6 +331,27 @@ function vendorBankInfoText(vendorCode){
   if(!v || (!v.bankAccount && !v.bankName)) return 'ไม่มีข้อมูลบัญชี/ธนาคารของ Vendor นี้';
   return `เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}`;
 }
+function vendorBankAccountFor(d){
+  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  return (v && v.bankAccount) || d.manualBankAccount || '';
+}
+function vendorBankNameFor(d){
+  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  return (v && v.bankName) || d.manualBankName || '';
+}
+function vendorBankBlockHTML(d){
+  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  if(v && (v.bankAccount || v.bankName)){
+    return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`;
+  }
+  if(!d.vendor){
+    return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">ยังไม่ได้เลือก Vendor</span>`;
+  }
+  // no match in Vendor Master — let the accountant key the bank details in directly for this document
+  return `
+    <div class="sap-wrap"><label>เลขที่บัญชี <span style="font-weight:400;text-transform:none;color:var(--stamp-red);">(ไม่พบใน Vendor Master — กรอกเอง)</span></label><input class="sap-input" id="manualBankAccount-${d.id}" type="text" placeholder="เลขที่บัญชี" value="${d.manualBankAccount||''}" style="width:160px;"></div>
+    <div class="sap-wrap"><label>ธนาคาร</label><input class="sap-input" id="manualBankName-${d.id}" type="text" placeholder="ชื่อธนาคาร" value="${d.manualBankName||''}" style="width:160px;"></div>`;
+}
 function onVendorInput(id){
   const el = document.getElementById('vendor-'+id);
   if(!el) return;
@@ -340,8 +361,11 @@ function onVendorInput(id){
     const nameEl = document.getElementById('vendorName-'+id);
     if(nameEl) nameEl.value = match.vendorName;
   }
-  const bankEl = document.getElementById('vendor-bank-'+id);
-  if(bankEl) bankEl.textContent = vendorBankInfoText(el.value);
+  const doc = state.documents.find(d=>d.id===id);
+  const bankWrap = document.getElementById('vendor-bank-'+id);
+  if(bankWrap && doc){
+    bankWrap.innerHTML = vendorBankBlockHTML(Object.assign({}, doc, { vendor: el.value }));
+  }
 }
 /* Tax Code calculation (accounting): V7 = 7% VAT (Base = Net × 100/107, VAT = Net − Base); VX = no VAT (Base = Net, VAT = 0) */
 async function applyTaxCalc(id){
@@ -498,6 +522,8 @@ async function refreshData(){
       if(d.taxCode===undefined) d.taxCode='';
       if(d.sapLines===undefined) d.sapLines='';
       if(d.webDocNo===undefined) d.webDocNo='';
+      if(d.manualBankAccount===undefined) d.manualBankAccount='';
+      if(d.manualBankName===undefined) d.manualBankName='';
       if(d.trackClerkBy===undefined) d.trackClerkBy='';
       if(d.trackClerkDate===undefined) d.trackClerkDate='';
       if(d.trackAcct1By===undefined) d.trackAcct1By='';
@@ -2028,7 +2054,7 @@ function approvalHTML(){
               <datalist id="vendor-dl-${d.id}">${vendorOptions}</datalist>
             </div>
             <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="vendorName-${d.id}" type="text" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" value="${d.vendorName||''}" style="width:220px;"></div>
-            <span id="vendor-bank-${d.id}" style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">${vendorBankInfoText(d.vendor)}</span>
+            <div id="vendor-bank-${d.id}" style="display:contents;">${vendorBankBlockHTML(d)}</div>
           </div>
           ${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
           <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
@@ -2312,6 +2338,10 @@ async function processStage(id, decision){
   if(webDocNoEl){ patch.webDocNo = webDocNoEl.value.trim(); }
   if(vendorEl){ patch.vendor = vendorEl.value.trim(); }
   if(vendorNameEl){ patch.vendorName = vendorNameEl.value.trim(); }
+  const manualBankAccountEl1 = document.getElementById('manualBankAccount-'+id);
+  const manualBankNameEl1 = document.getElementById('manualBankName-'+id);
+  if(manualBankAccountEl1) patch.manualBankAccount = manualBankAccountEl1.value.trim();
+  if(manualBankNameEl1) patch.manualBankName = manualBankNameEl1.value.trim();
   // only write the flags back when their checkbox was actually shown on this form (accountant/reviewer stage),
   // so the approver stage (which has no checkboxes) never overwrites what was decided earlier
   if(skipApproverEl) patch.skipApprover = skipApprover ? 'TRUE' : '';
@@ -2373,6 +2403,10 @@ async function resubmitFromStage(id){
   if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
   if(vendorEl) patch.vendor = vendorEl.value.trim();
   if(vendorNameEl) patch.vendorName = vendorNameEl.value.trim();
+  const manualBankAccountEl2 = document.getElementById('manualBankAccount-'+id);
+  const manualBankNameEl2 = document.getElementById('manualBankName-'+id);
+  if(manualBankAccountEl2) patch.manualBankAccount = manualBankAccountEl2.value.trim();
+  if(manualBankNameEl2) patch.manualBankName = manualBankNameEl2.value.trim();
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
   if(payTypeEl) patch.payType = payTypeEl.value;
@@ -2475,7 +2509,7 @@ function paymentHTML(){
     const header = `<tr class="group-header"><td colspan="17">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
       const checked = state.paymentSelected.includes(d.id);
-      const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+      const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
       return `
         <tr>
           <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="togglePaymentSelect('${d.id}')"></td>
@@ -2489,8 +2523,8 @@ function paymentHTML(){
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
-          <td class="mono">${(vRec&&vRec.bankAccount)||'-'}</td>
-          <td>${(vRec&&vRec.bankName)||'-'}</td>
+          <td class="mono">${bankAcct||'-'}</td>
+          <td>${bankName||'-'}</td>
           <td style="text-align:right;">${moneyText(d.vatAmount)}</td>
           <td style="text-align:right;">${moneyText(d.whtAmount)}</td>
           <td style="text-align:right;">${moneyText(d.baseAmount)}</td>
@@ -2757,8 +2791,8 @@ async function exportVoucherReportToExcel(){
         lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
       });
     } else {
-      const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
-      lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'-', d.webDocNo||'-', d.vendor||'-', d.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0]);
+      const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
+      lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, d.docSAP||'-', d.webDocNo||'-', d.vendor||'-', d.vendorName||'-', payTypeLabel(d.payType), bankAcct||'-', bankName||'-', parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0]);
     }
   });
   const totals = lineRows.reduce((t,r)=>({vat:t.vat+r[10], wht:t.wht+r[11], base:t.base+r[12], net:t.net+r[13]}), {vat:0,wht:0,base:0,net:0});
@@ -2925,7 +2959,7 @@ function generateVoucherSummary(){
         </tr>`;
       }).join('');
     }
-    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
     return `
     <tr>
       <td>${d.id}</td>
@@ -2936,8 +2970,8 @@ function generateVoucherSummary(){
       <td>${d.vendor||'-'}</td>
       <td>${d.vendorName||'-'}</td>
       <td>${payTypeLabel(d.payType)}</td>
-      <td>${(vRec&&vRec.bankAccount)||'-'}</td>
-      <td>${(vRec&&vRec.bankName)||'-'}</td>
+      <td>${bankAcct||'-'}</td>
+      <td>${bankName||'-'}</td>
       <td style="text-align:right;">${money(num(d.vatAmount))}</td>
       <td style="text-align:right;">${money(num(d.whtAmount))}</td>
       <td style="text-align:right;">${money(num(d.baseAmount))}</td>
@@ -3034,6 +3068,10 @@ async function saveDraftChanges(id){
   if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
   if(vendorEl) patch.vendor = vendorEl.value.trim();
   if(vendorNameEl) patch.vendorName = vendorNameEl.value.trim();
+  const manualBankAccountEl3 = document.getElementById('manualBankAccount-'+id);
+  const manualBankNameEl3 = document.getElementById('manualBankName-'+id);
+  if(manualBankAccountEl3) patch.manualBankAccount = manualBankAccountEl3.value.trim();
+  if(manualBankNameEl3) patch.manualBankName = manualBankNameEl3.value.trim();
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
   if(payTypeEl) patch.payType = payTypeEl.value;
@@ -3252,11 +3290,11 @@ function exportPaymentListToExcel(){
   if(!list.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
   const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Web Doc No.','Due','ผู้อนุมัติ','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
   const rows = list.map(d=>{
-    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
     return [
       d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'', d.webDocNo||'', d.dueDate||'',
       d.approverBy||'', d.vendor||'', d.vendorName||'', payTypeLabel(d.payType),
-      (vRec&&vRec.bankAccount)||'', (vRec&&vRec.bankName)||'',
+      bankAcct||'', bankName||'',
       parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
     ];
   });
@@ -3317,7 +3355,7 @@ function openPaymentReport(docPayment){
         </tr>`;
       }).join('');
     }
-    const vRec = state.vendors.find(v=>String(v.vendorCode)===String(d.vendor));
+    const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
     return `
     <tr>
       <td>${dateStr}</td>
@@ -3326,8 +3364,8 @@ function openPaymentReport(docPayment){
       <td>${d.docSAP||'-'}</td>
       <td>${d.vendor||'-'}</td>
       <td>${d.vendorName||'-'}</td>
-      <td>${(vRec&&vRec.bankAccount)||'-'}</td>
-      <td>${(vRec&&vRec.bankName)||'-'}</td>
+      <td>${bankAcct||'-'}</td>
+      <td>${bankName||'-'}</td>
       <td>${d.createdBy||'-'}</td>
       <td style="text-align:right;">${money(num(d.vatAmount))}</td>
       <td style="text-align:right;">${money(num(d.whtAmount))}</td>
