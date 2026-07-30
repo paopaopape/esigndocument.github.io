@@ -272,8 +272,9 @@ let state = {
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], appSettings:{}, vendors:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
-  dashSearch:{type:'', name:'', status:''},
+  dashSearch:{type:'', name:'', status:'', id:'', createdBy:''},
   dashPage:1,
+  dashCompany:'all',
   approvalSearch:{type:'', name:'', due:'', createdBy:''},
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
@@ -1671,6 +1672,17 @@ function dashboardHTML(){
       docs = docs.filter(d=>state.user.companyCodes.includes(d.companyCode));
     }
   }
+  if(state.dashCompany!=='all') docs = docs.filter(d=>d.companyCode===state.dashCompany);
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="dash-company-select" onchange="setDashCompany(this.value)">
+      <option value="all" ${state.dashCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.dashCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+    <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่อดูเอกสารทีละบริษัท</span>
+  </div>`;
   const count = s => docs.filter(d=>d.status===s).length;
   const rejectCount = docs.filter(d=>d.status.startsWith('ตีกลับ')).length;
   const completeCount = count('Complete');
@@ -1695,10 +1707,12 @@ function dashboardHTML(){
   let filtered = docs.slice();
   if(s.type) filtered = filtered.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) filtered = filtered.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.id && s.id.trim()) filtered = filtered.filter(d=>d.id.toLowerCase().includes(s.id.trim().toLowerCase()));
+  if(s.createdBy && s.createdBy.trim()) filtered = filtered.filter(d=>(d.createdBy||'').toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   if(s.status){
     filtered = s.status==='__REJECTED__' ? filtered.filter(d=>d.status.startsWith('ตีกลับ')) : filtered.filter(d=>d.status===s.status);
   }
-  filtered.sort((a,b)=> (b.modifiedDate||b.createdDate).localeCompare(a.modifiedDate||a.createdDate));
+  filtered.sort((a,b)=> (b.createdDate||'').localeCompare(a.createdDate||''));
   const pageSize = 20;
   const totalPages = Math.max(1, Math.ceil(filtered.length/pageSize));
   if(state.dashPage > totalPages) state.dashPage = totalPages;
@@ -1707,11 +1721,17 @@ function dashboardHTML(){
 
   const filterBar = `
   <div class="filter-bar">
+    <div class="f-field"><label>ID</label>
+      <input id="dash-f-id" type="text" placeholder="เช่น D099" value="${s.id}" oninput="setDashSearch('id', this.value)" style="width:110px;">
+    </div>
     <div class="f-field"><label>ประเภทเอกสาร</label>
       <select id="dash-f-type" onchange="setDashSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select>
     </div>
-    <div class="f-field" style="flex:1;min-width:200px;"><label>ค้นหาชื่อเอกสาร</label>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหาชื่อเอกสาร</label>
       <input id="dash-f-name" type="text" placeholder="พิมพ์ชื่อเอกสาร..." value="${s.name}" oninput="setDashSearch('name', this.value)">
+    </div>
+    <div class="f-field"><label>สร้างโดย</label>
+      <input id="dash-f-createdby" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setDashSearch('createdBy', this.value)">
     </div>
     <button class="filter-clear" onclick="clearDashSearch()">ล้างตัวกรอง</button>
   </div>`;
@@ -1727,6 +1747,7 @@ function dashboardHTML(){
   </div>`;
 
   return `
+  ${companyHeader}
   ${stats}
   <div class="card">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
@@ -1739,13 +1760,14 @@ function dashboardHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>อัปเดตล่าสุด</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
     ${paginationHTML(state.dashPage, totalPages, 'gotoDashPage')}
   </div>`;
 }
+function setDashCompany(v){ state.dashCompany = v; state.dashPage = 1; render(); }
 function gotoDashPage(p){ state.dashPage = p; render(); }
 function paginationHTML(current, total, fnName){
   if(total<=1) return '';
@@ -1765,7 +1787,7 @@ function paginationHTML(current, total, fnName){
 }
 function setDashSearch(field, val){ state.dashSearch[field] = val; state.dashPage = 1; render(); }
 function setDashStatusFilter(val){ state.dashSearch.status = state.dashSearch.status===val ? '' : val; state.dashPage = 1; render(); }
-function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:''}; state.dashPage = 1; render(); }
+function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:''}; state.dashPage = 1; render(); }
 
 /* ---- Recent Activity row edit (accountant / reviewer only) ---- */
 function dashDocRowHTML(d){
@@ -1804,7 +1826,7 @@ function dashDocRowHTML(d){
       <td class="comment-cell">${d.comment || '-'}</td>
       <td>${trailHTML(d)}</td>
       <td>${d.createdBy}</td>
-      <td>${fmtDate(d.modifiedDate||d.createdDate)}</td>
+      <td>${fmtDate(d.createdDate)}</td>
       <td style="text-align:right;white-space:nowrap;">${pencil} ${cancelBtn} ${pdfBtn}</td>
     </tr>`;
 }
