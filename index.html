@@ -303,7 +303,24 @@ function fmtDate(d){
     return `${day}-${month}-${year}`;
   }catch(e){ return String(d); }
 }
-function amtInput(d, field, placeholder){ return `<input type="number" step="0.01" id="amt-${field}-${d.id}" class="sap-input" style="width:100px;" value="${d[field]===''||d[field]===undefined?'':d[field]}" placeholder="${placeholder}" onchange="saveAmountField('${d.id}','${field}',this.value)">`; }
+function formatMoney(v){
+  const n = parseFloat(String(v).replace(/,/g,''));
+  if(isNaN(n)) return '';
+  return n.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function unformatMoney(v){
+  return String(v==null?'':v).replace(/,/g,'').trim();
+}
+function amtInput(d, field, placeholder){
+  const raw = d[field]===''||d[field]===undefined ? '' : d[field];
+  const display = raw==='' ? '' : formatMoney(raw);
+  return `<input type="text" inputmode="decimal" id="amt-${field}-${d.id}" class="sap-input" style="width:100px;text-align:right;" value="${display}" placeholder="${placeholder}" onfocus="this.value=unformatMoney(this.value)" onblur="amtInputBlur(this,'${d.id}','${field}')">`;
+}
+async function amtInputBlur(el, id, field){
+  const raw = unformatMoney(el.value);
+  el.value = raw==='' ? '' : formatMoney(raw);
+  await saveAmountField(id, field, raw);
+}
 function payTypeLabel(v){
   const map = {'1':'1 = Direct', '2':'2 = Media', 'D':'D = Demand Draft'};
   return map[v] || '-';
@@ -338,7 +355,7 @@ async function applyTaxCalc(id){
   if(!doc) return;
   const patch = { id, taxCode };
   if(taxCode && netEl){
-    const net = parseFloat(netEl.value)||0;
+    const net = parseFloat(unformatMoney(netEl.value))||0;
     let base, vat;
     if(taxCode==='V7'){
       base = Math.round(net*100/107*100)/100;
@@ -347,8 +364,8 @@ async function applyTaxCalc(id){
       base = net;
       vat = 0;
     }
-    if(baseEl) baseEl.value = base.toFixed(2);
-    if(vatEl) vatEl.value = vat.toFixed(2);
+    if(baseEl) baseEl.value = formatMoney(base);
+    if(vatEl) vatEl.value = formatMoney(vat);
     patch.baseAmount = base.toFixed(2);
     patch.vatAmount = vat.toFixed(2);
   }
@@ -2999,7 +3016,7 @@ async function saveDraftChanges(id){
   if(!doc) return;
   if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
   const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
-  const getVal = elId => { const el = document.getElementById(elId); return el ? el.value : undefined; };
+  const getVal = elId => { const el = document.getElementById(elId); return el ? unformatMoney(el.value) : undefined; };
   const vat = getVal('amt-vatAmount-'+id), wht = getVal('amt-whtAmount-'+id), base = getVal('amt-baseAmount-'+id), net = getVal('amt-netAmount-'+id);
   if(vat!==undefined) patch.vatAmount = vat;
   if(wht!==undefined) patch.whtAmount = wht;
