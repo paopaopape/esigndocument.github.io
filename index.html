@@ -2665,6 +2665,12 @@ async function processStage(id, decision){
     // populate them (a reject is not a sign-off).
     patch[cfg.actor] = fullName(state.user);
     patch[cfg.date] = nowStr();
+    // reviewer is standing in as the approver too (skip-approver flag) — stamp both
+    // sign-offs together so the printed reports show both signatures for this one action
+    if(doc.status==='รอผู้ตรวจสอบ' && skipApprover){
+      patch.approverBy = fullName(state.user);
+      patch.approverDate = nowStr();
+    }
   }
   if(note && note.trim()){ patch[cfg.note] = appendNoteText(doc[cfg.note], note); }
   if(sapEl){ patch.docSAP = sapEl.value.trim(); }
