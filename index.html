@@ -810,7 +810,7 @@ function saveSapLineDetailsLocal(docId, idx){
   // reflect the edit directly on the visible row — no re-render needed
   const fiDocDisplay = document.getElementById('sapline-fidoc-display-'+docId+'-'+idx);
   const vendorNameDisplay = document.getElementById('sapline-vendorname-display-'+docId+'-'+idx);
-  if(fiDocDisplay) fiDocDisplay.textContent = lines[idx].fiDoc || '-';
+  if(fiDocDisplay) fiDocDisplay.innerHTML = (lines[idx].fiDoc || '-') + (lines[idx].webDocNo ? `<div style="font-size:10.5px;color:var(--ink-soft);font-weight:400;">${lines[idx].webDocNo}</div>` : '');
   if(vendorNameDisplay) vendorNameDisplay.textContent = lines[idx].vendorName || '-';
 
   toggleSapLineDetailLocal(docId, idx); // close the panel
@@ -864,6 +864,7 @@ function viewSapLines(id){
   const rows = lines.map(l=>`
     <tr>
       <td>${l.fiDoc||'-'}</td>
+      <td>${l.webDocNo||doc.webDocNo||'-'}</td>
       <td>${l.vendor||'-'}</td>
       <td>${l.vendorName||'-'}</td>
       <td style="text-align:right;">${money(l.vat)}</td>
@@ -873,7 +874,7 @@ function viewSapLines(id){
     </tr>`).join('');
   const body = `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">เอกสาร ${doc.id} · ${doc.docName} — นำเข้าจากไฟล์ SAP ทั้งหมด ${lines.length} FI Doc</div>
     <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-      <thead><tr><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">FI Doc Number</th><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor</th><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor Name</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">VAT</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">WHT</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Base</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Net</th></tr></thead>
+      <thead><tr><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">FI Doc Number</th><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Web Doc</th><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor</th><th style="text-align:left;border-bottom:1px solid var(--line);padding:6px;">Vendor Name</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">VAT</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">WHT</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Base</th><th style="text-align:right;border-bottom:1px solid var(--line);padding:6px;">Net</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   showInfoModal('รายละเอียด SAP Docs ที่ถูก Split', body);
@@ -2273,7 +2274,7 @@ function approvalHTML(){
           <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
           <td style="color:var(--ink-soft);">SAP Line</td>
           <td>${l.vendorName||'-'}</td>
-          <td class="sap-cell">${l.fiDoc||'-'}</td>
+          <td class="sap-cell">${l.fiDoc||'-'}${l.webDocNo?`<div style="font-size:10.5px;color:var(--ink-soft);font-weight:400;">${l.webDocNo}</div>`:''}</td>
           <td></td>
           <td></td>
           <td>${l.vendor||'-'}</td>
@@ -2309,7 +2310,7 @@ function approvalHTML(){
           <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
           <td style="color:var(--ink-soft);">SAP Line</td>
           <td id="sapline-vendorname-display-${d.id}-${i}">${l.vendorName||'-'}</td>
-          <td class="sap-cell" id="sapline-fidoc-display-${d.id}-${i}">${l.fiDoc||'-'}</td>
+          <td class="sap-cell" id="sapline-fidoc-display-${d.id}-${i}">${l.fiDoc||'-'}${l.webDocNo?`<div style="font-size:10.5px;color:var(--ink-soft);font-weight:400;">${l.webDocNo}</div>`:''}</td>
           <td></td>
           <td></td>
           <td>${l.vendor||'-'}</td>
