@@ -339,22 +339,26 @@ function vendorBankInfoText(vendorCode){
   return `เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}`;
 }
 function vendorBankAccountFor(d){
+  if(d.manualBankAccount) return d.manualBankAccount;
   const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
-  return (v && v.bankAccount) || d.manualBankAccount || '';
+  return (v && v.bankAccount) || '';
 }
 function vendorBankNameFor(d){
+  if(d.manualBankName) return d.manualBankName;
   const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
-  return (v && v.bankName) || d.manualBankName || '';
+  return (v && v.bankName) || '';
 }
 function vendorBankBlockHTML(d){
   const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
-  if(v && (v.bankAccount || v.bankName)){
+  const hasManual = d.manualBankAccount || d.manualBankName;
+  if(!hasManual && v && (v.bankAccount || v.bankName)){
     return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`;
   }
-  if(!d.vendor){
+  if(!d.vendor && !hasManual){
     return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">ยังไม่ได้เลือก Vendor</span>`;
   }
-  // no match in Vendor Master — let the accountant key the bank details in directly for this document
+  // no match in Vendor Master (or a manual entry already exists and takes priority) — let the
+  // accountant key the bank details in directly for this document
   return `
     <div class="sap-wrap"><label>เลขที่บัญชี <span style="font-weight:400;text-transform:none;color:var(--stamp-red);">(ไม่พบใน Vendor Master — กรอกเอง)</span></label><input class="sap-input" id="manualBankAccount-${d.id}" type="text" placeholder="เลขที่บัญชี" value="${d.manualBankAccount||''}" style="width:160px;"></div>
     <div class="sap-wrap"><label>ธนาคาร</label><input class="sap-input" id="manualBankName-${d.id}" type="text" placeholder="ชื่อธนาคาร" value="${d.manualBankName||''}" style="width:160px;"></div>`;
