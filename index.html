@@ -272,9 +272,10 @@ let state = {
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], appSettings:{}, vendors:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
-  dashSearch:{type:'', name:'', status:'', id:'', createdBy:''},
+  dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:''},
   dashPage:1,
   dashCompany:'all',
+  dashGroupBy:'none',
   approvalSearch:{type:'', name:'', due:'', createdBy:''},
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
@@ -1574,14 +1575,35 @@ function trailHTML(doc){
 }
 
 /* ============================= SHARED: GROUP BY DUE ============================= */
+function normalizeDateOnly(str){
+  if(!str) return '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(str)) return str; // already plain YYYY-MM-DD, nothing to fix
+  try{
+    const dt = new Date(str);
+    if(isNaN(dt.getTime())) return str;
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth()+1).padStart(2,'0');
+    const d = String(dt.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }catch(e){ return str; }
+}
 function groupByDue(list){
   const map = {};
   list.forEach(d=>{
-    const key = d.dueDate || 'ไม่ระบุ';
+    const key = normalizeDateOnly(d.dueDate) || 'ไม่ระบุ';
     if(!map[key]) map[key] = [];
     map[key].push(d);
   });
   return Object.keys(map).sort().map(key=>({due:key, items:map[key]}));
+}
+function groupByType(list){
+  const map = {};
+  list.forEach(d=>{
+    const key = d.docType || 'ไม่ระบุ';
+    if(!map[key]) map[key] = [];
+    map[key].push(d);
+  });
+  return Object.keys(map).map(key=>({type:key, items:map[key]}));
 }
 function docTypeSelectOptions(selected){
   return '<option value="">ทุกประเภท</option>' + state.docTypes.map(t=>`<option value="${t.key}" ${selected===t.key?'selected':''}>${t.label}</option>`).join('');
@@ -1735,15 +1757,38 @@ function dashboardHTML(){
   if(s.name && s.name.trim()) filtered = filtered.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
   if(s.id && s.id.trim()) filtered = filtered.filter(d=>d.id.toLowerCase().includes(s.id.trim().toLowerCase()));
   if(s.createdBy && s.createdBy.trim()) filtered = filtered.filter(d=>(d.createdBy||'').toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(s.due) filtered = filtered.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.status){
     filtered = s.status==='__REJECTED__' ? filtered.filter(d=>d.status.startsWith('ตีกลับ')) : filtered.filter(d=>d.status===s.status);
   }
   filtered.sort((a,b)=> (b.createdDate||'').localeCompare(a.createdDate||''));
-  const pageSize = 20;
-  const totalPages = Math.max(1, Math.ceil(filtered.length/pageSize));
-  if(state.dashPage > totalPages) state.dashPage = totalPages;
-  if(state.dashPage < 1) state.dashPage = 1;
-  const shown = filtered.slice((state.dashPage-1)*pageSize, state.dashPage*pageSize);
+
+  const groupBtn = (key, label) => `<button class="btn btn-sm ${state.dashGroupBy===key?'btn-approve':'btn-outline'}" onclick="setDashGroupBy('${key}')">${label}</button>`;
+  const groupBar = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+    <span style="font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Group:</span>
+    ${groupBtn('none','ทั้งหมด')}
+    ${groupBtn('due','รอบชำระเงิน')}
+    ${groupBtn('type','ประเภท')}
+  </div>`;
+
+  let rows, shownCount, totalPages = 1;
+  if(state.dashGroupBy==='due'){
+    const groups = groupByDue(filtered);
+    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="11">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    shownCount = filtered.length;
+  } else if(state.dashGroupBy==='type'){
+    const groups = groupByType(filtered);
+    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="11">${docTypeInfo(g.type).label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    shownCount = filtered.length;
+  } else {
+    const pageSize = 20;
+    totalPages = Math.max(1, Math.ceil(filtered.length/pageSize));
+    if(state.dashPage > totalPages) state.dashPage = totalPages;
+    if(state.dashPage < 1) state.dashPage = 1;
+    const shown = filtered.slice((state.dashPage-1)*pageSize, state.dashPage*pageSize);
+    rows = shown.map(d=>dashDocRowHTML(d)).join('') || `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    shownCount = shown.length;
+  }
 
   const filterBar = `
   <div class="filter-bar">
@@ -1759,10 +1804,11 @@ function dashboardHTML(){
     <div class="f-field"><label>สร้างโดย</label>
       <input id="dash-f-createdby" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setDashSearch('createdBy', this.value)">
     </div>
+    <div class="f-field"><label>Due วันชำระเงิน</label>
+      <input id="dash-f-due" type="date" value="${s.due}" onchange="setDashSearch('due', this.value)">
+    </div>
     <button class="filter-clear" onclick="clearDashSearch()">ล้างตัวกรอง</button>
   </div>`;
-
-  const rows = shown.map(d=>dashDocRowHTML(d)).join('') || `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
 
   const quickLinks = `
   <div style="display:flex;gap:6px;">
@@ -1780,9 +1826,10 @@ function dashboardHTML(){
       <div class="eyebrow">Recent Activity</div>
       ${quickLinks}
     </div>
-    <h3 style="margin-top:4px;">เอกสารล่าสุด (${shown.length}${filtered.length>shown.length?' จาก '+filtered.length:''})</h3>
+    <h3 style="margin-top:4px;">เอกสารล่าสุด (${shownCount}${state.dashGroupBy==='none' && filtered.length>shownCount?' จาก '+filtered.length:''})</h3>
     ${canEditDocuments() ? '<div class="helper">คุณสามารถแก้ไขรายละเอียดเอกสาร หรือกดยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด) ได้จากท้ายแถว</div>' : ''}
     <hr class="div">
+    ${groupBar}
     ${filterBar}
     <div class="table-scroll">
     <table>
@@ -1790,9 +1837,10 @@ function dashboardHTML(){
       <tbody>${rows}</tbody>
     </table>
     </div>
-    ${paginationHTML(state.dashPage, totalPages, 'gotoDashPage')}
+    ${state.dashGroupBy==='none' ? paginationHTML(state.dashPage, totalPages, 'gotoDashPage') : ''}
   </div>`;
 }
+function setDashGroupBy(v){ state.dashGroupBy = v; state.dashPage = 1; render(); }
 function setDashCompany(v){ state.dashCompany = v; state.dashPage = 1; render(); }
 function gotoDashPage(p){ state.dashPage = p; render(); }
 function paginationHTML(current, total, fnName){
@@ -1813,7 +1861,7 @@ function paginationHTML(current, total, fnName){
 }
 function setDashSearch(field, val){ state.dashSearch[field] = val; state.dashPage = 1; render(); }
 function setDashStatusFilter(val){ state.dashSearch.status = state.dashSearch.status===val ? '' : val; state.dashPage = 1; render(); }
-function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:''}; state.dashPage = 1; render(); }
+function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:'', due:''}; state.dashPage = 1; render(); }
 
 /* ---- Recent Activity row edit (accountant / reviewer only) ---- */
 function dashDocRowHTML(d){
@@ -2218,7 +2266,7 @@ function approvalHTML(){
   const s = state.approvalSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
 
   const filterBar = `
@@ -2848,7 +2896,7 @@ function paymentHTML(){
   const s = state.paymentSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
 
   // drop stale selections that fell out of the current filtered view
@@ -3044,7 +3092,7 @@ function voucherReportHTML(){
   const s = state.voucherReportSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
 
   state.voucherReportSelected = state.voucherReportSelected.filter(id=>list.some(d=>d.id===id));
@@ -3161,7 +3209,7 @@ function toggleSelectAllVoucherReport(checked){
   const s = state.voucherReportSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   state.voucherReportSelected = checked ? list.map(d=>d.id) : [];
   render();
@@ -3430,7 +3478,7 @@ function toggleSelectAllPayment(checked){
   const s = state.paymentSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   state.paymentSelected = checked ? list.map(d=>d.id) : [];
   render();
@@ -3675,7 +3723,7 @@ function exportPaymentListToExcel(){
   const s = state.paymentSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
-  if(s.due) list = list.filter(d=>d.dueDate===s.due);
+  if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   if(!list.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
   const header = ['ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Web Doc No.','Due','ผู้อนุมัติ','Vendor','Vendor Name','ประเภทการจ่าย','เลขที่บัญชี','ธนาคาร','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ'];
