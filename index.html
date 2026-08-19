@@ -282,7 +282,7 @@ let state = {
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
   paymentCompany:'all',
   paymentSelected:[], paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
-  voucherReportCompany:'all', voucherReportSelected:[], voucherReportTitle:'',
+  voucherReportCompany:'all', voucherReportSelected:[], voucherReportTitle:'', voucherEditRow:null,
   voucherReportSearch:{type:'', name:'', due:'', createdBy:''},
   pendingSapImport:null,
   sidebarCollapsed:false,
@@ -290,7 +290,7 @@ let state = {
   reportCompany:'all',
   trackingCompany:'all',
   reportSearch:{docPayment:'', by:'', from:'', to:''},
-  trackingSearch:{type:'', name:'', createdBy:'', from:'', to:'', status:''},
+  trackingSearch:{type:'', name:'', createdBy:'', from:'', to:'', status:'', id:'', docSAP:'', docPayment:'', idFrom:'', idTo:''},
   memberSearch:{name:'', email:''},
   permSearch:{name:'', email:''},
 };
@@ -492,6 +492,7 @@ function companyName(code){ const c = state.companies.find(c=>c.code===code); re
 function isEnglishOnly(str){ return /^[A-Za-z]+$/.test((str||'').trim()); }
 function canEditMemberDetails(){ return isAdmin(); }
 function canEditDocuments(){ return ['นักบัญชี','ผู้ตรวจสอบ','Admin'].includes(state.user.role); }
+function canEditVoucherReport(){ return state.user.role === 'ผู้ตรวจสอบ' || isAdmin(); }
 function companySelectOptions(selected){
   return state.companies.map(c=>`<option value="${c.code}" ${selected===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('');
 }
@@ -2071,7 +2072,9 @@ function canTrackDoc(doc, stage){
   return true;
 }
 function trackingStatusOf(d){
-  const complete = !!(d.trackAcct1By && d.trackAcct2By);
+  // นักบัญชี #2 = ปลายทางสุดท้าย — ติ๊กแค่คนเดียวก็ถือว่าเอกสารมาถึงปลายทางแล้วครบถ้วน
+  // ไม่จำเป็นต้องรอให้ #1 ติ๊กด้วย (แต่ถ้า #1 ติ๊กแล้ว #2 ยังไม่ติ๊ก ยังถือว่าเป็นแค่ "รับบางส่วน")
+  const complete = !!d.trackAcct2By;
   if(complete) return 'complete';
   const any = !!(d.trackClerkBy || d.trackAcct1By || d.trackAcct2By);
   return any ? 'partial' : 'none';
@@ -2116,6 +2119,15 @@ function trackingHTML(){
   if(s.type) list = list.filter(d=>d.docType===s.type);
   if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(s.id && s.id.trim()) list = list.filter(d=>d.id.toLowerCase().includes(s.id.trim().toLowerCase()));
+  if(s.idFrom || s.idTo){
+    const num = id => parseInt(String(id).replace(/[^\d]/g,''),10);
+    const fromN = s.idFrom ? num(s.idFrom) : -Infinity;
+    const toN = s.idTo ? num(s.idTo) : Infinity;
+    list = list.filter(d=>{ const n = num(d.id); return !isNaN(n) && n>=fromN && n<=toN; });
+  }
+  if(s.docSAP && s.docSAP.trim()) list = list.filter(d=>(d.docSAP||'').toLowerCase().includes(s.docSAP.trim().toLowerCase()));
+  if(s.docPayment && s.docPayment.trim()) list = list.filter(d=>(d.docPayment||'').toLowerCase().includes(s.docPayment.trim().toLowerCase()));
   if(s.status) list = list.filter(d=>trackingStatusOf(d)===s.status);
   if(s.from){ const from = new Date(s.from); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt >= from; }); }
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt <= to; }); }
@@ -2123,12 +2135,18 @@ function trackingHTML(){
 
   const filterBar = `
   <div class="filter-bar">
+    <div class="f-field"><label>ID</label><input id="track-f-id" type="text" placeholder="เช่น D099" value="${s.id}" oninput="setTrackingSearch('id', this.value)" style="width:110px;"></div>
+    <div class="f-field"><label>ID ตั้งแต่</label><input id="track-f-idfrom" type="text" placeholder="เช่น D001" value="${s.idFrom}" oninput="setTrackingSearch('idFrom', this.value)" style="width:90px;"></div>
+    <div class="f-field"><label>ถึง ID</label><input id="track-f-idto" type="text" placeholder="เช่น D300" value="${s.idTo}" oninput="setTrackingSearch('idTo', this.value)" style="width:90px;"></div>
     <div class="f-field"><label>ประเภทเอกสาร</label><select id="track-f-type" onchange="setTrackingSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select></div>
     <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร</label><input id="track-f-name" type="text" placeholder="ค้นหาชื่อเอกสาร..." value="${s.name}" oninput="setTrackingSearch('name', this.value)"></div>
+    <div class="f-field"><label>Doc SAP</label><input id="track-f-docsap" type="text" placeholder="ค้นหาเลข SAP..." value="${s.docSAP}" oninput="setTrackingSearch('docSAP', this.value)"></div>
+    <div class="f-field"><label>Doc Payment</label><input id="track-f-docpayment" type="text" placeholder="ค้นหาเลข Payment..." value="${s.docPayment}" oninput="setTrackingSearch('docPayment', this.value)"></div>
     <div class="f-field"><label>สร้างโดย</label><input id="track-f-created" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setTrackingSearch('createdBy', this.value)"></div>
     <div class="f-field"><label>จากวันที่สร้าง</label><input id="track-f-from" type="date" value="${s.from}" onchange="setTrackingSearch('from', this.value)"></div>
     <div class="f-field"><label>ถึงวันที่สร้าง</label><input id="track-f-to" type="date" value="${s.to}" onchange="setTrackingSearch('to', this.value)"></div>
     <button class="filter-clear" onclick="clearTrackingSearch()">ล้างตัวกรอง</button>
+    <button class="btn btn-sm btn-outline" onclick="printTrackingRegister()">🖨 พิมพ์ทะเบียนคุม (PDF)</button>
   </div>`;
 
   const rows = list.length ? list.map(d=>{
@@ -2137,6 +2155,8 @@ function trackingHTML(){
     <tr>
       <td class="mono">${d.id}</td>
       <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
+      <td class="mono">${d.docSAP||'-'}</td>
+      <td class="mono">${d.docPayment||'-'}</td>
       <td>${d.docName}</td>
       <td>${d.createdBy}</td>
       <td>${fmtDate(d.createdDate)}</td>
@@ -2145,20 +2165,26 @@ function trackingHTML(){
       <td>${trackStampCell(d,'trackAcct2By','trackAcct2Date','trackAcct2Note','นักบัญชี #2','acct2')}</td>
       <td>${complete ? '<span class="badge badge-forest">รับครบแล้ว</span>' : '<span class="badge badge-gold">รอรับเอกสาร</span>'}</td>
     </tr>`;
-  }).join('') : `<tr class="empty-row"><td colspan="9">ไม่พบเอกสาร</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบเอกสาร</td></tr>`;
 
   return `
   ${companyHeader}
   <div class="card">
     <div class="eyebrow">Tracking Invoice</div>
     <h3 style="margin-top:4px;">ติดตามการรับเอกสารตัวจริง (${list.length})</h3>
-    <div class="helper">ติ๊กรับเมื่อได้รับเอกสารตัวจริงจาก user — ไม่จำเป็นต้องผ่านธุรการก่อนก็ได้ (ข้ามไปติ๊กนักบัญชีคนที่ 1 ตรงได้เลย) ถือว่า "รับครบ" เมื่อนักบัญชีคนที่ 1 และคนที่ 2 ติ๊กรับทั้งคู่${canEdit?'':' — บัญชีของคุณดูได้อย่างเดียว'}${cancelledCount ? ` · เอกสารที่ถูกยกเลิกแล้ว ${cancelledCount} รายการ ถูกซ่อนจากรายการนี้ (ไม่ต้องติ๊กรับ)` : ''}</div>
+    <div class="helper">ติ๊กรับเมื่อได้รับเอกสารตัวจริงจาก user — ไม่จำเป็นต้องผ่านธุรการก่อนก็ได้ (ข้ามไปติ๊กนักบัญชีคนที่ 1 ตรงได้เลย) ถือว่า "รับครบ" เมื่อนักบัญชีคนที่ 2 ติ๊กรับ (เป็นปลายทางสุดท้าย)${canEdit?'':' — บัญชีของคุณดูได้อย่างเดียว'}${cancelledCount ? ` · เอกสารที่ถูกยกเลิกแล้ว ${cancelledCount} รายการ ถูกซ่อนจากรายการนี้ (ไม่ต้องติ๊กรับ)` : ''}</div>
     <hr class="div">
+    <datalist id="track-note-presets-acct2">
+      <option value="เอกสารอิเล็กทรอนิกส์">
+      <option value="รับเอกสารไม่ครบ">
+      <option value="รอเอกสารเพิ่มเติม">
+      <option value="เอกสารชำรุด">
+    </datalist>
     ${statCards}
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th>ธุรการ</th><th>นักบัญชี #1</th><th>นักบัญชี #2</th><th>สถานะรับเอกสาร</th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>Doc SAP</th><th>Doc Payment</th><th>ชื่อเอกสาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th>ธุรการ</th><th>นักบัญชี #1</th><th>นักบัญชี #2</th><th>สถานะรับเอกสาร</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -2166,15 +2192,17 @@ function trackingHTML(){
 }
 function trackStampCell(d, byField, dateField, noteField, label, stage){
   const canEdit = canTrackDoc(d, stage);
+  const canUntick = canEdit && (isAdmin() || d[byField]===fullName(state.user));
+  const listAttr = stage==='acct2' ? ' list="track-note-presets-acct2"' : '';
   const noteBox = canEdit
-    ? `<input type="text" class="sap-input" style="width:130px;font-size:11px;margin-top:4px;" placeholder="โน้ต (ถ้ามี)" value="${d[noteField]||''}" onchange="saveTrackNote('${d.id}','${noteField}',this.value)">`
+    ? `<input type="text" class="sap-input"${listAttr} style="width:130px;font-size:11px;margin-top:4px;" placeholder="โน้ต (ถ้ามี)" value="${d[noteField]||''}" onchange="saveTrackNote('${d.id}','${noteField}',this.value)">`
     : (d[noteField] ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">📝 ${d[noteField]}</div>` : '');
   if(d[byField]){
     return `
       <div style="white-space:nowrap;">
         <div style="display:flex;align-items:center;gap:4px;">
           <span class="badge badge-forest" title="${d[byField]} · ${d[dateField]||''}">✓ ${d[byField]}</span>
-          ${canEdit ? `<button class="icon-btn" style="width:22px;height:22px;" title="ยกเลิกรับเอกสาร" onclick="toggleTrackReceipt('${d.id}','${stage}')">✕</button>` : ''}
+          ${canUntick ? `<button class="icon-btn" style="width:22px;height:22px;" title="ยกเลิกรับเอกสาร" onclick="toggleTrackReceipt('${d.id}','${stage}')">✕</button>` : ''}
         </div>
         <div style="font-size:10.5px;color:var(--ink-soft);margin-top:2px;">${d[dateField]||''}</div>
         ${noteBox}
@@ -2189,7 +2217,7 @@ function trackStampCell(d, byField, dateField, noteField, label, stage){
 function setTrackingCompany(v){ state.trackingCompany = v; render(); }
 function setTrackingSearch(field, val){ state.trackingSearch[field] = val; render(); }
 function setTrackingStatusFilter(val){ state.trackingSearch.status = state.trackingSearch.status===val ? '' : val; render(); }
-function clearTrackingSearch(){ state.trackingSearch = {type:'', name:'', createdBy:'', from:'', to:'', status:''}; render(); }
+function clearTrackingSearch(){ state.trackingSearch = {type:'', name:'', createdBy:'', from:'', to:'', status:'', id:'', docSAP:'', docPayment:'', idFrom:'', idTo:''}; render(); }
 async function saveTrackNote(id, field, value){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
@@ -2199,6 +2227,86 @@ async function saveTrackNote(id, field, value){
   const res = await apiCall('updateDocument', patch);
   if(!res.success){ showToast('บันทึกโน้ตไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   doc[field] = value;
+}
+function printTrackingRegister(){
+  // rebuild the same filtered+scoped list currently shown on screen, so "พิมพ์" always
+  // matches whatever the person is looking at (including the ID range filter)
+  let scoped = state.documents.filter(d=>d.status!=='ยกเลิก');
+  if(state.user.role==='User'){
+    scoped = scoped.filter(d=>d.createdBy===fullName(state.user));
+  } else if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    scoped = scoped.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  }
+  if(state.trackingCompany!=='all') scoped = scoped.filter(d=>d.companyCode===state.trackingCompany);
+  const s = state.trackingSearch;
+  let list = scoped.slice();
+  if(s.type) list = list.filter(d=>d.docType===s.type);
+  if(s.name && s.name.trim()) list = list.filter(d=>d.docName.toLowerCase().includes(s.name.trim().toLowerCase()));
+  if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>d.createdBy.toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(s.id && s.id.trim()) list = list.filter(d=>d.id.toLowerCase().includes(s.id.trim().toLowerCase()));
+  if(s.idFrom || s.idTo){
+    const num = id => parseInt(String(id).replace(/[^\d]/g,''),10);
+    const fromN = s.idFrom ? num(s.idFrom) : -Infinity;
+    const toN = s.idTo ? num(s.idTo) : Infinity;
+    list = list.filter(d=>{ const n = num(d.id); return !isNaN(n) && n>=fromN && n<=toN; });
+  }
+  if(s.docSAP && s.docSAP.trim()) list = list.filter(d=>(d.docSAP||'').toLowerCase().includes(s.docSAP.trim().toLowerCase()));
+  if(s.docPayment && s.docPayment.trim()) list = list.filter(d=>(d.docPayment||'').toLowerCase().includes(s.docPayment.trim().toLowerCase()));
+  if(s.status) list = list.filter(d=>trackingStatusOf(d)===s.status);
+  if(s.from){ const from = new Date(s.from); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt >= from; }); }
+  if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); list = list.filter(d=>{ const dt = parseThaiDateStr(d.createdDate) || (d.createdDate?new Date(d.createdDate):null); return dt && dt <= to; }); }
+  list.sort((a,b)=>{ const na=parseInt(String(a.id).replace(/[^\d]/g,''),10), nb=parseInt(String(b.id).replace(/[^\d]/g,''),10); return na-nb; });
+
+  if(!list.length){ showToast('ไม่มีรายการที่ตรงกับตัวกรองให้พิมพ์'); return; }
+
+  const stampCell = (by, date) => by ? `✓ ${by}<br><span style="font-size:10px;color:#555;">${date||''}</span>` : '-';
+  const rows = list.map(d=>`
+    <tr>
+      <td>${d.id}</td>
+      <td>${docTypeInfo(d.docType).label}</td>
+      <td>${d.docSAP||'-'}</td>
+      <td>${d.docPayment||'-'}</td>
+      <td>${d.docName}</td>
+      <td>${d.createdBy}</td>
+      <td>${fmtDate(d.createdDate)}</td>
+      <td>${stampCell(d.trackClerkBy, d.trackClerkDate)}</td>
+      <td>${stampCell(d.trackAcct1By, d.trackAcct1Date)}</td>
+      <td>${stampCell(d.trackAcct2By, d.trackAcct2Date)}</td>
+      <td>${trackingStatusOf(d)==='complete' ? 'รับครบแล้ว' : (trackingStatusOf(d)==='partial' ? 'รับบางส่วน' : 'ยังไม่รับ')}</td>
+    </tr>`).join('');
+
+  const companyLabel = state.trackingCompany==='all' ? 'ทุกบริษัท' : (state.companies.find(c=>c.code===state.trackingCompany)||{}).name || state.trackingCompany;
+  const rangeLabel = (s.idFrom||s.idTo) ? `${s.idFrom||list[0].id} – ${s.idTo||list[list.length-1].id}` : `${list[0].id} – ${list[list.length-1].id}`;
+
+  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+    <title>ทะเบียนคุมเอกสาร · ${rangeLabel}</title>
+    <style>
+      body{font-family:'Segoe UI',Arial,sans-serif;padding:28px;color:#1a1a1a;}
+      h1{font-size:19px;text-align:center;margin-bottom:6px;}
+      .meta{font-size:12.5px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px 24px;color:#333;}
+      table{width:100%;border-collapse:collapse;font-size:11px;}
+      th,td{border:1px solid #999;padding:5px 6px;text-align:left;vertical-align:top;}
+      thead th{background:#eee;}
+      .no-print{margin-top:20px;}
+      @media print{ .no-print{display:none;} body{padding:10px;} }
+    </style></head>
+    <body>
+    <h1>ทะเบียนคุมเอกสาร (ปกกล่องจัดเก็บ)</h1>
+    <div class="meta">
+      <span>บริษัท: <b>${companyLabel}</b></span>
+      <span>ช่วง ID: <b>${rangeLabel}</b></span>
+      <span>จำนวน: <b>${list.length} รายการ</b></span>
+      <span>พิมพ์เมื่อ: <b>${fmtDate(new Date().toISOString())}</b></span>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>Doc SAP</th><th>Doc Payment</th><th>ชื่อเอกสาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th>ธุรการ</th><th>นักบัญชี #1</th><th>นักบัญชี #2</th><th>สถานะ</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
+  </body></html>`;
+  const blob = new Blob([html], {type:'text/html'});
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
 }
 async function toggleTrackReceipt(id, stage){
   const doc = state.documents.find(d=>d.id===id);
@@ -2213,6 +2321,10 @@ async function toggleTrackReceipt(id, stage){
   if(!pair) return;
   const [byField, dateField] = pair;
   const wasReceived = !!doc[byField];
+  if(wasReceived && !isAdmin() && doc[byField] !== fullName(state.user)){
+    showToast('ยกเลิกได้เฉพาะรายการที่ตัวเองติ๊กรับไว้เท่านั้น');
+    return;
+  }
   const patch = { id };
   patch[byField] = wasReceived ? '' : fullName(state.user);
   patch[dateField] = wasReceived ? '' : nowStr();
@@ -3118,7 +3230,7 @@ function voucherReportHTML(){
   const moneyText = v => (parseFloat(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const groups = groupByDue(list);
   const bodyRows = groups.length ? groups.map(g=>{
-    const header = `<tr class="group-header"><td colspan="13">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+    const header = `<tr class="group-header"><td colspan="14">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
       const checked = state.voucherReportSelected.includes(d.id);
       const lines = parseSapLines(d);
@@ -3140,27 +3252,40 @@ function voucherReportHTML(){
           <td style="text-align:right;">${money(l.wht)}</td>
           <td style="text-align:right;">${money(l.base)}</td>
           <td style="text-align:right;"><b>${money(l.net)}</b></td>
+          <td></td>
         </tr>`;
       }).join('') : '';
+      const editing = state.voucherEditRow === d.id;
+      const canEditThis = canEditVoucherReport() && lines.length<=1; // split docs are edited via the approval page's SAP line editor instead
+      const sapCell = editing
+        ? `<input type="text" id="ved-sap-${d.id}" value="${d.docSAP||''}" style="width:100px;" class="sap-input">`
+        : `${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}`;
+      const amtCell = (field, val) => editing
+        ? `<input type="text" inputmode="decimal" id="ved-${field}-${d.id}" value="${formatMoney(val)}" style="width:95px;text-align:right;" class="sap-input" onfocus="this.value=unformatMoney(this.value)">`
+        : moneyText(val);
+      const editBtn = !canEditVoucherReport() ? '' : !editing
+        ? (canEditThis ? `<button class="icon-btn" title="แก้ไข" onclick="toggleVoucherEditRow('${d.id}')">✏️</button>` : `<span style="font-size:10.5px;color:var(--ink-soft);" title="เอกสารนี้มีหลาย SAP Doc — แก้ไขได้ที่หน้าอนุมัติเอกสารแทน">📎 แก้ที่หน้าอนุมัติ</span>`)
+        : `<button class="icon-btn" title="บันทึก" onclick="saveVoucherEditRow('${d.id}')">✓</button><button class="icon-btn" title="ยกเลิก" onclick="cancelVoucherEditRow()">✕</button>`;
       return `
         <tr>
           <td style="text-align:center;"><input type="checkbox" ${checked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleVoucherReportSelect('${d.id}')"></td>
           <td class="mono">${d.id}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
-          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${sapCell}</td>
           <td>${d.webDocNo||'-'}</td>
           <td>${d.vendor||'-'}</td>
           <td>${d.vendorName||'-'}</td>
           <td>${d.approverBy||'-'}</td>
-          <td style="text-align:right;">${moneyText(d.vatAmount)}</td>
-          <td style="text-align:right;">${moneyText(d.whtAmount)}</td>
-          <td style="text-align:right;">${moneyText(d.baseAmount)}</td>
-          <td style="text-align:right;"><b>${moneyText(d.netAmount)}</b></td>
+          <td style="text-align:right;">${amtCell('vatAmount', d.vatAmount)}</td>
+          <td style="text-align:right;">${amtCell('whtAmount', d.whtAmount)}</td>
+          <td style="text-align:right;">${amtCell('baseAmount', d.baseAmount)}</td>
+          <td style="text-align:right;"><b>${amtCell('netAmount', d.netAmount)}</b></td>
+          <td style="white-space:nowrap;">${editBtn}</td>
         </tr>${subRows}`;
     }).join('');
     return header+rows;
-  }).join('') : `<tr class="empty-row"><td colspan="13">ไม่พบเอกสาร</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="14">ไม่พบเอกสาร</td></tr>`;
 
   const actionBar = `
   <div class="note-box" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;">
@@ -3188,8 +3313,8 @@ function voucherReportHTML(){
     ${actionBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ผู้อนุมัติ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th></tr>
-      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllVoucherReport(this.checked)" title="เลือกทั้งหมด"></th><th colspan="12"></th></tr></thead>
+      <thead><tr><th></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ผู้อนุมัติ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th></th></tr>
+      <tr><th><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleSelectAllVoucherReport(this.checked)" title="เลือกทั้งหมด"></th><th colspan="13"></th></tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
     </div>
@@ -3199,6 +3324,39 @@ function setVoucherReportCompany(v){ state.voucherReportCompany = v; state.vouch
 function setVoucherReportSearch(field, val){ state.voucherReportSearch[field] = val; render(); }
 function clearVoucherReportSearch(){ state.voucherReportSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
 function setVoucherReportTitle(v){ state.voucherReportTitle = v; }
+function toggleVoucherEditRow(id){
+  if(!canEditVoucherReport()){ showToast('เฉพาะหัวหน้าแผนกบัญชีเท่านั้นที่แก้ไขได้'); return; }
+  state.voucherEditRow = id;
+  render();
+}
+function cancelVoucherEditRow(){ state.voucherEditRow = null; render(); }
+async function saveVoucherEditRow(id){
+  if(!canEditVoucherReport()){ showToast('เฉพาะหัวหน้าแผนกบัญชีเท่านั้นที่แก้ไขได้'); return; }
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  const sapEl = document.getElementById('ved-sap-'+id);
+  const vatEl = document.getElementById('ved-vatAmount-'+id);
+  const whtEl = document.getElementById('ved-whtAmount-'+id);
+  const baseEl = document.getElementById('ved-baseAmount-'+id);
+  const netEl = document.getElementById('ved-netAmount-'+id);
+  const patch = {
+    id,
+    docSAP: sapEl ? sapEl.value.trim() : doc.docSAP,
+    vatAmount: vatEl ? unformatMoney(vatEl.value) : doc.vatAmount,
+    whtAmount: whtEl ? unformatMoney(whtEl.value) : doc.whtAmount,
+    baseAmount: baseEl ? unformatMoney(baseEl.value) : doc.baseAmount,
+    netAmount: netEl ? unformatMoney(netEl.value) : doc.netAmount,
+    modifiedBy: fullName(state.user), modifiedDate: nowStr(),
+  };
+  showBusyOverlay('กำลังบันทึกการแก้ไข กรุณารอสักครู่...');
+  const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+  state.voucherEditRow = null;
+  showToast('บันทึกการแก้ไขเรียบร้อย');
+  render();
+}
 function toggleVoucherReportSelect(id){
   const i = state.voucherReportSelected.indexOf(id);
   if(i===-1) state.voucherReportSelected.push(id); else state.voucherReportSelected.splice(i,1);
