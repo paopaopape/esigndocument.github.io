@@ -2182,6 +2182,20 @@ function submitApproveOwnHTML(){
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" name="skipFinance"> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)</label>
       <div class="field full"><label>บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)</label><textarea name="note" placeholder="บันทึกความเห็น (ไม่บังคับ)"></textarea></div>
 
+      <div style="width:100%;background:#FFF8E8;border:1px solid var(--gold);border-radius:8px;padding:10px 12px;margin-top:4px;">
+        <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">กรณีผู้ตรวจสอบไม่พร้อม — ข้ามไปผู้อนุมัติได้เลย (ไม่บังคับ)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select id="saown-skip-reason" onchange="toggleSaOwnSkipReasonOther()">
+            <option value="">— เลือกเหตุผล —</option>
+            <option value="ผู้ตรวจสอบลาป่วย">ผู้ตรวจสอบลาป่วย</option>
+            <option value="ผู้ตรวจสอบลาพักร้อน">ผู้ตรวจสอบลาพักร้อน</option>
+            <option value="ผู้ตรวจสอบลากิจ">ผู้ตรวจสอบลากิจ</option>
+            <option value="อื่นๆ">อื่นๆ (ระบุเอง)</option>
+          </select>
+          <input type="text" id="saown-skip-reason-other" placeholder="ระบุเหตุผล..." style="display:none;flex:1;min-width:160px;">
+        </div>
+      </div>
+
       <button class="btn btn-primary" type="submit" style="margin-top:14px;">✓ ส่งเข้าสู่กระบวนการ + อนุมัติขั้นนักบัญชีเลย</button>
     </form>
   </div>`;
@@ -2383,6 +2397,12 @@ function recomputeSaOwnSapTotalsLive(){
   if(netEl) netEl.value = formatMoney(sums.net);
   updateSaOwnHints();
 }
+function toggleSaOwnSkipReasonOther(){
+  const sel = document.getElementById('saown-skip-reason');
+  const other = document.getElementById('saown-skip-reason-other');
+  if(!sel || !other) return;
+  other.style.display = sel.value === 'อื่นๆ' ? 'block' : 'none';
+}
 
 async function submitApproveOwn(e){
   e.preventDefault();
@@ -2403,6 +2423,14 @@ async function submitApproveOwn(e){
   if(!payTypeVal) missing.push('ประเภทการจ่าย');
   if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่ง: '+missing.join(', ')); return; }
 
+  // ข้ามผู้ตรวจสอบเป็นเรื่องผิดปกติของ Flow ปกติ — ต้องมีเหตุผลกำกับไว้เสมอเพื่อการตรวจสอบย้อนหลัง,
+  // same rule as the normal accountant-stage skipReviewerStage()
+  const skipReasonSel = document.getElementById('saown-skip-reason');
+  const skipReasonOtherEl = document.getElementById('saown-skip-reason-other');
+  const skipReasonSelected = skipReasonSel ? skipReasonSel.value : '';
+  const skipReviewerReason = skipReasonSelected==='อื่นๆ' ? (skipReasonOtherEl ? skipReasonOtherEl.value.trim() : '') : skipReasonSelected;
+  if(skipReasonSelected && !skipReviewerReason){ showToast('กรุณาระบุเหตุผลที่ข้ามผู้ตรวจสอบในช่อง "อื่นๆ"'); return; }
+
   const dupe = state.documents.find(d=>
     String(d.docName||'').trim().toLowerCase()===String(docName||'').trim().toLowerCase() &&
     String(d.companyCode||'')===String(companyCode||'') &&
@@ -2411,6 +2439,9 @@ async function submitApproveOwn(e){
   if(dupe){
     const proceed = confirm('พบว่ามีเอกสารชื่อเดียวกันนี้วางบิลไว้แล้ว (ID: '+displayId(dupe.id)+')\nต้องการวางบิลซ้ำอีกครั้งจริงหรือไม่?');
     if(!proceed) return;
+  }
+  if(skipReviewerReason){
+    if(!confirm('ยืนยันข้ามขั้นตอนผู้ตรวจสอบ และส่งเอกสารนี้ตรงไปที่ผู้อนุมัติเลยใช่หรือไม่?\n\nเหตุผล: '+skipReviewerReason)) return;
   }
 
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังส่ง...'; }
@@ -2439,6 +2470,12 @@ async function submitApproveOwn(e){
   const note = (f.get('note')||'').trim();
   const skipApprover = !!document.getElementById('saown-skipApprover').checked;
   const skipFinance = !!e.target.querySelector('input[name="skipFinance"]').checked;
+  let accountantNoteVal = note ? appendNoteText('', note) : '';
+  const historyEntries = [{ stage:'นักบัญชี', actor: createdBy, date: nowStr(), note: note||'', action:'approve' }];
+  if(skipReviewerReason){
+    accountantNoteVal = appendNoteText(accountantNoteVal, 'ข้ามผู้ตรวจสอบ: '+skipReviewerReason);
+    historyEntries.push({ stage:'ผู้ตรวจสอบ', actor: createdBy, date: nowStr(), note: 'ข้ามโดยนักบัญชี เหตุผล: '+skipReviewerReason, action:'skip_reviewer' });
+  }
   const patch = {
     id: newId,
     docSAP: sapVal, webDocNo: (f.get('webDocNo')||'').trim(),
@@ -2449,14 +2486,16 @@ async function submitApproveOwn(e){
     payType: payTypeVal,
     skipApprover: skipApprover ? 'TRUE' : '', skipFinance: skipFinance ? 'TRUE' : '',
     accountantBy: createdBy, accountantDate: nowStr(),
-    accountantNote: note ? appendNoteText('', note) : '',
+    accountantNote: accountantNoteVal,
     // this form only self-approves the นักบัญชี stage — it must always forward to "รอผู้ตรวจสอบ"
-    // next. The skipApprover/skipFinance flags are just saved on the doc here; they only take
-    // effect later, exactly like the normal flow, when the ผู้ตรวจสอบ (reviewer) approves it
+    // next (unless skipReviewerReason sends it straight to "รอผู้อนุมัติ" instead, same as the
+    // normal flow's skipReviewerStage()). The skipApprover/skipFinance flags are just saved on
+    // the doc here; they only take effect later, exactly like the normal flow, when the
+    // ผู้ตรวจสอบ (reviewer) — or, if skipped, the ผู้อนุมัติ directly — approves it next
     // (see processStage(): doc.status==='รอผู้ตรวจสอบ' && skipApprover decides the jump then).
-    status: 'รอผู้ตรวจสอบ',
+    status: skipReviewerReason ? 'รอผู้อนุมัติ' : 'รอผู้ตรวจสอบ',
     modifiedBy: createdBy, modifiedDate: nowStr(),
-    historyLog: JSON.stringify([{ stage:'นักบัญชี', actor: createdBy, date: nowStr(), note: note||'', action:'approve' }]),
+    historyLog: JSON.stringify(historyEntries),
   };
   // if the accountant split this into multiple SAP sub-lines, fold the split + its aggregate
   // totals into the same patch — mirrors saveSapLinesToDoc()'s >=2-lines branch, just done in
