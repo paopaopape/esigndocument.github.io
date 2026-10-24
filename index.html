@@ -470,11 +470,32 @@ function getApprovalMapping(docType, companyCode){
 function stageRoleForDoc(doc){
   if(doc.status==='รอผู้ตรวจสอบ' || doc.status==='ตีกลับแก้ไข(ผู้อนุมัติ)') return 'reviewer';
   if(doc.status==='รอผู้อนุมัติ') return 'approver';
+  if(doc.status==='รอผู้อนุมัติ2' || doc.status==='ตีกลับแก้ไข(ผู้อนุมัติ2)') return 'approver2';
   return null; // accountant stage (and any other status) is not mapping-restricted
 }
+// approverId2/approverId3 on a mapping row are the optional extra approval tier(s) that sit
+// between ผู้อนุมัติ(1) and การเงิน. Each configured slot is independent (its own By/Date/Note
+// fields on the document) — if only one of the two is configured it's a simple sequential extra
+// tier; if BOTH are configured the document waits at 'รอผู้อนุมัติ2' until every slot below has
+// been signed (AND gate) before moving on. Returns [] when neither slot is configured for this
+// doc's type+company, meaning the stage simply doesn't apply/exist for this document.
+function approver2Slots(doc){
+  const mapping = getApprovalMapping(doc.docType, doc.companyCode);
+  if(!mapping) return [];
+  const slots = [];
+  if(mapping.approverId2) slots.push({ slot:2, id:mapping.approverId2, signedBy:doc.approver2By, signedDate:doc.approver2Date });
+  if(mapping.approverId3) slots.push({ slot:3, id:mapping.approverId3, signedBy:doc.approver3By, signedDate:doc.approver3Date });
+  return slots;
+}
+function pendingApprover2Slots(doc){ return approver2Slots(doc).filter(s=>!s.signedBy); }
 function canActOnStage(doc){
   const role = stageRoleForDoc(doc);
   if(!role) return true;
+  if(role==='approver2'){
+    const pending = pendingApprover2Slots(doc);
+    if(!pending.length) return true; // nothing left pending / nothing configured -> unrestricted fallback
+    return isAdmin() || pending.some(s=>s.id===state.user.id);
+  }
   const mapping = getApprovalMapping(doc.docType, doc.companyCode);
   if(!mapping) return true; // no mapping configured for this type+company -> unrestricted fallback
   const targetId = role==='reviewer' ? mapping.reviewerId : mapping.approverId;
@@ -484,6 +505,15 @@ function canActOnStage(doc){
 function assignedActorName(doc){
   const role = stageRoleForDoc(doc);
   if(!role) return null;
+  if(role==='approver2'){
+    const slots = approver2Slots(doc);
+    if(!slots.length) return null;
+    return slots.map(s=>{
+      const m = state.members.find(x=>x.id===s.id);
+      const name = m ? fullName(m) : '-';
+      return s.signedBy ? (name+' ✓') : name;
+    }).join(' , ');
+  }
   const mapping = getApprovalMapping(doc.docType, doc.companyCode);
   if(!mapping) return null;
   const targetId = role==='reviewer' ? mapping.reviewerId : mapping.approverId;
@@ -1637,13 +1667,17 @@ function trailHTML(doc){
   if(doc.status.startsWith('ตีกลับ')){
     return `<span class="status-pill reject">↺ ${doc.status}</span>`;
   }
-  const idx = STAGES.findIndex(s=>s.status===doc.status);
+  // รอผู้อนุมัติ2 (the optional parallel ผู้อนุมัติ2/3 tier) isn't its own dot on this trail —
+  // it's still conceptually part of the "ผู้อนุมัติ" stage, just with extra named approvers —
+  // so it maps onto the same dot as 'รอผู้อนุมัติ', with the label distinguishing it.
+  const idx = STAGES.findIndex(s=>s.status===(doc.status==='รอผู้อนุมัติ2' ? 'รอผู้อนุมัติ' : doc.status));
   const dots = STAGES.map((s,i)=>{
     const cls = i<idx ? 'done' : (i===idx ? 'current' : '');
     const bar = i>0 ? `<span class="bar ${i-1<idx?'done':''}"></span>` : '';
     return bar + `<span class="stg ${cls}" title="${s.label}"></span>`;
   }).join('');
-  return `<div><div class="trail">${dots}</div><div class="trail-label">รอ${STAGES[idx] ? STAGES[idx].label : ''}</div></div>`;
+  const trailLabel = doc.status==='รอผู้อนุมัติ2' ? 'ผู้อนุมัติ (ลำดับ 2/3)' : (STAGES[idx] ? STAGES[idx].label : '');
+  return `<div><div class="trail">${dots}</div><div class="trail-label">รอ${trailLabel}</div></div>`;
 }
 
 /* ============================= SHARED: GROUP BY DUE ============================= */
@@ -1818,6 +1852,7 @@ function dashboardHTML(){
     ${cardDef(count('รอนักบัญชี'), 'รอนักบัญชี', 'รอนักบัญชี', 's-accountant')}
     ${cardDef(count('รอผู้ตรวจสอบ'), 'รอผู้ตรวจสอบ', 'รอผู้ตรวจสอบ', 's-reviewer')}
     ${cardDef(count('รอผู้อนุมัติ'), 'รอผู้อนุมัติ', 'รอผู้อนุมัติ', 's-approver')}
+    ${count('รอผู้อนุมัติ2') ? cardDef(count('รอผู้อนุมัติ2'), 'รอผู้อนุมัติ2', 'ผู้อนุมัติ (ลำดับ 2/3)', 's-approver') : ''}
     ${cardDef(count('รอชำระเงิน'), 'รอชำระเงิน', 'รอชำระเงิน', 's-finance')}
     ${cardDef(completeCount, 'Complete', 'Complete', 's-complete')}
     ${cardDef(rejectCount, '__REJECTED__', 'ตีกลับแก้ไข', 's-reject')}
@@ -1959,7 +1994,7 @@ function dashDocRowHTML(d){
     </tr>`;
   }
   const pencil = (canEditDocuments() || canOwnerEditDoc(d)) ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openDashDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
-  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ'].includes(d.status)) || canOwnerEditDoc(d))
+  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d))
     ? `<button class="icon-btn" style="color:var(--ink-soft);border-color:var(--ink-soft);" title="ยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด)" onclick="cancelDoc('${d.id}')">✕</button>` : '';
   const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
   return `
@@ -2817,22 +2852,24 @@ async function toggleTrackReceipt(id, stage){
 const REJECT_HANDLED_BY_TAB = {
   accountant: 'ตีกลับแก้ไข(ผู้ตรวจสอบ)',   // reviewer rejected -> accountant (previous stage) fixes & resubmits
   reviewer:   'ตีกลับแก้ไข(ผู้อนุมัติ)',     // approver rejected -> reviewer (previous stage) fixes & resubmits
-  approver:   null,
+  approver:   'ตีกลับแก้ไข(ผู้อนุมัติ2)',    // approver2/3 rejected -> approver(1) (previous stage) fixes & resubmits
 };
 const REJECT_REASON_FIELD = {
   'ตีกลับแก้ไข(ผู้ตรวจสอบ)': {field:'reviewerNote', label:'ผู้ตรวจสอบ'},
   'ตีกลับแก้ไข(ผู้อนุมัติ)': {field:'approverNote', label:'ผู้อนุมัติ'},
+  'ตีกลับแก้ไข(ผู้อนุมัติ2)': {field:'approver2Note', label:'ผู้อนุมัติ (ลำดับ 2/3)'},
 };
 const RESUBMIT_CFG = {
   'ตีกลับแก้ไข(ผู้ตรวจสอบ)': {next:'รอผู้ตรวจสอบ', actor:'accountantBy', date:'accountantDate', note:'accountantNote'},
   'ตีกลับแก้ไข(ผู้อนุมัติ)': {next:'รอผู้อนุมัติ', actor:'reviewerBy', date:'reviewerDate', note:'reviewerNote'},
+  'ตีกลับแก้ไข(ผู้อนุมัติ2)': {next:'รอผู้อนุมัติ2', actor:'approverBy', date:'approverDate', note:'approverNote'},
 };
 
 function approvalHTML(){
   const tabMeta = {
     accountant:{status:'รอนักบัญชี', label:'นักบัญชี'},
     reviewer:{status:'รอผู้ตรวจสอบ', label:'ผู้ตรวจสอบ'},
-    approver:{status:'รอผู้อนุมัติ', label:'ผู้อนุมัติ'},
+    approver:{status:'รอผู้อนุมัติ', extraStatus:'รอผู้อนุมัติ2', label:'ผู้อนุมัติ'},
   };
   const allowed = allowedApprovalTabs();
   const tabs = allowed.map(t=>`<div class="tab ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')">${tabMeta[t].label}</div>`).join('');
@@ -2850,7 +2887,7 @@ function approvalHTML(){
     <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่ออนุมัติทีละบริษัท</span>
   </div>`;
 
-  let list = state.documents.filter(d=> d.status===meta.status || (rejectBackStatus && d.status===rejectBackStatus));
+  let list = state.documents.filter(d=> d.status===meta.status || (meta.extraStatus && d.status===meta.extraStatus) || (rejectBackStatus && d.status===rejectBackStatus));
   if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
     list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
   }
@@ -2875,7 +2912,7 @@ function approvalHTML(){
   const bodyRows = groups.length ? groups.map(g=>{
     const header = `<tr class="group-header"><td colspan="14">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
     const rows = g.items.map(d=>{
-      const isRejectedItem = d.status !== meta.status;
+      const isRejectedItem = d.status !== meta.status && !(meta.extraStatus && d.status===meta.extraStatus);
       const expanded = state.expandedRow===d.id;
 
       if(state.approvalDocEditId === d.id){
@@ -3077,7 +3114,7 @@ function approvalHTML(){
               <div style="width:100%;margin-top:12px;">
                 ${(function(){
                   const noteFieldMap = {'รอนักบัญชี':'accountantNote','รอผู้ตรวจสอบ':'reviewerNote','รอผู้อนุมัติ':'approverNote'};
-                  const existing = d[noteFieldMap[d.status]];
+                  const existing = d.status==='รอผู้อนุมัติ2' ? [d.approver2Note,d.approver3Note].filter(Boolean).join('\n') : d[noteFieldMap[d.status]];
                   return existing ? `<div style="background:var(--paper);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:var(--ink-soft);white-space:pre-line;max-height:120px;overflow:auto;"><b style="color:var(--gold);text-transform:uppercase;font-size:10px;letter-spacing:.04em;">ประวัติความเห็นก่อนหน้า</b><br>${existing}</div>` : '';
                 })()}
                 <textarea id="note-${d.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
@@ -3108,7 +3145,9 @@ function approvalHTML(){
         </tr>`;
       } else if(expanded && isRejectedItem && canAct){
         const reasonCfg = REJECT_REASON_FIELD[d.status];
-        const reasonText = reasonCfg ? (d[reasonCfg.field] || 'ไม่ได้ระบุเหตุผล') : '';
+        const reasonText = d.status==='ตีกลับแก้ไข(ผู้อนุมัติ2)'
+          ? (d.approver2Note || d.approver3Note || 'ไม่ได้ระบุเหตุผล')
+          : (reasonCfg ? (d[reasonCfg.field] || 'ไม่ได้ระบุเหตุผล') : '');
         const sapField = (state.approvalTab==='accountant' || state.approvalTab==='reviewer') ? `
           <div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin-bottom:6px;">ข้อมูลเอกสาร SAP</div>
           <div style="width:100%;background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:4px;display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
@@ -3229,7 +3268,9 @@ function openApprovalReport(id){
     ['นักบัญชี', d.accountantBy, d.accountantDate, d.accountantNote],
     ['ผู้ตรวจสอบ', d.reviewerBy, d.reviewerDate, d.reviewerNote],
     ['ผู้อนุมัติ', d.approverBy, d.approverDate, d.approverNote],
-  ].map(([label,by,date,note])=>`
+  ].concat(d.approver2By ? [['ผู้อนุมัติ2', d.approver2By, d.approver2Date, d.approver2Note]] : [])
+   .concat(d.approver3By ? [['ผู้อนุมัติ3', d.approver3By, d.approver3Date, d.approver3Note]] : [])
+   .map(([label,by,date,note])=>`
     <tr>
       <td>${label}</td>
       <td>${by||'-'}</td>
@@ -3313,10 +3354,12 @@ function openApprovalReport(id){
       <thead><tr><th>ขั้นตอน</th><th>ผู้ดำเนินการ</th><th>วันที่</th><th>การดำเนินการ</th><th>หมายเหตุ</th></tr></thead>
       <tbody>${trailRows}</tbody>
     </table>
-    <div class="sign-grid">
+    <div class="sign-grid" style="grid-template-columns:repeat(${3+(d.approver2By?1:0)+(d.approver3By?1:0)},1fr);">
       ${signBlock('ผู้จัดเตรียม', d.accountantBy, 'นักบัญชี')}
       ${signBlock('ผู้ตรวจสอบ', d.reviewerBy, 'ผู้ตรวจสอบ')}
       ${signBlock('ผู้อนุมัติ', d.approverBy, 'ผู้อนุมัติ')}
+      ${d.approver2By ? signBlock('ผู้อนุมัติ (ลำดับ 2)', d.approver2By, 'ผู้อนุมัติ') : ''}
+      ${d.approver3By ? signBlock('ผู้อนุมัติ (ลำดับ 3)', d.approver3By, 'ผู้อนุมัติ') : ''}
     </div>
     <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
   </body></html>`;
@@ -3366,10 +3409,21 @@ async function processStage(id, decision){
     if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อผู้ตรวจสอบ: '+missing.join(', ')); return; }
   }
 
+  // the parallel ผู้อนุมัติ2/3 stage has no single fixed actor field — which slot this action
+  // stamps depends on which mapped person is acting (Admin falls back to whichever slot is
+  // still pending) — resolve that first so it can drive both cfg below and the "are we all
+  // done yet" check further down.
+  let my2Slot = null;
+  if(doc.status==='รอผู้อนุมัติ2'){
+    const slots2 = approver2Slots(doc);
+    my2Slot = isAdmin() ? (slots2.find(s=>!s.signedBy) || slots2[0] || null) : (slots2.find(s=>s.id===state.user.id) || null);
+    if(!my2Slot){ showToast('ไม่พบสิทธิ์การอนุมัติของท่านในขั้นตอนนี้'); return; }
+  }
   const cfg = {
     'รอนักบัญชี': {actor:'accountantBy', date:'accountantDate', note:'accountantNote', reject:'ตีกลับแก้ไข(นักบัญชี)'},
     'รอผู้ตรวจสอบ': {actor:'reviewerBy', date:'reviewerDate', note:'reviewerNote', reject:'ตีกลับแก้ไข(ผู้ตรวจสอบ)'},
     'รอผู้อนุมัติ': {actor:'approverBy', date:'approverDate', note:'approverNote', reject:'ตีกลับแก้ไข(ผู้อนุมัติ)'},
+    'รอผู้อนุมัติ2': my2Slot ? {actor:'approver'+my2Slot.slot+'By', date:'approver'+my2Slot.slot+'Date', note:'approver'+my2Slot.slot+'Note', reject:'ตีกลับแก้ไข(ผู้อนุมัติ2)'} : null,
   }[doc.status];
   if(!cfg) return;
   const patch = { id, modifiedBy: fullName(state.user), modifiedDate: nowStr() };
@@ -3406,12 +3460,24 @@ async function processStage(id, decision){
   } else if(doc.status==='รอนักบัญชี'){
     patch.status = 'รอผู้ตรวจสอบ';
   } else if(doc.status==='รอผู้ตรวจสอบ'){
-    patch.status = skipApprover ? (skipFinance ? 'Complete' : 'รอชำระเงิน') : 'รอผู้อนุมัติ';
+    // skipApprover means no separate approver sign-off is needed at all for this document,
+    // so it bypasses the ผู้อนุมัติ2/3 tier(s) too, same as it bypasses ผู้อนุมัติ(1)
+    if(skipApprover){
+      patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
+    } else {
+      patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : 'รอผู้อนุมัติ';
+    }
   } else if(doc.status==='รอผู้อนุมัติ'){
-    patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
+    patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : (skipFinance ? 'Complete' : 'รอชำระเงิน');
+  } else if(doc.status==='รอผู้อนุมัติ2'){
+    // move on only once every configured slot (approverId2 AND approverId3, when both are set)
+    // has signed off — my2Slot just got stamped above, so treat it as already-signed here
+    const stillPending = approver2Slots(doc).some(s => s.id!==my2Slot.id && !s.signedBy);
+    patch.status = stillPending ? 'รอผู้อนุมัติ2' : (skipFinance ? 'Complete' : 'รอชำระเงิน');
   }
 
-  const stageLabel = {'รอนักบัญชี':'นักบัญชี','รอผู้ตรวจสอบ':'ผู้ตรวจสอบ','รอผู้อนุมัติ':'ผู้อนุมัติ'}[doc.status] || doc.status;
+  const stageLabel = {'รอนักบัญชี':'นักบัญชี','รอผู้ตรวจสอบ':'ผู้ตรวจสอบ','รอผู้อนุมัติ':'ผู้อนุมัติ'}[doc.status]
+    || (doc.status==='รอผู้อนุมัติ2' && my2Slot ? ('ผู้อนุมัติ'+my2Slot.slot) : doc.status);
   patch.historyLog = appendHistoryLog(doc, {
     stage: stageLabel,
     actor: fullName(state.user),
@@ -3538,7 +3604,7 @@ async function resubmitFromStage(id){
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
   if(payTypeEl) patch.payType = payTypeEl.value;
-  const resubmitStageLabel = {'accountantBy':'นักบัญชี','reviewerBy':'ผู้ตรวจสอบ'}[cfg.actor] || cfg.actor;
+  const resubmitStageLabel = {'accountantBy':'นักบัญชี','reviewerBy':'ผู้ตรวจสอบ','approverBy':'ผู้อนุมัติ'}[cfg.actor] || cfg.actor;
   patch.historyLog = appendHistoryLog(doc, {
     stage: resubmitStageLabel,
     actor: fullName(state.user),
@@ -4840,15 +4906,20 @@ function adminSettingsHTML(){
   const mappingRows = state.approvalMappings.map(mp=>{
     const reviewerName = state.members.find(m=>m.id===mp.reviewerId);
     const approverName = state.members.find(m=>m.id===mp.approverId);
+    const approver2Name = state.members.find(m=>m.id===mp.approverId2);
+    const approver3Name = state.members.find(m=>m.id===mp.approverId3);
+    const unset = '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>';
     return `
     <tr>
       <td><span class="badge badge-${docTypeInfo(mp.docType).color}">${docTypeInfo(mp.docType).label}</span></td>
       <td>${companyName(mp.companyCode)}</td>
-      <td>${reviewerName ? fullName(reviewerName) : '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>'}</td>
-      <td>${approverName ? fullName(approverName) : '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>'}</td>
+      <td>${reviewerName ? fullName(reviewerName) : unset}</td>
+      <td>${approverName ? fullName(approverName) : unset}</td>
+      <td>${approver2Name ? fullName(approver2Name) : unset}</td>
+      <td>${approver3Name ? fullName(approver3Name) : unset}</td>
       <td><button class="btn btn-sm btn-reject" onclick="deleteApprovalMapping('${mp.id}')">ลบ</button></td>
     </tr>`;
-  }).join('') || `<tr class="empty-row"><td colspan="5">ยังไม่มี Mapping — คู่ที่ไม่ได้กำหนดจะเปิดให้ role ที่ตรงกันดำเนินการได้ตามปกติ</td></tr>`;
+  }).join('') || `<tr class="empty-row"><td colspan="7">ยังไม่มี Mapping — คู่ที่ไม่ได้กำหนดจะเปิดให้ role ที่ตรงกันดำเนินการได้ตามปกติ</td></tr>`;
 
   return `
   <div class="card">
@@ -4886,17 +4957,19 @@ function adminSettingsHTML(){
   <div class="card">
     <div class="eyebrow">Approval Mapping</div>
     <h3 style="margin-top:4px;">มอบหมายผู้ตรวจสอบ / ผู้อนุมัติ ตามประเภทเอกสาร + บริษัท</h3>
-    <div class="helper">เมื่อกำหนดคู่นี้ไว้ เฉพาะบุคคลที่ mapping เท่านั้นที่จะดำเนินการ (อนุมัติ/ตีกลับ) เอกสารประเภท+บริษัทนั้นได้ — คู่ที่ยังไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ (Admin ทำได้เสมอไม่ว่าจะ mapping ไว้หรือไม่)</div>
+    <div class="helper">เมื่อกำหนดคู่นี้ไว้ เฉพาะบุคคลที่ mapping เท่านั้นที่จะดำเนินการ (อนุมัติ/ตีกลับ) เอกสารประเภท+บริษัทนั้นได้ — คู่ที่ยังไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ (Admin ทำได้เสมอไม่ว่าจะ mapping ไว้หรือไม่)<br>ผู้อนุมัติคนที่ 2/3 เป็นขั้นเพิ่มเติมหลังผู้อนุมัติหลัก (ก่อนถึงขั้นการเงิน) — เปิดช่องไหนก็กำหนดเฉพาะช่องนั้น ถ้ากำหนดทั้ง 2 ช่อง เอกสารจะต้องได้รับอนุมัติจากทั้งสองคนก่อนจึงจะผ่านไปขั้นถัดไป</div>
     <hr class="div">
     <form onsubmit="saveApprovalMapping(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
       <div class="field" style="margin-bottom:0;"><label>ประเภทเอกสาร</label><select name="docType" required>${state.docTypes.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}</select></div>
       <div class="field" style="margin-bottom:0;"><label>บริษัท</label><select name="companyCode" required>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
       <div class="field" style="margin-bottom:0;"><label>ผู้ตรวจสอบ</label><select name="reviewerId"><option value="">— ไม่กำหนด —</option>${reviewerOptions}</select></div>
       <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติ</label><select name="approverId"><option value="">— ไม่กำหนด —</option>${approverOptions}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติคนที่ 2</label><select name="approverId2"><option value="">— ไม่กำหนด —</option>${approverOptions}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติคนที่ 3</label><select name="approverId3"><option value="">— ไม่กำหนด —</option>${approverOptions}</select></div>
       <button class="btn btn-primary" type="submit">บันทึก Mapping</button>
     </form>
     <table>
-      <thead><tr><th>ประเภทเอกสาร</th><th>บริษัท</th><th>ผู้ตรวจสอบ</th><th>ผู้อนุมัติ</th><th></th></tr></thead>
+      <thead><tr><th>ประเภทเอกสาร</th><th>บริษัท</th><th>ผู้ตรวจสอบ</th><th>ผู้อนุมัติ</th><th>ผู้อนุมัติ 2</th><th>ผู้อนุมัติ 3</th><th></th></tr></thead>
       <tbody>${mappingRows}</tbody>
     </table>
   </div>
@@ -5297,7 +5370,9 @@ async function saveApprovalMapping(e){
   const companyCode = f.get('companyCode');
   const reviewerId = f.get('reviewerId') || '';
   const approverId = f.get('approverId') || '';
-  const res = await apiCall('saveApprovalMapping', { docType, companyCode, reviewerId, approverId });
+  const approverId2 = f.get('approverId2') || '';
+  const approverId3 = f.get('approverId3') || '';
+  const res = await apiCall('saveApprovalMapping', { docType, companyCode, reviewerId, approverId, approverId2, approverId3 });
   if(!res.success){ showToast('บันทึก Mapping ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('บันทึก Mapping เรียบร้อย');
   e.target.reset();
