@@ -239,9 +239,13 @@ const ROLE_LABELS = {
   'ผู้ตรวจสอบ': 'ผู้ตรวจสอบ (หัวหน้าแผนกบัญชี)',
   'ผู้อนุมัติ': 'ผู้อนุมัติ (ผู้จัดการฝ่ายบัญชีและการเงิน)',
   'เจ้าหน้าที่การเงิน': 'เจ้าหน้าที่การเงิน',
+  'หัวหน้าแผนกการเงิน': 'หัวหน้าแผนกการเงิน (ผู้ตรวจสอบ Payment)',
+  'ผู้อนุมัติการเงิน': 'ผู้อนุมัติการเงิน (ผู้อนุมัติ Payment)',
   'Admin': 'Admin (ผู้ดูแลระบบ)'
 };
-const ROLE_ORDER = ['User','ธุรการ','นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','เจ้าหน้าที่การเงิน','Admin'];
+const ROLE_ORDER = ['User','ธุรการ','นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'];
+// the 2 Payment-close-out roles above are a SEPARATE flow from the 4 flow stages below (STAGES) —
+// they operate on PaymentVouchers records, not Documents, see the "PAYMENT VOUCHER CLOSE-OUT" section
 
 const STAGES = [
   {key:'accountant', label:'นักบัญชี', status:'รอนักบัญชี', role:'นักบัญชี'},
@@ -270,7 +274,9 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 /* ============================= STATE ============================= */
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
+  approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null,
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], appSettings:{}, vendors:[],
+  paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
   dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:''},
@@ -521,6 +527,73 @@ function assignedActorName(doc){
   const m = state.members.find(x=>x.id===targetId);
   return m ? fullName(m) : null;
 }
+/* ===================== PAYMENT VOUCHER CLOSE-OUT (Part A) ===================== */
+// completely separate mapping/stage machinery from the document-flow one above — operates on
+// state.paymentVouchers records, keyed by companyCode only (no docType), per the agreed spec.
+function getPaymentMapping(companyCode){
+  return state.paymentMappings.find(mp=>String(mp.companyCode)===String(companyCode)) || null;
+}
+function pvStageRoleForVoucher(v){
+  if(v.status==='รอผู้ตรวจสอบPayment' || v.status==='ตีกลับแก้ไข(ผู้อนุมัติPayment)') return 'pvReviewer';
+  if(v.status==='รอผู้อนุมัติPayment') return 'pvApprover';
+  return null;
+}
+function pvCanActOnStage(v){
+  const role = pvStageRoleForVoucher(v);
+  if(!role) return true;
+  const mapping = getPaymentMapping(v.companyCode);
+  if(!mapping) return true; // no mapping configured for this company -> unrestricted fallback (any user with the matching role)
+  const targetId = role==='pvReviewer' ? mapping.reviewerId : mapping.approverId;
+  if(!targetId) return true;
+  return isAdmin() || state.user.id === targetId;
+}
+function pvAssignedActorName(v){
+  const role = pvStageRoleForVoucher(v);
+  if(!role) return null;
+  const mapping = getPaymentMapping(v.companyCode);
+  if(!mapping) return null;
+  const targetId = role==='pvReviewer' ? mapping.reviewerId : mapping.approverId;
+  if(!targetId) return null;
+  const m = state.members.find(x=>x.id===targetId);
+  return m ? fullName(m) : null;
+}
+function pvDocIds(v){
+  try{ return v.docIds ? JSON.parse(v.docIds) : []; }catch(e){ return []; }
+}
+// how many Payment-close-out items are currently waiting on the logged-in user's action — drives
+// the red 🔴 badge count on the "อนุมัติ Payment" top-level tab
+function pvPendingCountForUser(){
+  if(!state.user) return 0;
+  const tabs = allowedPvTabs();
+  if(!tabs.length) return 0;
+  const statusByTab = {pvReviewer:'รอผู้ตรวจสอบPayment', pvApprover:'รอผู้อนุมัติPayment'};
+  let count = 0;
+  tabs.forEach(t=>{
+    const status = statusByTab[t];
+    count += state.paymentVouchers.filter(v=>v.status===status && pvCanActOnStage(v)).length;
+  });
+  return count;
+}
+// mirrors pvPendingCountForUser but for the existing accounting-flow tabs, for the matching
+// badge on the "อนุมัติบันทึกบัญชี" top-level tab
+function accountingPendingCountForUser(){
+  if(!state.user) return 0;
+  const tabs = allowedApprovalTabs();
+  if(!tabs.length) return 0;
+  const statusByTab = {accountant:'รอนักบัญชี', reviewer:'รอผู้ตรวจสอบ', approver:'รอผู้อนุมัติ'};
+  let count = 0;
+  tabs.forEach(t=>{
+    const status = statusByTab[t];
+    count += state.documents.filter(d=>d.status===status && canActOnStage(d)).length;
+    if(t==='approver') count += state.documents.filter(d=>d.status==='รอผู้อนุมัติ2' && canActOnStage(d)).length;
+  });
+  return count;
+}
+function memberPositionFor(personName){
+  if(!personName) return null;
+  const m = state.members.find(x=>fullName(x)===personName);
+  return (m && m.position) ? m.position : null;
+}
 function signBlock(positionLabel, personName, roleTag){
   const sig = findMemberSignature(personName);
   const stamp = sig
@@ -615,6 +688,8 @@ async function refreshData(){
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
     state.vendors = data.vendors || [];
+    state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
+    state.paymentVouchers = (data.paymentVouchers || []).map(v=>({ ...v, companyCode:String(v.companyCode) }));
     state.documents = (data.documents || []).map(d=>{
       if(d.docSAP===undefined) d.docSAP='';
       if(d.vatAmount===undefined) d.vatAmount='';
@@ -1524,8 +1599,21 @@ function calcEquals(){
 }
 
 /* ============================= LAYOUT ============================= */
-function canSeeApproval(){ return ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','Admin'].includes(state.user.role); }
-function canSeePayment(){ return ['เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role); }
+function canSeeApproval(){ return ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'].includes(state.user.role) || hasPvDuty(); }
+// Payment-reviewer/approver duty is granted TWO ways, independently of a member's single
+// primary role field: (1) a dedicated role 'หัวหน้าแผนกการเงิน'/'ผู้อนุมัติการเงิน' for someone
+// whose whole job is Payment close-out, or (2) being named reviewerId/approverId in ANY row of
+// Payment Mapping, which is set per company on the "กำหนดสิทธิ์การใช้งาน" screen itself (ticking
+// "ตรวจสอบ Payment"/"อนุมัติ Payment" on that company's row). This is what lets one person (e.g.
+// Anake) be accounting-reviewer only for one company and both accounting-reviewer AND Payment
+// reviewer/approver for another, since the per-company split is driven entirely by Payment
+// Mapping data, never by the single role field.
+function hasPvDuty(){
+  return state.paymentMappings.some(mp=>mp.reviewerId===state.user.id || mp.approverId===state.user.id);
+}
+// หัวหน้าแผนกการเงิน/ผู้อนุมัติการเงิน (the Payment Voucher close-out reviewer/approver) get the
+// same Payment Voucher / Report Payment access เจ้าหน้าที่การเงิน has, per the agreed spec
+function canSeePayment(){ return ['เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'].includes(state.user.role) || hasPvDuty(); }
 function canSeeVoucherReport(){ return ['นักบัญชี','ผู้ตรวจสอบ','Admin'].includes(state.user.role); }
 function isAdmin(){ return state.user.role === 'Admin'; }
 function defaultApprovalTab(){
@@ -1536,6 +1624,35 @@ function allowedApprovalTabs(){
   if(isAdmin()) return ['accountant','reviewer','approver'];
   const map = {'นักบัญชี':['accountant'],'ผู้ตรวจสอบ':['reviewer'],'ผู้อนุมัติ':['approver']};
   return map[state.user.role] || [];
+}
+// top-level split on the "การอนุมัติเอกสาร" page: 'accounting' = the existing document flow
+// (นักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติ[1/2/3]); 'payment' = the new Payment Voucher close-out flow
+// (ผู้ตรวจสอบ Payment / ผู้อนุมัติ Payment). A user only sees the groups their role covers —
+// someone who is only หัวหน้าแผนกการเงิน never sees "อนุมัติบันทึกบัญชี" at all, and vice versa.
+function allowedApprovalGroups(){
+  const groups = [];
+  if(isAdmin() || allowedApprovalTabs().length) groups.push('accounting');
+  if(isAdmin() || allowedPvTabs().length) groups.push('payment');
+  return groups;
+}
+function defaultApprovalGroup(){
+  const groups = allowedApprovalGroups();
+  if(groups.includes('accounting') && allowedApprovalTabs().length) return 'accounting';
+  if(groups.includes('payment')) return 'payment';
+  return groups[0] || 'accounting';
+}
+function allowedPvTabs(){
+  if(isAdmin()) return ['pvReviewer','pvApprover'];
+  const tabs = [];
+  const isReviewerAnywhere = state.user.role==='หัวหน้าแผนกการเงิน' || state.paymentMappings.some(mp=>mp.reviewerId===state.user.id);
+  const isApproverAnywhere = state.user.role==='ผู้อนุมัติการเงิน' || state.paymentMappings.some(mp=>mp.approverId===state.user.id);
+  if(isReviewerAnywhere) tabs.push('pvReviewer');
+  if(isApproverAnywhere) tabs.push('pvApprover');
+  return tabs;
+}
+function defaultPvTab(){
+  const tabs = allowedPvTabs();
+  return tabs[0] || (isAdmin() ? 'pvReviewer' : '');
 }
 function userCompanyOptions(){
   if(isAdmin() || !state.user.companyCodes || !state.user.companyCodes.length) return state.companies;
@@ -1562,10 +1679,22 @@ function sidebarHTML(){
   if(['นักบัญชี','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
   if(state.user.role!=='เจ้าหน้าที่การเงิน') nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
-    nav.push(`<div class="nav-item ${state.view==='approval'?'active':''}" onclick="goView('approval')"><span class="dot"></span>การอนุมัติเอกสาร</div>`);
+    const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
+    nav.push(`<div class="nav-item ${state.view==='approval'?'active':''}" onclick="goView('approval')"><span class="dot"></span>การอนุมัติเอกสาร${pendingBadgeHTML(approvalTotalPending)}</div>`);
     if(state.view==='approval'){
-      const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
-      const subs = allowedApprovalTabs().map(t=>`<div class="nav-item ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')">${labels[t]}</div>`).join('');
+      const groups = allowedApprovalGroups();
+      let subs = '';
+      if(groups.length > 1){
+        subs += `<div class="nav-item ${state.approvalGroup==='accounting'?'active':''}" onclick="setApprovalGroup('accounting')">อนุมัติบันทึกบัญชี${pendingBadgeHTML(accountingPendingCountForUser())}</div>`;
+        subs += `<div class="nav-item ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>`;
+      }
+      if(state.approvalGroup==='payment' && groups.includes('payment')){
+        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)'};
+        subs += allowedPvTabs().map(t=>`<div class="nav-item ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')" style="padding-left:28px;">${pvLabels[t]}</div>`).join('');
+      } else {
+        const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
+        subs += allowedApprovalTabs().map(t=>`<div class="nav-item ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')" style="padding-left:28px;">${labels[t]}</div>`).join('');
+      }
       nav.push(`<div class="nav-sub">${subs}</div>`);
     }
   }
@@ -1604,8 +1733,19 @@ function sidebarHTML(){
 function navItem(view,label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="goView('${view}')"><span class="dot"></span>${label}</div>`;
 }
-function goView(v){ state.view=v; state.expandedRow=null; if(v==='approval') state.approvalTab = allowedApprovalTabs().includes(state.approvalTab)?state.approvalTab:defaultApprovalTab(); if(v==='submitApproveOwn') state.saOwnSapLines=[]; render(); }
+function goView(v){
+  state.view=v; state.expandedRow=null;
+  if(v==='approval'){
+    state.approvalGroup = allowedApprovalGroups().includes(state.approvalGroup) ? state.approvalGroup : defaultApprovalGroup();
+    state.approvalTab = allowedApprovalTabs().includes(state.approvalTab)?state.approvalTab:defaultApprovalTab();
+    state.pvTab = allowedPvTabs().includes(state.pvTab) ? state.pvTab : defaultPvTab();
+  }
+  if(v==='submitApproveOwn') state.saOwnSapLines=[];
+  render();
+}
 function setApprovalTab(t){ state.approvalTab=t; state.expandedRow=null; render(); }
+function setApprovalGroup(g){ state.approvalGroup=g; state.expandedRow=null; render(); }
+function setPvTab(t){ state.pvTab=t; state.expandedRow=null; render(); }
 
 function topbarHTML(){
   const titles = {
@@ -1659,7 +1799,21 @@ function viewHTML(){
 /* ============================= STAMP TRAIL ============================= */
 function trailHTML(doc){
   if(doc.status === 'Complete'){
-    return `<span class="status-pill complete">✓ Complete</span>`;
+    // a small extra badge showing whether this Complete document's payment batch has gone
+    // through the separate Payment Voucher close-out flow yet (Part A) — only shown for
+    // documents that actually went through a payment batch (docPayment set) and that have a
+    // matching close-out record; a Complete document with no payment batch at all (e.g. the
+    // skipFinance shortcut) or legacy data from before this feature shows no extra badge.
+    let pvBadge = '';
+    if(doc.docPayment){
+      const pv = state.paymentVouchers.find(v=>String(v.docPayment)===String(doc.docPayment) && String(v.companyCode)===String(doc.companyCode));
+      if(pv){
+        pvBadge = pv.locked==='TRUE'
+          ? ` <span class="status-pill" style="background:#E6F4EA;color:#1E7D32;font-size:10px;" title="ปิดรอบ Payment สมบูรณ์แล้ว">✓ ปิดรอบ Payment</span>`
+          : ` <span class="status-pill" style="background:#FFF3E0;color:#B36B00;font-size:10px;" title="สถานะ: ${pv.status}">⏳ รอปิดรอบ Payment</span>`;
+      }
+    }
+    return `<span class="status-pill complete">✓ Complete</span>${pvBadge}`;
   }
   if(doc.status === 'ยกเลิก'){
     return `<span class="status-pill cancel">✕ ยกเลิก</span>`;
@@ -2865,7 +3019,24 @@ const RESUBMIT_CFG = {
   'ตีกลับแก้ไข(ผู้อนุมัติ2)': {next:'รอผู้อนุมัติ2', actor:'approverBy', date:'approverDate', note:'approverNote'},
 };
 
+function pendingBadgeHTML(count){
+  if(!count) return '';
+  return ` <span style="display:inline-block;min-width:16px;height:16px;line-height:16px;background:var(--stamp-red,#C0392B);color:#fff;border-radius:50%;font-size:10px;text-align:center;padding:0 3px;vertical-align:2px;">${count}</span>`;
+}
+// top-level split between the existing document-approval flow ("อนุมัติบันทึกบัญชี") and the
+// new Payment Voucher close-out flow ("อนุมัติ Payment") — a user only sees the group(s) their
+// role actually covers; each tab carries a red pending-count badge when there's work waiting.
 function approvalHTML(){
+  const groups = allowedApprovalGroups();
+  const groupTabsHtml = groups.length > 1 ? `
+  <div class="tab-row" style="margin-bottom:16px;">
+    ${groups.includes('accounting') ? `<div class="tab ${state.approvalGroup==='accounting'?'active':''}" onclick="setApprovalGroup('accounting')">อนุมัติบันทึกบัญชี${pendingBadgeHTML(accountingPendingCountForUser())}</div>` : ''}
+    ${groups.includes('payment') ? `<div class="tab ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>` : ''}
+  </div>` : '';
+  const body = (state.approvalGroup==='payment' && groups.includes('payment')) ? paymentApprovalHTML() : accountingApprovalHTML();
+  return groupTabsHtml + body;
+}
+function accountingApprovalHTML(){
   const tabMeta = {
     accountant:{status:'รอนักบัญชี', label:'นักบัญชี'},
     reviewer:{status:'รอผู้ตรวจสอบ', label:'ผู้ตรวจสอบ'},
@@ -3380,6 +3551,214 @@ function appendHistoryLog(doc, entry){
   history.push(entry);
   return JSON.stringify(history);
 }
+
+/* ============================= PAYMENT VOUCHER CLOSE-OUT (Part A) ============================= */
+// a rejection from ผู้อนุมัติ Payment goes back to ผู้ตรวจสอบ Payment to fix & resubmit, same
+// pattern as the main document flow's REJECT_HANDLED_BY_TAB
+const PV_REJECT_HANDLED_BY_TAB = { pvReviewer: 'ตีกลับแก้ไข(ผู้อนุมัติPayment)', pvApprover: null };
+function paymentApprovalHTML(){
+  const tabMeta = {
+    pvReviewer: {status:'รอผู้ตรวจสอบPayment', label:'ผู้ตรวจสอบ (Payment)'},
+    pvApprover: {status:'รอผู้อนุมัติPayment', label:'ผู้อนุมัติ (Payment)'},
+  };
+  const allowed = allowedPvTabs();
+  if(!allowed.length) return `<div class="card"><div class="helper">คุณไม่มีสิทธิ์เข้าถึงขั้นตอนนี้</div></div>`;
+  const tabs = allowed.map(t=>`<div class="tab ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')">${tabMeta[t].label}</div>`).join('');
+  const meta = tabMeta[state.pvTab] || tabMeta[allowed[0]];
+  const rejectBackStatus = PV_REJECT_HANDLED_BY_TAB[state.pvTab];
+
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="pv-company-select" onchange="setPvCompany(this.value)">
+      <option value="all" ${state.pvCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.pvCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+  </div>`;
+
+  let list = state.paymentVouchers.filter(v=> v.status===meta.status || (rejectBackStatus && v.status===rejectBackStatus));
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
+    list = list.filter(v=>state.user.companyCodes.includes(v.companyCode));
+  }
+  if(state.pvCompany!=='all') list = list.filter(v=>v.companyCode===state.pvCompany);
+
+  const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const rows = list.length ? list.map(v=>{
+    const expanded = state.expandedRow===v.id;
+    const canAct = pvCanActOnStage(v);
+    const isRejectedItem = v.status !== meta.status;
+    const docIds = pvDocIds(v);
+    const actionBtn = canAct
+      ? `<button class="btn btn-sm btn-action" onclick="toggleRow('${v.id}')">${expanded?'ปิด':'ดำเนินการ'}</button>`
+      : `<span style="font-size:11.5px;color:var(--ink-soft);" title="ชุดนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${pvAssignedActorName(v)||'-'}</span>`;
+    const mainRow = `
+    <tr>
+      <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
+      <td>${companyName(v.companyCode)}</td>
+      <td>${docIds.length} รายการ</td>
+      <td style="text-align:right;">${money(v.netTotal)}</td>
+      <td>${v.createdBy||'-'}<div style="font-size:10.5px;color:var(--ink-soft);">${v.createdDate||'-'}</div></td>
+      <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
+      <td style="white-space:nowrap;"><button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
+    </tr>`;
+    let actionRow = '';
+    if(expanded && canAct && !isRejectedItem){
+      actionRow = `
+      <tr class="action-row">
+        <td colspan="7">
+          <div class="note-box">
+            <div style="width:100%;margin-top:4px;">
+              <textarea id="pv-note-${v.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
+            </div>
+            <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <button class="btn btn-sm btn-approve" onclick="processPaymentStage('${v.id}','approve')">✓ อนุมัติ / ส่งต่อ</button>
+              <button class="btn btn-sm btn-reject" onclick="processPaymentStage('${v.id}','reject')">↺ ตีกลับแก้ไข</button>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+    } else if(expanded && canAct && isRejectedItem){
+      actionRow = `
+      <tr class="action-row">
+        <td colspan="7">
+          <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
+            <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจากผู้อนุมัติ Payment:</strong> ${v.approverNote||'ไม่ได้ระบุเหตุผล'}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-sm btn-approve" onclick="resubmitPaymentVoucher('${v.id}')">↻ ส่งต่อผู้อนุมัติ Payment ใหม่</button>
+          </div>
+        </td>
+      </tr>`;
+    }
+    return mainRow + actionRow;
+  }).join('') : `<tr class="empty-row"><td colspan="7">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+
+  // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
+  const lockedSection = (function(){
+    if(!isAdmin()) return '';
+    let locked = state.paymentVouchers.filter(v=>v.locked==='TRUE');
+    if(state.pvCompany!=='all') locked = locked.filter(v=>v.companyCode===state.pvCompany);
+    if(!locked.length) return '';
+    const lockedRows = locked.map(v=>`
+    <tr>
+      <td class="mono">${v.docPayment||'-'}</td>
+      <td>${companyName(v.companyCode)}</td>
+      <td style="text-align:right;">${money(v.netTotal)}</td>
+      <td>${v.approverBy||'-'}<div style="font-size:10.5px;color:var(--ink-soft);">${v.approverDate||'-'}</div></td>
+      <td><button class="btn btn-sm btn-reject" onclick="unlockPaymentVoucher('${v.id}')">🔓 ปลดล็อก</button></td>
+    </tr>`).join('');
+    return `
+    <div class="card">
+      <div class="eyebrow">Admin</div>
+      <h3 style="margin-top:4px;">ชุดปิดรอบ Payment ที่ล็อกแล้ว (${locked.length})</h3>
+      <div class="helper">ปิดรอบสมบูรณ์แล้ว แก้ไขต่อไม่ได้ — มีแค่ Admin เท่านั้นที่ปลดล็อกได้ ปลดล็อกแล้วจะส่งกลับไปรอผู้อนุมัติ Payment เซ็นใหม่</div>
+      <hr class="div">
+      <table>
+        <thead><tr><th>Doc Payment</th><th>บริษัท</th><th style="text-align:right;">ยอดรวม</th><th>อนุมัติโดย</th><th></th></tr></thead>
+        <tbody>${lockedRows}</tbody>
+      </table>
+    </div>`;
+  })();
+
+  return `
+  <div class="tabs">${tabs}</div>
+  ${companyHeader}
+  <div class="card">
+    <div class="eyebrow">Payment Voucher Close-out · ${meta.label}</div>
+    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})</h3>
+    <div class="helper">ชุดปิดรอบนี้เป็น Layer แยกต่างหาก ไม่กระทบสถานะเอกสารเดิมที่เป็น Complete อยู่แล้ว — เป็นการเซ็นรับรองปิดรอบ Doc Payment อีกชั้นเท่านั้น</div>
+    ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" คือชุดที่ถูกตีกลับโดยผู้อนุมัติ Payment ให้กด "ส่งต่อผู้อนุมัติ Payment ใหม่" เพื่อส่งต่ออีกครั้ง</div>' : ''}
+    <hr class="div">
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th style="text-align:right;">ยอดรวม</th><th>สร้างโดย</th><th>สถานะ</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>
+  ${lockedSection}`;
+}
+function setPvCompany(v){ state.pvCompany = v; state.expandedRow=null; render(); }
+async function processPaymentStage(id, decision){
+  const v = state.paymentVouchers.find(x=>x.id===id);
+  if(!v) return;
+  if(!pvCanActOnStage(v)){ showToast('รายการนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const noteEl = document.getElementById('pv-note-'+id);
+  const note = noteEl ? noteEl.value : '';
+  const cfg = {
+    'รอผู้ตรวจสอบPayment': {actor:'reviewerBy', date:'reviewerDate', note:'reviewerNote', reject:'ตีกลับแก้ไข(ผู้ตรวจสอบPayment)', next:'รอผู้อนุมัติPayment', stageLabel:'ผู้ตรวจสอบ Payment'},
+    'รอผู้อนุมัติPayment': {actor:'approverBy', date:'approverDate', note:'approverNote', reject:'ตีกลับแก้ไข(ผู้อนุมัติPayment)', next:null, stageLabel:'ผู้อนุมัติ Payment'},
+  }[v.status];
+  if(!cfg) return;
+  const patch = { id };
+  if(decision==='approve'){
+    patch[cfg.actor] = fullName(state.user);
+    patch[cfg.date] = nowStr();
+    if(note && note.trim()) patch[cfg.note] = note.trim();
+    if(cfg.next){
+      patch.status = cfg.next;
+    } else {
+      // final signer (ผู้อนุมัติ Payment) just approved -> lock the batch, only Admin can unlock
+      patch.status = 'Complete';
+      patch.locked = 'TRUE';
+      patch.lockedBy = fullName(state.user);
+      patch.lockedDate = nowStr();
+    }
+  } else {
+    patch.status = cfg.reject;
+    if(note && note.trim()) patch[cfg.note] = note.trim();
+  }
+  let history = [];
+  try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage: cfg.stageLabel, actor: fullName(state.user), date: nowStr(), note: (note&&note.trim())?note.trim():'', action: decision==='approve'?'approve':'reject' });
+  patch.historyLog = JSON.stringify(history);
+
+  showBusyOverlay(decision==='approve' ? 'กำลังบันทึกการอนุมัติ กรุณารอสักครู่...' : 'กำลังบันทึกการตีกลับ กรุณารอสักครู่...');
+  const res = await apiCall('updatePaymentVoucher', patch);
+  hideBusyOverlay();
+  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast(decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว');
+  await refreshData();
+  render();
+}
+async function resubmitPaymentVoucher(id){
+  const v = state.paymentVouchers.find(x=>x.id===id);
+  if(!v) return;
+  if(!pvCanActOnStage(v)){ showToast('รายการนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  const patch = { id, status:'รอผู้อนุมัติPayment', reviewerBy: fullName(state.user), reviewerDate: nowStr() };
+  let history = [];
+  try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage:'ผู้ตรวจสอบ Payment', actor: fullName(state.user), date: nowStr(), note:'', action:'resubmit' });
+  patch.historyLog = JSON.stringify(history);
+  const res = await apiCall('updatePaymentVoucher', patch);
+  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  state.expandedRow = null;
+  showToast('ส่งต่อผู้อนุมัติ Payment ใหม่เรียบร้อย');
+  await refreshData();
+  render();
+}
+async function unlockPaymentVoucher(id){
+  if(!isAdmin()) return;
+  const v = state.paymentVouchers.find(x=>x.id===id);
+  if(!v) return;
+  if(!confirm('ยืนยันปลดล็อกชุดปิดรอบ Doc Payment '+(v.docPayment||'-')+' ใช่หรือไม่? ชุดนี้จะถูกส่งกลับไปรอผู้อนุมัติ Payment เซ็นใหม่')) return;
+  const patch = {
+    id, status:'รอผู้อนุมัติPayment', locked:'', lockedBy:'', lockedDate:'',
+    approverBy:'', approverDate:'', approverNote:'',
+  };
+  let history = [];
+  try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage:'Admin', actor: fullName(state.user), date: nowStr(), note:'ปลดล็อกชุดปิดรอบ', action:'unlock' });
+  patch.historyLog = JSON.stringify(history);
+  const res = await apiCall('updatePaymentVoucher', patch);
+  if(!res.success){ showToast('ปลดล็อกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('ปลดล็อกชุดปิดรอบเรียบร้อย — ส่งกลับไปรอผู้อนุมัติ Payment เซ็นใหม่');
+  await refreshData();
+  render();
+}
+
 async function processStage(id, decision){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
@@ -4399,6 +4778,22 @@ async function confirmBatchPayment(){
     done++;
     showBusyOverlay('กำลังดำเนินการรวบชุดจ่าย กรุณารอสักครู่... ('+done+'/'+ids.length+')');
   }
+  // Create (or extend) the separate Payment Voucher close-out record for this batch — this is
+  // a brand-new approval layer on top of the Documents flow above and never touches a
+  // Document's own status/fields; triggered the moment the batch is confirmed here.
+  const pvCompanyCode = selectedDocs[0] ? selectedDocs[0].companyCode : state.paymentCompany;
+  const netTotal = selectedDocs.reduce((sum,d)=>sum+(parseFloat(d.netAmount)||0),0);
+  const existingPv = state.paymentVouchers.find(v=>String(v.docPayment)===String(docNum) && String(v.companyCode)===String(pvCompanyCode));
+  if(existingPv){
+    if(existingPv.locked==='TRUE'){
+      showToast('หมายเหตุ: Doc Payment นี้ปิดรอบ Payment ไปแล้ว เอกสารที่เพิ่มใหม่จะไม่ถูกรวมในชุดปิดรอบเดิม กรุณาแจ้ง Admin หากต้องการปลดล็อกเพื่อรวมเพิ่ม');
+    } else {
+      const mergedIds = Array.from(new Set(pvDocIds(existingPv).concat(ids)));
+      await apiCall('updatePaymentVoucher', { id: existingPv.id, docIds: JSON.stringify(mergedIds), netTotal: String(netTotal) });
+    }
+  } else {
+    await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
+  }
   hideBusyOverlay();
   showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ)');
   state.paymentSelected = [];
@@ -4656,6 +5051,12 @@ function openPaymentReport(docPayment){
   }).join('');
   const lastDoc = docs[docs.length-1] || {};
   const companyCode = docs[0].companyCode || '';
+  // the Payment Voucher close-out record (Part A) carries the real ผู้ตรวจสอบ/ผู้อนุมัติ Payment
+  // signoffs for this Doc Payment batch — when it exists, print their actual name + their own
+  // ตำแหน่ง (never a hardcoded role label) in place of the blank signature lines below
+  const pv = state.paymentVouchers.find(v=>String(v.docPayment)===String(docPayment) && String(v.companyCode)===String(companyCode));
+  const pvReviewerTag = (pv && pv.reviewerBy) ? (memberPositionFor(pv.reviewerBy) || 'หัวหน้าแผนก') : 'หัวหน้าแผนก';
+  const pvApproverTag = (pv && pv.approverBy) ? (memberPositionFor(pv.approverBy) || 'ผู้จัดการฝ่ายบัญชีและการเงิน') : 'ผู้จัดการฝ่ายบัญชีและการเงิน';
   const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
     <title>Journal Voucher Report · ${docPayment}</title>
     <style>
@@ -4685,9 +5086,10 @@ function openPaymentReport(docPayment){
     <div class="sign-grid">
       <div>ต้นฉบับอยู่ฝ่ายบัญชี<div class="sign-line"></div>${(()=>{const dt=parseThaiDateStr(lastDoc.paymentDate);return dt?fmtDate(dt):(lastDoc.paymentDate||'-');})()}</div>
       ${signBlock('ผู้จัดเตรียม', lastDoc.paymentBy, 'เจ้าหน้าที่การเงิน')}
-      ${blankSignBlock('ผู้ตรวจสอบ', 'หัวหน้าแผนก')}
-      ${blankSignBlock('ผู้อนุมัติ', 'ผู้จัดการฝ่ายบัญชีและการเงิน')}
+      ${(pv && pv.reviewerBy) ? signBlock('ผู้ตรวจสอบ', pv.reviewerBy, pvReviewerTag) : blankSignBlock('ผู้ตรวจสอบ', pvReviewerTag)}
+      ${(pv && pv.approverBy) ? signBlock('ผู้อนุมัติ', pv.approverBy, pvApproverTag) : blankSignBlock('ผู้อนุมัติ', pvApproverTag)}
     </div>
+    ${pv && pv.locked==='TRUE' ? '<div style="text-align:center;margin-top:10px;font-size:12px;color:#2a7;">✓ ปิดรอบ Payment สมบูรณ์แล้ว</div>' : (pv ? `<div style="text-align:center;margin-top:10px;font-size:12px;color:#999;">สถานะปิดรอบ Payment: ${pv.status}</div>` : '')}
     <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
   </body></html>`;
   const blob = new Blob([html], {type:'text/html'});
@@ -4761,18 +5163,39 @@ function adminPermissionsHTML(){
   const rows = filteredMembers.map(m=>{
     const editing = state.permEditId === m.id;
     if(!editing){
+      const pvTags = (m.companyCodes||[]).map(code=>{
+        const mp = state.paymentMappings.find(x=>String(x.companyCode)===String(code));
+        if(!mp) return '';
+        const bits = [];
+        if(mp.reviewerId===m.id) bits.push('ตรวจ');
+        if(mp.approverId===m.id) bits.push('อนุมัติ');
+        return bits.length ? ` <span class="badge badge-forest" title="สิทธิ์ Payment บริษัท ${code}" style="margin-left:6px;">${code} Payment:${bits.join('/')}</span>` : '';
+      }).join('');
       return `
       <tr>
         <td>${m.firstName} ${m.lastName}</td>
         <td>${m.email}</td>
         <td><span class="role-tag">${ROLE_LABELS[m.role]}</span></td>
-        <td>${(m.companyCodes||[]).join(', ')||'-'}${(m.canTrack===true||m.canTrack==='TRUE')?' <span class="badge badge-forest" title="มีสิทธิ์ติ๊กรับเอกสาร Tracking Invoice" style="margin-left:6px;">Tracking</span>':''}</td>
+        <td>${(m.companyCodes||[]).join(', ')||'-'}${(m.canTrack===true||m.canTrack==='TRUE')?' <span class="badge badge-forest" title="มีสิทธิ์ติ๊กรับเอกสาร Tracking Invoice" style="margin-left:6px;">Tracking</span>':''}${pvTags}</td>
         <td><button class="btn btn-sm btn-outline" onclick="editPerm('${m.id}')">แก้ไขสิทธิ์</button></td>
       </tr>`;
     }
     const roleOptions = ROLE_ORDER.map(r=>`<option value="${r}" ${m.role===r?'selected':''}>${ROLE_LABELS[r]}</option>`).join('');
-    const companyChecks = state.companies.map(c=>`
-      <label class="chip-check"><input type="checkbox" name="companyCodes" value="${c.code}" ${(m.companyCodes||[]).includes(c.code)?'checked':''}> ${c.code}</label>`).join('');
+    // Per-company table: ticking "ผูก" links this member to that company for the normal document
+    // flow (role-based); ticking "ตรวจสอบ Payment"/"อนุมัติ Payment" on the SAME row writes directly
+    // into that company's Payment Mapping row for this member — this is what lets one person be
+    // Payment-reviewer for one company only, without touching their primary Role at all.
+    const companyRows = state.companies.map(c=>{
+      const mp = state.paymentMappings.find(x=>String(x.companyCode)===String(c.code));
+      const pvReview = !!(mp && mp.reviewerId===m.id);
+      const pvApprove = !!(mp && mp.approverId===m.id);
+      return `
+      <tr>
+        <td><label class="chip-check" style="font-weight:400;"><input type="checkbox" name="companyCodes" value="${c.code}" ${(m.companyCodes||[]).includes(c.code)?'checked':''}> ${c.code}</label></td>
+        <td style="text-align:center;"><input type="checkbox" name="pvReview_${c.code}" ${pvReview?'checked':''}></td>
+        <td style="text-align:center;"><input type="checkbox" name="pvApprove_${c.code}" ${pvApprove?'checked':''}></td>
+      </tr>`;
+    }).join('');
     const SIGNING_ROLES = ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ','เจ้าหน้าที่การเงิน'];
     const signatureField = SIGNING_ROLES.includes(m.role) ? `
       <div class="field" style="min-width:200px;">
@@ -4790,9 +5213,13 @@ function adminPermissionsHTML(){
                 <label>${m.firstName} ${m.lastName} — Role</label>
                 <select name="role">${roleOptions}</select>
               </div>
-              <div class="field" style="flex:1;min-width:240px;">
-                <label>ผูกกับรหัสบริษัท</label>
-                <div>${companyChecks}</div>
+              <div class="field" style="min-width:320px;">
+                <label>ผูกกับรหัสบริษัท / สิทธิ์ Payment ต่อบริษัท</label>
+                <div class="helper" style="margin:0 0 4px;">ติ๊ก "ตรวจสอบ Payment" หรือ "อนุมัติ Payment" ในแถวบริษัทไหน คนนี้จะทำหน้าที่นั้นให้บริษัทนั้นเท่านั้น — ไม่ต้องเปลี่ยน Role หลัก</div>
+                <table style="width:auto;">
+                  <thead><tr><th>บริษัท</th><th>ตรวจสอบ Payment</th><th>อนุมัติ Payment</th></tr></thead>
+                  <tbody>${companyRows}</tbody>
+                </table>
               </div>
               <div class="field" style="min-width:220px;">
                 <label>Tracking Invoice</label>
@@ -4838,12 +5265,23 @@ async function savePermission(e, id){
   const role = f.get('role');
   const companyCodes = f.getAll('companyCodes');
   const canTrack = f.get('canTrack') === 'on';
-  const res = await apiCall('savePermission', { id, role, companyCodes, canTrack });
+  // Per-company Payment duty, read straight off the company table rows (pvReview_<code> /
+  // pvApprove_<code>) — these become this member's reviewerId/approverId in Payment Mapping
+  // for exactly those companies, and nowhere else. See handleSavePermission in Code.gs.
+  const pvReviewCompanies = state.companies.filter(c=>f.get('pvReview_'+c.code)==='on').map(c=>c.code);
+  const pvApproveCompanies = state.companies.filter(c=>f.get('pvApprove_'+c.code)==='on').map(c=>c.code);
+  const res = await apiCall('savePermission', { id, role, companyCodes, canTrack, pvReviewCompanies, pvApproveCompanies });
   if(!res.success){ showToast('บันทึกสิทธิ์ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
-  const m = state.members.find(x=>x.id===id);
-  if(m){ m.role = role; m.companyCodes = companyCodes; m.canTrack = canTrack; }
+  const mBefore = state.members.find(x=>x.id===id);
+  const savedName = mBefore ? mBefore.firstName : '';
   state.permEditId = null;
-  showToast('บันทึกสิทธิ์ของ '+(m?m.firstName:'')+' เรียบร้อย');
+  await refreshData();
+  // refreshData() rebuilds state.members, so re-point state.user if the editor is editing themself
+  if(state.user && state.user.id===id){
+    const refreshedUser = state.members.find(x=>x.id===id);
+    if(refreshedUser) state.user = refreshedUser;
+  }
+  showToast('บันทึกสิทธิ์ของ '+savedName+' เรียบร้อย');
   render();
 }
 
@@ -4921,6 +5359,24 @@ function adminSettingsHTML(){
     </tr>`;
   }).join('') || `<tr class="empty-row"><td colspan="7">ยังไม่มี Mapping — คู่ที่ไม่ได้กำหนดจะเปิดให้ role ที่ตรงกันดำเนินการได้ตามปกติ</td></tr>`;
 
+  // Any member can be assigned here, regardless of their primary role — the same assignment
+  // can also be made per-company from the "กำหนดสิทธิ์การใช้งาน" screen itself, both write to
+  // the same Payment Mapping data.
+  const pvReviewerOptions = state.members.map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
+  const pvApproverOptions = pvReviewerOptions;
+  const pvMappingRows = state.paymentMappings.map(mp=>{
+    const reviewerName = state.members.find(m=>m.id===mp.reviewerId);
+    const approverName = state.members.find(m=>m.id===mp.approverId);
+    const unset = '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>';
+    return `
+    <tr>
+      <td>${companyName(mp.companyCode)}</td>
+      <td>${reviewerName ? fullName(reviewerName) : unset}</td>
+      <td>${approverName ? fullName(approverName) : unset}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deletePaymentMapping('${mp.id}')">ลบ</button></td>
+    </tr>`;
+  }).join('') || `<tr class="empty-row"><td colspan="4">ยังไม่มี Mapping — บริษัทที่ไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ</td></tr>`;
+
   return `
   <div class="card">
     <div class="eyebrow">Company Codes</div>
@@ -4971,6 +5427,23 @@ function adminSettingsHTML(){
     <table>
       <thead><tr><th>ประเภทเอกสาร</th><th>บริษัท</th><th>ผู้ตรวจสอบ</th><th>ผู้อนุมัติ</th><th>ผู้อนุมัติ 2</th><th>ผู้อนุมัติ 3</th><th></th></tr></thead>
       <tbody>${mappingRows}</tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="eyebrow">Payment Mapping</div>
+    <h3 style="margin-top:4px;">มอบหมายผู้ตรวจสอบ / ผู้อนุมัติ Payment ตามบริษัท (ชุดปิดรอบ Doc Payment)</h3>
+    <div class="helper">แยกต่างหากจาก Approval Mapping ด้านบน — ใช้สำหรับ Flow ปิดรอบ Payment Voucher หลังยืนยันรวบจ่ายแล้วเท่านั้น กำหนดเป็นต่อบริษัท (ไม่แยกตามประเภทเอกสาร) เลือกได้จากสมาชิกที่มี role หัวหน้าแผนกการเงิน / ผู้อนุมัติการเงิน เท่านั้น — บริษัทที่ไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ</div>
+    <hr class="div">
+    <form onsubmit="savePaymentMapping(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>บริษัท</label><select name="companyCode" required>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้ตรวจสอบ Payment</label><select name="reviewerId"><option value="">— ไม่กำหนด —</option>${pvReviewerOptions}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติ Payment</label><select name="approverId"><option value="">— ไม่กำหนด —</option>${pvApproverOptions}</select></div>
+      <button class="btn btn-primary" type="submit">บันทึก Mapping</button>
+    </form>
+    <table>
+      <thead><tr><th>บริษัท</th><th>ผู้ตรวจสอบ Payment</th><th>ผู้อนุมัติ Payment</th><th></th></tr></thead>
+      <tbody>${pvMappingRows}</tbody>
     </table>
   </div>
 
@@ -5383,6 +5856,26 @@ async function deleteApprovalMapping(id){
   const res = await apiCall('deleteApprovalMapping', { id });
   if(!res.success){ showToast('ลบ Mapping ไม่สำเร็จ'); return; }
   showToast('ลบ Mapping แล้ว');
+  await refreshData();
+  render();
+}
+async function savePaymentMapping(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const companyCode = f.get('companyCode');
+  const reviewerId = f.get('reviewerId') || '';
+  const approverId = f.get('approverId') || '';
+  const res = await apiCall('savePaymentMapping', { companyCode, reviewerId, approverId });
+  if(!res.success){ showToast('บันทึก Payment Mapping ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('บันทึก Payment Mapping เรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deletePaymentMapping(id){
+  const res = await apiCall('deletePaymentMapping', { id });
+  if(!res.success){ showToast('ลบ Payment Mapping ไม่สำเร็จ'); return; }
+  showToast('ลบ Payment Mapping แล้ว');
   await refreshData();
   render();
 }
