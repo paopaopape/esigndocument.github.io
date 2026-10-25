@@ -275,7 +275,7 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
   approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null,
-  members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], appSettings:{}, vendors:[],
+  members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, appSettings:{}, vendors:[],
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
@@ -684,7 +684,7 @@ async function refreshData(){
       return m;
     });
     state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code) }));
-    state.docTypes = data.docTypes || [];
+    state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
     state.vendors = data.vendors || [];
@@ -732,6 +732,14 @@ async function loadAll(){
   if(!ok){ showToast('โหลดข้อมูลจาก Server ไม่สำเร็จ ลองรีเฟรชหน้าเว็บอีกครั้ง'); }
   else { restoreSession(); }
   state.loading = false;
+  // a notification email link (?docId=...) — if a remembered session just logged us in
+  // above, jump straight to that document; otherwise hold onto it until doLogin() succeeds
+  const linkedDocId = getLinkedDocIdFromUrl_();
+  if(linkedDocId && state.user){
+    render();
+    openDocFromLink(linkedDocId);
+    return;
+  }
   render();
 }
 async function manualRefresh(){
@@ -1374,14 +1382,26 @@ function togglePasswordVisibility(inputId, btn){
   btn.innerHTML = showing ? EYE_SVG : EYE_OFF_SVG;
 }
 
-/* ---- Remember-me session (stores only the member id, never the password) ---- */
+/* ---- Session persistence (stores only the member id + login time, never the password) ----
+   Every successful login now keeps a session in this browser, even without ticking
+   "จดจำการเข้าสู่ระบบ" — so opening a notification-email link while the tab/browser is still
+   around doesn't force a fresh login every time. Ticking the checkbox keeps it forever (classic
+   remember-me); leaving it unticked keeps it only for SESSION_MAX_HOURS from login time, after
+   which the next page load asks to log in again. */
 const SESSION_KEY = 'dfSession';
-function saveSession(user){ try{ localStorage.setItem(SESSION_KEY, JSON.stringify({id:user.id})); }catch(e){} }
+const SESSION_MAX_HOURS = 5; // un-"remembered" session auto-expires this many hours after login
+function saveSession(user, remember){
+  try{ localStorage.setItem(SESSION_KEY, JSON.stringify({ id:user.id, ts:Date.now(), remember: !!remember })); }catch(e){}
+}
 function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
 function restoreSession(){
   let saved;
   try{ saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){ saved = null; }
   if(!saved || !saved.id) return;
+  if(!saved.remember){
+    const ageHours = (Date.now() - (saved.ts || 0)) / 3600000;
+    if(ageHours > SESSION_MAX_HOURS){ clearSession(); return; }
+  }
   const member = state.members.find(m=>m.id===saved.id);
   if(!member){ clearSession(); return; }
   state.user = member;
@@ -1411,7 +1431,10 @@ async function doLogin(e){
   // keep the freshly-logged-in user object (refreshData rebuilds state.members, so re-point state.user at the matching record)
   const refreshedUser = state.members.find(m=>m.id===res.user.id);
   if(refreshedUser) state.user = refreshedUser;
-  if(remember){ saveSession(state.user); } else { clearSession(); }
+  saveSession(state.user, remember);
+  // if this login was triggered by opening a notification email link, jump straight there
+  const linkedDocId = getLinkedDocIdFromUrl_();
+  if(linkedDocId){ render(); openDocFromLink(linkedDocId); return; }
   render();
 }
 async function doSetPassword(e){
@@ -1657,6 +1680,54 @@ function defaultPvTab(){
 function userCompanyOptions(){
   if(isAdmin() || !state.user.companyCodes || !state.user.companyCodes.length) return state.companies;
   return state.companies.filter(c=>state.user.companyCodes.includes(c.code));
+}
+
+/* ---- Deep-linking straight to one document (e.g. from an email notification link) ---- */
+// which approval-group tab a document's current status belongs under, so a notification
+// email link can land the reader exactly where they'd act on it
+function statusToApprovalTab_(status){
+  const map = {
+    'รอนักบัญชี':'accountant',
+    'ตีกลับแก้ไข(ผู้ตรวจสอบ)':'accountant',
+    'รอผู้ตรวจสอบ':'reviewer',
+    'ตีกลับแก้ไข(ผู้อนุมัติ)':'reviewer',
+    'รอผู้อนุมัติ':'approver',
+    'รอผู้อนุมัติ2':'approver',
+    'ตีกลับแก้ไข(ผู้อนุมัติ2)':'approver',
+  };
+  return map[status] || null;
+}
+// reads ?docId=... from the current URL (used by email notification links)
+function getLinkedDocIdFromUrl_(){
+  try{
+    const params = new URLSearchParams(window.location.search);
+    return params.get('docId') || null;
+  }catch(e){ return null; }
+}
+// navigates straight to the approval row for one document — called once the member is
+// logged in and data has loaded, either right after loadAll() (remembered session) or right
+// after doLogin() (fresh login triggered by opening the link while logged out)
+function openDocFromLink(docId){
+  const doc = state.documents.find(d=>String(d.id)===String(docId));
+  if(!doc){ showToast('ไม่พบเอกสาร ID ' + docId + ' หรือคุณไม่มีสิทธิ์เข้าถึงเอกสารนี้'); return; }
+  const tab = statusToApprovalTab_(doc.status);
+  const canOpenTab = tab && (isAdmin() || allowedApprovalTabs().includes(tab));
+  if(canOpenTab){
+    state.view = 'approval';
+    state.approvalGroup = 'accounting';
+    state.approvalTab = tab;
+    state.approvalCompany = 'all';
+    state.approvalSearch = { type:'', name:'', due:'', createdBy:'' };
+    state.expandedRow = doc.id;
+    showToast('เปิดเอกสาร ID ' + displayId(doc.id));
+  } else {
+    showToast('เอกสาร ID ' + displayId(doc.id) + ' อยู่ในสถานะ "' + (doc.status||'-') + '" — คุณไม่มีสิทธิ์ดำเนินการในขั้นนี้');
+  }
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('doclink-' + doc.id);
+    if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
+  }, 60);
 }
 
 function layoutHTML(){
@@ -2201,8 +2272,9 @@ async function saveDashDocEdit(e, id){
 
 /* ============================= SUBMIT BILL ============================= */
 function submitHTML(){
-  const typeOptions = state.docTypes.map(t=>`<option value="${t.key}">${t.label}</option>`).join('');
+  const typeOptions = state.docTypes.map(t=>`<option value="${t.key}" data-auto="${t.autoComplete?'1':'0'}">${t.label}</option>`).join('');
   const companyOptions = state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
+  const firstTypeAuto = state.docTypes.length ? !!state.docTypes[0].autoComplete : false;
 
   const myRejected = state.documents.filter(d=>d.status==='ตีกลับแก้ไข(นักบัญชี)' && d.createdBy===fullName(state.user));
   const rejectedBlock = myRejected.length ? `
@@ -2233,8 +2305,9 @@ function submitHTML(){
     <div class="helper">แนบเพียงลิงก์ไฟล์ที่จัดเก็บไว้แล้ว (Google Drive / SharePoint) ระบบนี้ไม่จัดเก็บไฟล์เอกสารโดยตรง</div>
     <hr class="div">
     <form onsubmit="submitNewDoc(event)">
+      <div id="submit-autocomplete-hint" class="helper" style="display:${firstTypeAuto?'block':'none'};color:var(--forest);font-weight:600;margin-bottom:10px;">⚡ ยืนยันเลือกประเภทเอกสาร "<span id="submit-autocomplete-type-label">${state.docTypes[0]?state.docTypes[0].label:''}</span>" — เอกสารนี้จะถูกบันทึกเป็นสถานะ "Complete" ทันทีที่กดวางบิล ไม่ต้องผ่านขั้นตอนอนุมัติ<br>หากยืนยัน โปรดส่งเอกสารต้นฉบับตัวจริงไปยังแผนกบัญชีด้วย</div>
       <div class="form-grid">
-        <div class="field"><label>ประเภทเอกสาร</label><select name="docType" required>${typeOptions}</select></div>
+        <div class="field"><label>ประเภทเอกสาร</label><select name="docType" id="submit-docType" required onchange="onSubmitDocTypeChange()">${typeOptions}</select></div>
         <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required>${companyOptions}</select></div>
         <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
         <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
@@ -2247,6 +2320,15 @@ function submitHTML(){
       <button class="btn btn-primary" type="submit">ส่งเข้าสู่กระบวนการอนุมัติ</button>
     </form>
   </div>`;
+}
+function onSubmitDocTypeChange(){
+  const sel = document.getElementById('submit-docType');
+  const hint = document.getElementById('submit-autocomplete-hint');
+  if(!sel || !hint) return;
+  const opt = sel.selectedOptions[0];
+  hint.style.display = (opt && opt.dataset.auto==='1') ? 'block' : 'none';
+  const labelEl = document.getElementById('submit-autocomplete-type-label');
+  if(labelEl && opt) labelEl.textContent = opt.textContent;
 }
 function onSubmitVendorInput(){
   const el = document.getElementById('submit-vendor');
@@ -2279,6 +2361,14 @@ async function submitNewDoc(e){
     if(!proceed) return;
   }
 
+  // ประเภทที่ข้ามขั้นตอนอนุมัติ — ย้ำให้ยืนยันอีกครั้งก่อนส่งจริง เพราะเอกสารจะเป็น Complete ทันที
+  // ไม่มีใครตรวจอีกแล้ว และต้องเตือนให้ส่งเอกสารต้นฉบับตัวจริงไปแผนกบัญชีควบคู่กันไปด้วย
+  const selectedDocType = state.docTypes.find(t=>t.key===f.get('docType'));
+  if(selectedDocType && selectedDocType.autoComplete){
+    const proceedAuto = confirm('ยืนยันเลือกประเภทเอกสาร "'+selectedDocType.label+'"\n\nเอกสารนี้จะถูกบันทึกเป็นสถานะ Complete ทันที ไม่ต้องผ่านขั้นตอนอนุมัติใดๆ\n\nหากยืนยัน โปรดส่งเอกสารต้นฉบับตัวจริงไปยังแผนกบัญชีด้วย\n\nต้องการดำเนินการต่อหรือไม่?');
+    if(!proceedAuto) return;
+  }
+
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังส่ง...'; }
   showBusyOverlay('กำลังบันทึกวางบิล กรุณารอสักครู่...');
   const payload = {
@@ -2299,7 +2389,9 @@ async function submitNewDoc(e){
     }
     showToast('วางบิลไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
   }
-  showToast('วางบิลเอกสารเรียบร้อย ID '+displayId(res.id));
+  showToast(res.autoCompleted
+    ? 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id)+' — ประเภทนี้ข้ามขั้นตอนอนุมัติ บันทึกเป็น Complete ให้ทันทีแล้ว'
+    : 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id), 5000);
   e.target.reset();
   await refreshData();
   state.view = 'tracking';
@@ -2685,6 +2777,15 @@ async function submitApproveOwn(e){
     status: skipReviewerReason ? 'รอผู้อนุมัติ' : 'รอผู้ตรวจสอบ',
     modifiedBy: createdBy, modifiedDate: nowStr(),
     historyLog: JSON.stringify(historyEntries),
+    // เมนูนี้คือนักบัญชีคีย์เอกสารเข้าระบบเอง แปลว่าบิลต้นฉบับอยู่ที่แผนกบัญชีอยู่แล้วตั้งแต่แรก —
+    // ไม่ต้องรอ flow รับเอกสารจริงทีละขั้น (ธุรการ → นักบัญชี #1 → นักบัญชี #2) เหมือนเอกสารที่คนอื่น
+    // วางบิลแล้วต้องส่งตัวจริงตามมาทีหลัง จึงติ๊ก Tracking Invoice ให้ครบ "รับแล้ว" ทันทีทั้ง 3 จุด
+    trackClerkBy: createdBy, trackClerkDate: nowStr(),
+    trackClerkNote: 'นักบัญชีวางบิลเองในระบบ — เอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว',
+    trackAcct1By: createdBy, trackAcct1Date: nowStr(),
+    trackAcct1Note: 'นักบัญชีวางบิลเองในระบบ — เอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว',
+    trackAcct2By: createdBy, trackAcct2Date: nowStr(),
+    trackAcct2Note: 'นักบัญชีวางบิลเองในระบบ — เอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว',
   };
   // if the accountant split this into multiple SAP sub-lines, fold the split + its aggregate
   // totals into the same patch — mirrors saveSapLinesToDoc()'s >=2-lines branch, just done in
@@ -2703,7 +2804,7 @@ async function submitApproveOwn(e){
   hideBusyOverlay();
   if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการ + อนุมัติขั้นนักบัญชีเลย'; }
   if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData(); render(); return; }
-  showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId));
+  showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
   e.target.reset();
   state.saOwnSapLines = [];
   await refreshData();
@@ -3197,7 +3298,7 @@ function accountingApprovalHTML(){
         return rows;
       })();
       const mainRow = `
-        <tr>
+        <tr id="doclink-${d.id}">
           <td class="mono" style="font-weight:700;color:var(--navy);font-size:13.5px;">${displayId(d.id)}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span>${(d.skipApprover==='TRUE'||d.skipApprover===true)?'<span title="ข้ามขั้นผู้อนุมัติ" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">⤳หัวหน้าแผนก</span>':''}${(d.skipFinance==='TRUE'||d.skipFinance===true)?'<span title="ไม่ส่งการเงิน" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">🚫การเงิน</span>':''}${getSkipReviewerReason(d)?`<span title="ยังไม่ได้ผ่านผู้ตรวจสอบ — ${getSkipReviewerReason(d)}" style="margin-left:4px;font-size:10px;color:var(--stamp-red);font-weight:600;">⚠ ข้ามผู้ตรวจสอบ</span>`:''}</td>
           <td>${d.docName}${d.comment?`<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px;">${d.comment}</div>`:''}</td>
@@ -5336,8 +5437,9 @@ function adminSettingsHTML(){
     <tr>
       <td><span class="badge badge-${t.color}">${t.label}</span></td>
       <td class="mono">${t.key}</td>
+      <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.autoComplete?'checked':''} onchange="toggleDocTypeAutoComplete('${t.key}', this.checked)"></label></td>
       <td><button class="btn btn-sm btn-reject" onclick="deleteDocType('${t.key}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="3">ยังไม่มีประเภทเอกสาร</td></tr>`;
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="4">ยังไม่มีประเภทเอกสาร</td></tr>`;
 
   const reviewerOptions = state.members.filter(m=>m.role==='ผู้ตรวจสอบ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
   const approverOptions = state.members.filter(m=>m.role==='ผู้อนุมัติ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
@@ -5402,10 +5504,17 @@ function adminSettingsHTML(){
       <div class="field" style="margin-bottom:0;"><label>สี</label>
         <select name="color"><option value="blue">น้ำเงิน</option><option value="purple">ม่วง</option><option value="orange">ส้ม</option><option value="pink">ชมพู</option><option value="gold">ทอง</option></select>
       </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>ข้ามขั้นตอนอนุมัติ</label>
+        <label class="chip-check" style="display:flex;align-items:center;gap:6px;font-weight:400;height:38px;">
+          <input type="checkbox" name="autoComplete"> วางบิลแล้วเป็น Complete ทันที
+        </label>
+      </div>
       <button class="btn btn-primary" type="submit">เพิ่มประเภทเอกสาร</button>
     </form>
+    <div class="helper" style="margin:-8px 0 12px;">ติ๊ก "ข้ามขั้นตอนอนุมัติ" สำหรับเอกสารที่ไม่ต้องผ่านนักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติเลย เช่น ใบเสร็จรับเงิน, ใบกำกับภาษี — User วางบิลเข้ามาแล้วระบบจะบันทึกเป็นสถานะ Complete ให้ทันที ติ๊ก/ยกเลิกได้ทีหลังจากคอลัมน์ในตารางด้านล่าง (มีผลกับเอกสารที่วางบิลหลังจากเปลี่ยนค่าเท่านั้น ไม่ย้อนหลัง)</div>
     <table>
-      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th></th></tr></thead>
+      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th>ข้ามขั้นตอนอนุมัติ</th><th></th></tr></thead>
       <tbody>${typeRows}</tbody>
     </table>
   </div>
@@ -5424,6 +5533,19 @@ function adminSettingsHTML(){
       <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติคนที่ 3</label><select name="approverId3"><option value="">— ไม่กำหนด —</option>${approverOptions}</select></div>
       <button class="btn btn-primary" type="submit">บันทึก Mapping</button>
     </form>
+    <div style="background:var(--paper);border-radius:8px;padding:12px 14px;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:8px;">ตั้งผู้ตรวจสอบหลายประเภทพร้อมกัน (ไม่แตะช่องผู้อนุมัติเดิม)</div>
+      <form onsubmit="saveBulkReviewerMapping(event)">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
+          <div class="field" style="margin-bottom:0;"><label>บริษัท</label><select name="companyCode" required>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
+          <div class="field" style="margin-bottom:0;"><label>ผู้ตรวจสอบ</label><select name="reviewerId" required><option value="">— เลือก —</option>${reviewerOptions}</select></div>
+        </div>
+        <div style="display:flex;gap:6px 16px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;">
+          ${state.docTypes.map(t=>`<label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="checkbox" name="bulkDocType" value="${t.key}"> ${t.label}</label>`).join('')}
+        </div>
+        <button class="btn btn-primary btn-sm" type="submit">บันทึกให้ประเภทที่ติ๊ก</button>
+      </form>
+    </div>
     <table>
       <thead><tr><th>ประเภทเอกสาร</th><th>บริษัท</th><th>ผู้ตรวจสอบ</th><th>ผู้อนุมัติ</th><th>ผู้อนุมัติ 2</th><th>ผู้อนุมัติ 3</th><th></th></tr></thead>
       <tbody>${mappingRows}</tbody>
@@ -5631,6 +5753,8 @@ function adminNotificationsHTML(){
       ${toggle('emailNotifyAccountant', 'มีเอกสารใหม่รอนักบัญชีดำเนินการ', on('emailNotifyAccountant'))}
       ${toggle('emailNotifyReviewer', 'มีเอกสารรอผู้ตรวจสอบดำเนินการ', on('emailNotifyReviewer'))}
       ${toggle('emailNotifyApprover', 'มีเอกสารรอผู้อนุมัติดำเนินการ', on('emailNotifyApprover'))}
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">การคัดกรองผู้รับ</div>
+      ${toggle('emailStrictMapping', 'เข้มงวดตาม Approval Mapping — ประเภทเอกสาร+บริษัทที่ยังไม่ได้ map ผู้ตรวจสอบ/ผู้อนุมัติ จะไม่ส่งเมลหาใครเลย (ทั้งเมลทันทีและสรุปเช้า/บ่าย) แทนการส่งหาทุกคนในบริษัท', on('emailStrictMapping'))}
       <button class="btn btn-primary" type="submit" style="margin-top:16px;">บันทึกการตั้งค่า</button>
     </form>
   </div>
@@ -5708,6 +5832,14 @@ function adminNotificationsHTML(){
     </div>
   </div>
   <div class="card">
+    <div class="eyebrow">Email Log</div>
+    <h3 style="margin-top:4px;">ประวัติการส่งอีเมล</h3>
+    <div class="helper">บันทึกทุกฉบับที่ระบบส่ง (หรือตั้งใจไม่ส่ง) พร้อมเหตุผลที่เลือกผู้รับ — เก็บ 90 วันแล้วลบอัตโนมัติ · ฉบับที่ส่งไม่สำเร็จ ระบบลองส่งซ้ำให้เองสูงสุด 3 ครั้ง (ทุกชั่วโมงที่รอบสรุปรายวันทำงาน) หรือกดส่งซ้ำเองได้ที่นี่</div>
+    <hr class="div">
+    ${emailLogTableHTML()}
+  </div>
+
+  <div class="card">
     <div class="eyebrow">ข้อควรทราบ</div>
     <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--ink-soft);">
       <li>อีเมลจะถูกส่งจากบัญชี Google ที่ใช้ deploy Apps Script ของระบบนี้ — ผู้รับจะเห็น "From" เป็นอีเมลนั้น ไม่ใช่จากระบบ Outlook ขององค์กร</li>
@@ -5715,6 +5847,61 @@ function adminNotificationsHTML(){
       <li>ผู้รับต้องมีอีเมลบันทึกไว้ในหน้า "เพิ่ม Member" ให้ครบถ้วนก่อน ถึงจะได้รับการแจ้งเตือน</li>
     </ul>
   </div>`;
+}
+/* ---- Email Log viewer ---- */
+function emailLogTableHTML(){
+  const L = state.emailLog;
+  const loadBtn = `<button class="btn btn-sm btn-outline" onclick="loadEmailLog()" ${L&&L.loading?'disabled':''}>${L&&L.loading?'กำลังโหลด...':(L&&L.rows?'↻ โหลดใหม่':'โหลดประวัติการส่งเมล')}</button>`;
+  if(!L || !L.rows) return loadBtn;
+  const f = L.filter || 'all';
+  const rows = L.rows.filter(r=> f==='all' || r.status===f);
+  const failedCount = L.rows.filter(r=>r.status==='ล้มเหลว').length;
+  const badge = st => st==='สำเร็จ' ? '<span class="badge badge-blue">สำเร็จ</span>' : st==='ล้มเหลว' ? '<span class="badge badge-pink">ล้มเหลว</span>' : '<span class="badge badge-gold">ไม่ส่ง</span>';
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const body = rows.map(r=>`<tr>
+    <td style="white-space:nowrap;font-size:12px;">${esc(r.time)}</td>
+    <td>${esc(r.kind)}</td>
+    <td class="mono">${esc(r.refId)}</td>
+    <td>${esc(r.companyCode)}</td>
+    <td style="font-size:12px;">${esc(r.to)||'-'}</td>
+    <td>${badge(r.status)}${r.error?`<div style="font-size:11px;color:var(--stamp-red);max-width:220px;">${esc(r.error)}</div>`:''}</td>
+    <td style="font-size:11.5px;color:var(--ink-soft);max-width:240px;">${esc(r.reason)}</td>
+    <td>${r.attempts||0}</td>
+    <td>${r.status==='ล้มเหลว'?`<button class="btn btn-sm btn-action" onclick="resendEmailRow('${r.id}')">ส่งซ้ำ</button>`:''}</td>
+  </tr>`).join('') || '<tr class="empty-row"><td colspan="9">ไม่มีรายการ</td></tr>';
+  const opt = (v,l)=>`<option value="${v}" ${f===v?'selected':''}>${l}</option>`;
+  return `
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+    ${loadBtn}
+    <select onchange="setEmailLogFilter(this.value)">${opt('all','ทุกสถานะ')}${opt('สำเร็จ','สำเร็จ')}${opt('ล้มเหลว','ล้มเหลว')}${opt('ไม่ส่ง','ไม่ส่ง')}</select>
+    ${failedCount?`<button class="btn btn-sm btn-primary" onclick="resendAllFailedEmails()">ส่งซ้ำทุกฉบับที่ล้มเหลว (${failedCount})</button>`:''}
+    <span style="font-size:12px;color:var(--ink-soft);">แสดงล่าสุด ${L.rows.length} รายการ${L.quota!=null?` · โควตาส่งเมลวันนี้เหลือ ${L.quota} ฉบับ`:''}</span>
+  </div>
+  <div style="overflow-x:auto;"><table>
+    <thead><tr><th>เวลา</th><th>ประเภท</th><th>อ้างอิง</th><th>บริษัท</th><th>ผู้รับ</th><th>สถานะ</th><th>เหตุผลเลือกผู้รับ</th><th>ครั้ง</th><th></th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+async function loadEmailLog(){
+  state.emailLog = Object.assign({ filter:'all' }, state.emailLog||{}, { loading:true });
+  render();
+  const res = await apiCall('getEmailLog', {});
+  if(!res || !res.success){ state.emailLog.loading=false; render(); showToast('โหลดประวัติการส่งเมลไม่สำเร็จ'); return; }
+  state.emailLog = { rows:res.rows||[], quota:res.quota, filter:(state.emailLog&&state.emailLog.filter)||'all', loading:false };
+  render();
+}
+function setEmailLogFilter(v){ if(state.emailLog){ state.emailLog.filter=v; render(); } }
+async function resendEmailRow(id){
+  const res = await apiCall('resendEmail', { id });
+  if(!res.success){ showToast('ส่งซ้ำไม่สำเร็จ'); return; }
+  showToast(res.sent ? 'ส่งซ้ำสำเร็จ' : 'ส่งซ้ำแล้วแต่ยังล้มเหลว — ดูข้อความ error ในตาราง');
+  await loadEmailLog();
+}
+async function resendAllFailedEmails(){
+  const res = await apiCall('resendFailedEmails', {});
+  if(!res.success){ showToast('ส่งซ้ำไม่สำเร็จ'); return; }
+  showToast('ลองส่งซ้ำ '+res.tried+' ฉบับ สำเร็จ '+res.sent+' ฉบับ');
+  await loadEmailLog();
 }
 function resetEmailTemplate(){
   document.getElementById('email-subject-template').value = DEFAULT_EMAIL_SUBJECT_TEMPLATE;
@@ -5781,7 +5968,7 @@ function toggleNotifPreview(el){
 }
 async function saveNotificationSettings(e){
   e.preventDefault();
-  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover'];
+  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover','emailStrictMapping'];
   showBusyOverlay('กำลังบันทึกการตั้งค่า กรุณารอสักครู่...');
   for(const key of keys){
     const el = document.getElementById('notif-'+key);
@@ -5821,8 +6008,9 @@ async function addDocType(e){
   const label = f.get('label').trim();
   const key = label.replace(/\s+/g,'_');
   const color = f.get('color');
+  const autoComplete = f.get('autoComplete') === 'on';
   if(state.docTypes.some(t=>t.key===key)){ showToast('มีประเภทเอกสารนี้อยู่แล้ว'); return; }
-  const res = await apiCall('addDocType', { key, label, color });
+  const res = await apiCall('addDocType', { key, label, color, autoComplete });
   if(!res.success){ showToast('เพิ่มประเภทเอกสารไม่สำเร็จ'); return; }
   showToast('เพิ่มประเภทเอกสาร '+label+' เรียบร้อย');
   e.target.reset();
@@ -5834,6 +6022,14 @@ async function deleteDocType(key){
   if(!res.success){ showToast('ลบประเภทเอกสารไม่สำเร็จ'); return; }
   showToast('ลบประเภทเอกสารแล้ว');
   await refreshData();
+  render();
+}
+async function toggleDocTypeAutoComplete(key, checked){
+  const res = await apiCall('updateDocType', { key, autoComplete: checked });
+  if(!res.success){ showToast('อัปเดตไม่สำเร็จ ลองใหม่อีกครั้ง'); render(); return; }
+  const t = state.docTypes.find(x=>x.key===key);
+  if(t) t.autoComplete = checked;
+  showToast(checked ? 'ตั้งให้ "'+(t?t.label:key)+'" ข้ามขั้นตอนอนุมัติแล้ว (Complete ทันทีที่วางบิล)' : 'ยกเลิกการข้ามขั้นตอนอนุมัติแล้ว');
   render();
 }
 async function saveApprovalMapping(e){
@@ -5849,6 +6045,22 @@ async function saveApprovalMapping(e){
   if(!res.success){ showToast('บันทึก Mapping ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('บันทึก Mapping เรียบร้อย');
   e.target.reset();
+  await refreshData();
+  render();
+}
+async function saveBulkReviewerMapping(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const companyCode = f.get('companyCode');
+  const reviewerId = f.get('reviewerId');
+  const types = f.getAll('bulkDocType');
+  if(!reviewerId){ showToast('กรุณาเลือกผู้ตรวจสอบ'); return; }
+  if(!types.length){ showToast('กรุณาติ๊กประเภทเอกสารอย่างน้อย 1 ประเภท'); return; }
+  for(const docType of types){
+    const res = await apiCall('saveApprovalMapping', { docType, companyCode, reviewerId });
+    if(!res.success){ showToast('บันทึกไม่สำเร็จที่ประเภท '+docType); return; }
+  }
+  showToast('บันทึกผู้ตรวจสอบให้ '+types.length+' ประเภทเอกสารเรียบร้อย');
   await refreshData();
   render();
 }
