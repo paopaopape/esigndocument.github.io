@@ -3690,6 +3690,21 @@ function paymentApprovalHTML(){
     const canAct = pvCanActOnStage(v);
     const isRejectedItem = v.status !== meta.status;
     const docIds = pvDocIds(v);
+    // same columns as Report Payment — summed from the batch's own documents
+    const agg = (function(){
+      const num = x => parseFloat(x)||0;
+      const a = { vat:0, wht:0, base:0, net:0, paymentBy:'', paymentDate:'', types:new Set() };
+      docIds.forEach(id=>{
+        const d = state.documents.find(x=>x.id===id);
+        if(!d) return;
+        a.vat += num(d.vatAmount); a.wht += num(d.whtAmount); a.base += num(d.baseAmount); a.net += num(d.netAmount);
+        if(d.payType) a.types.add(d.payType);
+        if(d.paymentBy) a.paymentBy = d.paymentBy;
+        if((d.paymentDate||'') > a.paymentDate) a.paymentDate = d.paymentDate;
+      });
+      a.payTypeLabel = a.types.size===0 ? '-' : (a.types.size===1 ? payTypeLabel([...a.types][0]) : 'หลายประเภท');
+      return a;
+    })();
     const actionBtn = canAct
       ? `<button class="btn btn-sm btn-action" onclick="toggleRow('${v.id}')">${expanded?'ปิด':'ดำเนินการ'}</button>`
       : `<span style="font-size:11.5px;color:var(--ink-soft);" title="ชุดนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${pvAssignedActorName(v)||'-'}</span>`;
@@ -3698,8 +3713,13 @@ function paymentApprovalHTML(){
       <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
       <td>${companyName(v.companyCode)}</td>
       <td>${docIds.length} รายการ</td>
-      <td style="text-align:right;">${money(v.netTotal)}</td>
-      <td>${v.createdBy||'-'}<div style="font-size:10.5px;color:var(--ink-soft);">${v.createdDate||'-'}</div></td>
+      <td>${agg.payTypeLabel}</td>
+      <td>${money(agg.vat)}</td>
+      <td>${money(agg.wht)}</td>
+      <td>${money(agg.base)}</td>
+      <td><b>${money(agg.net)}</b></td>
+      <td>${agg.paymentBy||v.createdBy||'-'}</td>
+      <td>${agg.paymentDate||v.createdDate||'-'}</td>
       <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
       <td style="white-space:nowrap;"><button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
     </tr>`;
@@ -3707,7 +3727,7 @@ function paymentApprovalHTML(){
     if(expanded && canAct && !isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="7">
+        <td colspan="12">
           <div class="note-box">
             <div style="width:100%;margin-top:4px;">
               <textarea id="pv-note-${v.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
@@ -3722,7 +3742,7 @@ function paymentApprovalHTML(){
     } else if(expanded && canAct && isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="7">
+        <td colspan="12">
           <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
             <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจากผู้อนุมัติ Payment:</strong> ${v.approverNote||'ไม่ได้ระบุเหตุผล'}
           </div>
@@ -3733,7 +3753,7 @@ function paymentApprovalHTML(){
       </tr>`;
     }
     return mainRow + actionRow;
-  }).join('') : `<tr class="empty-row"><td colspan="7">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="12">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
@@ -3772,10 +3792,10 @@ function paymentApprovalHTML(){
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" คือชุดที่ถูกตีกลับโดยผู้อนุมัติ Payment ให้กด "ส่งต่อผู้อนุมัติ Payment ใหม่" เพื่อส่งต่ออีกครั้ง</div>' : ''}
     <hr class="div">
     <div class="table-scroll">
-    <table>
-      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th style="text-align:right;">ยอดรวม</th><th>สร้างโดย</th><th>สถานะ</th><th></th></tr></thead>
+    <div class="table-scroll"><table>
+      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>
+    </table></div>
     </div>
   </div>
   ${lockedSection}`;
@@ -4884,19 +4904,26 @@ async function confirmBatchPayment(){
   // Document's own status/fields; triggered the moment the batch is confirmed here.
   const pvCompanyCode = selectedDocs[0] ? selectedDocs[0].companyCode : state.paymentCompany;
   const netTotal = selectedDocs.reduce((sum,d)=>sum+(parseFloat(d.netAmount)||0),0);
+  let pvFailed = false;
   const existingPv = state.paymentVouchers.find(v=>String(v.docPayment)===String(docNum) && String(v.companyCode)===String(pvCompanyCode));
   if(existingPv){
     if(existingPv.locked==='TRUE'){
       showToast('หมายเหตุ: Doc Payment นี้ปิดรอบ Payment ไปแล้ว เอกสารที่เพิ่มใหม่จะไม่ถูกรวมในชุดปิดรอบเดิม กรุณาแจ้ง Admin หากต้องการปลดล็อกเพื่อรวมเพิ่ม');
     } else {
       const mergedIds = Array.from(new Set(pvDocIds(existingPv).concat(ids)));
-      await apiCall('updatePaymentVoucher', { id: existingPv.id, docIds: JSON.stringify(mergedIds), netTotal: String(netTotal) });
+      const upRes = await apiCall('updatePaymentVoucher', { id: existingPv.id, docIds: JSON.stringify(mergedIds), netTotal: String(netTotal) });
+      if(!upRes || !upRes.success) pvFailed = true;
     }
   } else {
-    await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
+    const pvRes = await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
+    if(!pvRes || !pvRes.success) pvFailed = true;
   }
   hideBusyOverlay();
-  showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ)');
+  if(pvFailed){
+    alert('บันทึกการรวบจ่ายสำเร็จ แต่สร้างชุดปิดรอบ Payment (ส่งต่อผู้ตรวจสอบ Payment) ไม่สำเร็จ\n\nDoc Payment: '+docNum+'\nกรุณาแจ้ง Admin — มักเกิดจาก Apps Script ยังไม่ได้ Deploy เวอร์ชันล่าสุด หรือไม่มีชีท PaymentVouchers');
+  } else {
+    showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ) · ส่งต่อผู้ตรวจสอบ Payment แล้ว');
+  }
   state.paymentSelected = [];
   state.paymentDocNumber = '';
   state.paymentDocLink = '';
@@ -5567,6 +5594,9 @@ function adminSettingsHTML(){
       <thead><tr><th>บริษัท</th><th>ผู้ตรวจสอบ Payment</th><th>ผู้อนุมัติ Payment</th><th></th></tr></thead>
       <tbody>${pvMappingRows}</tbody>
     </table>
+    <hr class="div">
+    <div class="helper">รวบจ่ายไปแล้วแต่ชุดปิดรอบ Payment ไม่ถูกสร้าง (ไม่มีงานไปถึงผู้ตรวจสอบ Payment)? กดเพื่อสร้างย้อนหลังจากเอกสาร Complete ที่มี Doc Payment แต่ยังไม่มีชุดปิดรอบ</div>
+    <button class="btn btn-sm btn-outline" onclick="backfillPaymentVouchers()">สร้างชุดปิดรอบ Payment ย้อนหลัง</button>
   </div>
 
   <div class="card">
@@ -5753,6 +5783,7 @@ function adminNotificationsHTML(){
       ${toggle('emailNotifyAccountant', 'มีเอกสารใหม่รอนักบัญชีดำเนินการ', on('emailNotifyAccountant'))}
       ${toggle('emailNotifyReviewer', 'มีเอกสารรอผู้ตรวจสอบดำเนินการ', on('emailNotifyReviewer'))}
       ${toggle('emailNotifyApprover', 'มีเอกสารรอผู้อนุมัติดำเนินการ', on('emailNotifyApprover'))}
+      ${toggle('emailNotifyReject', 'เอกสารถูกตีกลับ — แจ้งผู้ที่ต้องแก้ไข (ขั้นก่อนหน้า) พร้อมเหตุผล ทั้ง flow บัญชีและ Payment', on('emailNotifyReject'))}
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">การคัดกรองผู้รับ</div>
       ${toggle('emailStrictMapping', 'เข้มงวดตาม Approval Mapping — ประเภทเอกสาร+บริษัทที่ยังไม่ได้ map ผู้ตรวจสอบ/ผู้อนุมัติ จะไม่ส่งเมลหาใครเลย (ทั้งเมลทันทีและสรุปเช้า/บ่าย) แทนการส่งหาทุกคนในบริษัท', on('emailStrictMapping'))}
       <button class="btn btn-primary" type="submit" style="margin-top:16px;">บันทึกการตั้งค่า</button>
@@ -5968,7 +5999,7 @@ function toggleNotifPreview(el){
 }
 async function saveNotificationSettings(e){
   e.preventDefault();
-  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover','emailStrictMapping'];
+  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover','emailNotifyReject','emailStrictMapping'];
   showBusyOverlay('กำลังบันทึกการตั้งค่า กรุณารอสักครู่...');
   for(const key of keys){
     const el = document.getElementById('notif-'+key);
@@ -6068,6 +6099,20 @@ async function deleteApprovalMapping(id){
   const res = await apiCall('deleteApprovalMapping', { id });
   if(!res.success){ showToast('ลบ Mapping ไม่สำเร็จ'); return; }
   showToast('ลบ Mapping แล้ว');
+  await refreshData();
+  render();
+}
+async function backfillPaymentVouchers(){
+  const pre = await apiCall('backfillPaymentVouchers', { dryRun:true });
+  if(!pre || !pre.success){ showToast('ตรวจรายการไม่สำเร็จ — อาจต้อง Deploy Apps Script เวอร์ชันล่าสุดก่อน'); return; }
+  if(!pre.count){ showToast('ไม่มีรายการที่ต้องสร้างย้อนหลัง'); return; }
+  const lines = pre.items.map(i=>'• Doc Payment '+i.docPayment+' · บริษัท '+i.companyCode+' · '+i.docs+' เอกสาร').join('\n');
+  if(!confirm('จะสร้างชุดปิดรอบ Payment ย้อนหลัง '+pre.count+' ชุด และส่งเมลแจ้งผู้ตรวจสอบ Payment:\n\n'+lines+'\n\nดำเนินการต่อหรือไม่?')) return;
+  showBusyOverlay('กำลังสร้างชุดปิดรอบ Payment...');
+  const res = await apiCall('backfillPaymentVouchers', {});
+  hideBusyOverlay();
+  if(!res || !res.success){ showToast('สร้างไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('สร้างชุดปิดรอบ Payment ย้อนหลัง '+res.created+' ชุดเรียบร้อย');
   await refreshData();
   render();
 }
