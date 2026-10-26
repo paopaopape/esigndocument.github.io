@@ -214,6 +214,9 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 .tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line);}
 .tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;}
 .tab:hover{color:var(--navy);cursor:pointer;}
+.tab-row{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line);}
+.help-toggle{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:8px;border:1px solid var(--line);border-radius:50%;background:#fff;color:var(--ink-soft);font-size:12px;font-weight:700;cursor:pointer;vertical-align:2px;}
+.help-toggle:hover{color:var(--navy);border-color:var(--gold);}
 .tab.active{color:var(--navy);border-color:var(--gold);}
 
 .chip-check{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;font-size:12px;margin:3px 4px 3px 0;background:#fff;}
@@ -275,7 +278,7 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
   approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null,
-  members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, appSettings:{}, vendors:[],
+  members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, showHelp:(function(){ try{ return localStorage.getItem('dfShowHelp')==='1'; }catch(e){ return false; } })(), appSettings:{}, vendors:[],
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
@@ -3120,6 +3123,15 @@ const RESUBMIT_CFG = {
   'ตีกลับแก้ไข(ผู้อนุมัติ2)': {next:'รอผู้อนุมัติ2', actor:'approverBy', date:'approverDate', note:'approverNote'},
 };
 
+/* ---- show/hide the explanatory helper text on the approval screens (saves screen space) ---- */
+function helpToggleBtnHTML(){
+  return `<span class="help-toggle" title="คลิกเพื่อแสดง/ซ่อนคำอธิบาย" onclick="toggleHelpText()">${state.showHelp?'−':'?'}</span>`;
+}
+function toggleHelpText(){
+  state.showHelp = !state.showHelp;
+  try{ localStorage.setItem('dfShowHelp', state.showHelp ? '1' : '0'); }catch(e){}
+  render();
+}
 function pendingBadgeHTML(count){
   if(!count) return '';
   return ` <span style="display:inline-block;min-width:16px;height:16px;line-height:16px;background:var(--stamp-red,#C0392B);color:#fff;border-radius:50%;font-size:10px;text-align:center;padding:0 3px;vertical-align:2px;">${count}</span>`;
@@ -3470,9 +3482,11 @@ function accountingApprovalHTML(){
   ${companyHeader}
   <div class="card">
     <div class="eyebrow">Stage · ${meta.label}</div>
-    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})</h3>
+    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
+    <div style="display:${state.showHelp?'block':'none'};">
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" ในตารางนี้คือเอกสารที่ถูกตีกลับโดยขั้นตอนถัดไป ให้แก้ไขแล้วกด Resubmit เพื่อส่งต่ออนุมัติใหม่ได้ทันที ไม่ต้องวางบิลใหม่</div>' : ''}
     ${canEditDocuments() ? '<div class="helper">คุณสามารถแก้ไขประเภทเอกสาร รหัสบริษัท ชื่อเอกสาร วันที่ Due และลิงก์ไฟล์ได้โดยกดไอคอนดินสอท้ายแถว — ถ้าเอกสารมีหลาย SAP Doc จะเห็นไอคอน 📎 ที่ช่อง SAP กดดูรายละเอียดได้</div>' : ''}
+    </div>
     <hr class="div">
     ${filterBar}
     <div class="table-scroll">
@@ -3787,9 +3801,11 @@ function paymentApprovalHTML(){
   ${companyHeader}
   <div class="card">
     <div class="eyebrow">Payment Voucher Close-out · ${meta.label}</div>
-    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})</h3>
+    <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
+    <div style="display:${state.showHelp?'block':'none'};">
     <div class="helper">ชุดปิดรอบนี้เป็น Layer แยกต่างหาก ไม่กระทบสถานะเอกสารเดิมที่เป็น Complete อยู่แล้ว — เป็นการเซ็นรับรองปิดรอบ Doc Payment อีกชั้นเท่านั้น</div>
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" คือชุดที่ถูกตีกลับโดยผู้อนุมัติ Payment ให้กด "ส่งต่อผู้อนุมัติ Payment ใหม่" เพื่อส่งต่ออีกครั้ง</div>' : ''}
+    </div>
     <hr class="div">
     <div class="table-scroll">
     <div class="table-scroll"><table>
