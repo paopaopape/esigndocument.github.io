@@ -277,7 +277,7 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 /* ============================= STATE ============================= */
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
-  approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null,
+  approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null, pvSearch:{type:'',name:'',due:'',createdBy:''},
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, showHelp:(function(){ try{ return localStorage.getItem('dfShowHelp')==='1'; }catch(e){ return false; } })(), appSettings:{}, vendors:[],
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
@@ -388,9 +388,13 @@ function updateAmountHints(id){
   if(whtHint) whtHint.innerHTML = whtPercentHTML(base, wht);
   if(netHint) netHint.innerHTML = amountMismatchHTML(base, vat, wht, net);
 }
+const PAY_TYPES = [
+  ['1','1 = Direct'], ['2','2 = Media'], ['D','D = Demand Draft'],
+  ['4','4 = Bahtnet'], ['5','5 = ORFT Transfer to Other Banks'], ['C','C = Corporate Cheque'],
+];
 function payTypeLabel(v){
-  const map = {'1':'1 = Direct', '2':'2 = Media', 'D':'D = Demand Draft'};
-  return map[v] || '-';
+  const f = PAY_TYPES.find(x=>x[0]===String(v));
+  return f ? f[1] : '-';
 }
 function vendorBankInfoText(vendorCode){
   if(!vendorCode) return 'ยังไม่ได้เลือก Vendor';
@@ -746,6 +750,12 @@ async function loadAll(){
   if(linkedDocId && state.user){
     render();
     openDocFromLink(linkedDocId);
+    return;
+  }
+  const linkedPvId = getLinkedPvIdFromUrl_();
+  if(linkedPvId && state.user){
+    render();
+    openPvFromLink(linkedPvId);
     return;
   }
   render();
@@ -1443,6 +1453,8 @@ async function doLogin(e){
   // if this login was triggered by opening a notification email link, jump straight there
   const linkedDocId = getLinkedDocIdFromUrl_();
   if(linkedDocId){ render(); openDocFromLink(linkedDocId); return; }
+  const linkedPvId = getLinkedPvIdFromUrl_();
+  if(linkedPvId){ render(); openPvFromLink(linkedPvId); return; }
   render();
 }
 async function doSetPassword(e){
@@ -1736,6 +1748,28 @@ function openDocFromLink(docId){
     const el = document.getElementById('doclink-' + doc.id);
     if(el) el.scrollIntoView({ behavior:'smooth', block:'center' });
   }, 60);
+}
+
+// Payment close-out email links use ?pvId=<voucher id>
+function getLinkedPvIdFromUrl_(){
+  try{ return new URLSearchParams(window.location.search).get('pvId') || null; }catch(e){ return null; }
+}
+function openPvFromLink(pvId){
+  const v = state.paymentVouchers.find(x=>String(x.id)===String(pvId));
+  if(!v){ showToast('ไม่พบชุดปิดรอบ Payment ' + pvId + ' หรือคุณไม่มีสิทธิ์เข้าถึง'); render(); return; }
+  const tab = pvStageRoleForVoucher(v);
+  if(tab && allowedPvTabs().includes(tab)){
+    state.view = 'approval';
+    state.approvalGroup = 'payment';
+    state.pvTab = tab;
+    state.pvCompany = 'all';
+    state.pvSearch = {type:'',name:'',due:'',createdBy:''};
+    state.expandedRow = v.id;
+    showToast('เปิดชุดปิดรอบ Payment ' + (v.docPayment||v.id));
+  } else {
+    showToast('ชุดปิดรอบ Payment ' + (v.docPayment||v.id) + ' อยู่ในสถานะ "' + (v.status||'-') + '" — คุณไม่มีสิทธิ์ดำเนินการในขั้นนี้');
+  }
+  render();
 }
 
 function layoutHTML(){
@@ -2439,9 +2473,7 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ประเภทการจ่าย</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;">
-        <label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="1" required> 1 = Direct</label>
-        <label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="2"> 2 = Media</label>
-        <label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="D"> D = Demand Draft</label>
+        ${PAY_TYPES.map((t,i)=>`<label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="${t[0]}" ${i===0?'required':''}> ${t[1]}</label>`).join('')}
       </div>
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ยอดเงิน</div>
@@ -2770,7 +2802,7 @@ function parseSapSummarySheet_(aoa){
       v.docs.push(doc);
       v.base += xlsNum_(row[iBase])||0; v.amt += xlsNum_(row[iAmt])||0;
       v.wht += xlsNum_(row[iWht])||0;   v.net += xlsNum_(row[iNet])||0;
-      if(iPm!==-1 && row[iPm]!=='' && row[iPm]!=null) v.pm.add(String(row[iPm]).trim());
+      if(iPm!==-1 && row[iPm]!=='' && row[iPm]!=null) v.pm.add(String(row[iPm]).trim().toUpperCase());
       last = v;
     } else if(last){
       const b=xlsNum_(row[iBase]), a=xlsNum_(row[iAmt]), w=xlsNum_(row[iWht]), n=xlsNum_(row[iNet]);
@@ -2899,7 +2931,7 @@ async function downloadSapSummaryTemplate(){
       '3. หลังรายการของแต่ละ Vendor ใส่แถวสรุปยอด (ไม่ต้องมี Doc. Number / Account) — ใช้ตรวจเทียบกับยอดที่ระบบคำนวณ',
       '4. จบข้อมูลด้วยแถวที่เขียนคำว่า Total — ข้อมูลใต้แถวนี้ (ลายเซ็น, หมายเหตุ) จะไม่ถูกนำเข้า',
       '5. VAT = Amount in Doc. − Tax Base Amt. | WHT = Amt WHT. | ยอดสุทธิ = Amount in Local Curr.',
-      '6. Payment Method: 1 = Direct, 2 = Media (ถ้าไม่ใส่ ต้องเลือกประเภทการจ่ายในฟอร์มเอง)',
+      '6. Payment Method: 1 = Direct, 2 = Media, D = Demand Draft, 4 = Bahtnet, 5 = ORFT, C = Corporate Cheque (ถ้าไม่ใส่ ต้องเลือกประเภทการจ่ายในฟอร์มเอง)',
       '7. ระบบนำเข้าเป็น 1 บรรทัดต่อ Vendor แล้วให้ตรวจสอบก่อนบันทึกเสมอ',
     ].forEach((t,i)=>{ const r = note.addRow([t]); if(i===0) r.font={bold:true}; });
     note.getColumn(1).width = 120;
@@ -3745,15 +3777,7 @@ function accountingApprovalHTML(){
           </div>
           ${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
           <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="payType-${d.id}" value="1" ${d.payType==='1'?'checked':''}> 1 = Direct
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="payType-${d.id}" value="2" ${d.payType==='2'?'checked':''}> 2 = Media
-            </label>
-            <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-              <input type="radio" name="payType-${d.id}" value="D" ${d.payType==='D'?'checked':''}> D = Demand Draft
-            </label>
+            ${PAY_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="radio" name="payType-${d.id}" value="${t[0]}" ${d.payType===t[0]?'checked':''}> ${t[1]}</label>`).join('')}
           </div>
           <div style="width:100%;background:var(--paper);border-radius:8px;padding:10px 12px;margin-top:10px;">
             <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:8px;">ตัวเลือกเพิ่มเติม (ไม่บังคับ)</div>
@@ -4095,7 +4119,22 @@ function paymentApprovalHTML(){
   if(state.pvCompany!=='all') list = list.filter(v=>v.companyCode===state.pvCompany);
 
   const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const rows = list.length ? list.map(v=>{
+  const ps = state.pvSearch;
+  const infoOf = {};
+  list.forEach(v=>{ infoOf[v.id] = pvBatchInfo_(v); });
+  if(ps.type) list = list.filter(v=>infoOf[v.id].docs.some(d=>d.docType===ps.type));
+  if(ps.name && ps.name.trim()){ const q = ps.name.trim().toLowerCase(); list = list.filter(v=>String(v.docPayment||'').toLowerCase().includes(q) || String(v.id||'').toLowerCase().includes(q) || infoOf[v.id].docs.some(d=>String(d.docName||'').toLowerCase().includes(q))); }
+  if(ps.due) list = list.filter(v=>infoOf[v.id].dues.indexOf(ps.due)!==-1);
+  if(ps.createdBy && ps.createdBy.trim()){ const q = ps.createdBy.trim().toLowerCase(); list = list.filter(v=>String(v.createdBy||'').toLowerCase().includes(q) || infoOf[v.id].docs.some(d=>String(d.paymentBy||'').toLowerCase().includes(q))); }
+  const pvFilterBar = `
+  <div class="filter-bar">
+    <div class="f-field"><label>ประเภทเอกสาร</label><select id="pv-f-type" onchange="setPvSearch('type', this.value)">${docTypeSelectOptions(ps.type)}</select></div>
+    <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร / เลข Doc Payment / ID</label><input id="pv-f-name" type="text" placeholder="ค้นหา..." value="${ps.name}" oninput="setPvSearch('name', this.value)"></div>
+    <div class="f-field"><label>Due วันชำระเงิน</label><input id="pv-f-due" type="date" value="${ps.due}" onchange="setPvSearch('due', this.value)"></div>
+    <div class="f-field"><label>สร้างโดย</label><input id="pv-f-created" type="text" placeholder="ชื่อผู้สร้าง..." value="${ps.createdBy}" oninput="setPvSearch('createdBy', this.value)"></div>
+    <button class="filter-clear" onclick="clearPvSearch()">ล้างตัวกรอง</button>
+  </div>`;
+  const renderPvRow = v=>{
     const expanded = state.expandedRow===v.id;
     const canAct = pvCanActOnStage(v);
     const isRejectedItem = v.status !== meta.status;
@@ -4131,7 +4170,7 @@ function paymentApprovalHTML(){
       <td>${money(agg.base)}</td>
       <td><b>${money(agg.net)}</b></td>
       <td>${agg.paymentBy||v.createdBy||'-'}</td>
-      <td>${agg.paymentDate||v.createdDate||'-'}</td>
+      <td>${pvDueLabel_(infoOf[v.id])}</td>
       <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
       <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : ''}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
     </tr>`;
@@ -4165,7 +4204,11 @@ function paymentApprovalHTML(){
       </tr>`;
     }
     return mainRow + actionRow;
-  }).join('') : `<tr class="empty-row"><td colspan="13">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  };
+  const pvGroups = groupByDue(list.map(v=>({ v, dueDate: infoOf[v.id].due })));
+  const rows = pvGroups.length ? pvGroups.map(g=>
+    `<tr class="group-header"><td colspan="13">รอบชำระเงิน ${g.due==='ไม่ระบุ' ? 'ไม่ระบุ' : fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` + g.items.map(w=>renderPvRow(w.v)).join('')
+  ).join('') : `<tr class="empty-row"><td colspan="13">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
@@ -4205,14 +4248,27 @@ function paymentApprovalHTML(){
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" คือชุดที่ถูกตีกลับโดยผู้อนุมัติ Payment ให้กด "ส่งต่อผู้อนุมัติ Payment ใหม่" เพื่อส่งต่ออีกครั้ง</div>' : ''}
     </div>
     <hr class="div">
+    ${pvFilterBar}
     <div class="table-scroll">
     <div class="table-scroll"><table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     </div>
   </div>
   ${lockedSection}`;
+}
+function setPvSearch(field, val){ state.pvSearch[field] = val; render(); }
+function clearPvSearch(){ state.pvSearch = {type:'',name:'',due:'',createdBy:''}; render(); }
+// documents of a voucher batch + their due dates / types / names (for filter + grouping + Due column)
+function pvBatchInfo_(v){
+  const docs = pvDocIds(v).map(id=>state.documents.find(x=>x.id===id)).filter(Boolean);
+  const dues = [...new Set(docs.map(d=>normalizeDateOnly(d.dueDate)).filter(Boolean))].sort();
+  return { docs, dues, due: dues[0]||'' };
+}
+function pvDueLabel_(info){
+  if(!info.dues.length) return '-';
+  return fmtDate(info.dues[0]) + (info.dues.length>1 ? ' <span style="font-size:10.5px;color:var(--ink-soft);">(+'+(info.dues.length-1)+' วัน)</span>' : '');
 }
 function setPvCompany(v){ state.pvCompany = v; state.expandedRow=null; render(); }
 async function processPaymentStage(id, decision){
