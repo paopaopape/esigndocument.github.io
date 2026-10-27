@@ -1755,7 +1755,7 @@ function sidebarHTML(){
   const nav = [];
   nav.push(navItem('dashboard','แดชบอร์ด'));
   nav.push(navItem('submit','วางบิลเอกสาร'));
-  if(['นักบัญชี','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
+  if(['นักบัญชี','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
   if(state.user.role!=='เจ้าหน้าที่การเงิน') nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
     const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
