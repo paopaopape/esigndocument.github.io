@@ -4103,13 +4103,14 @@ function paymentApprovalHTML(){
     // same columns as Report Payment — summed from the batch's own documents
     const agg = (function(){
       const num = x => parseFloat(x)||0;
-      const a = { vat:0, wht:0, base:0, net:0, paymentBy:'', paymentDate:'', types:new Set() };
+      const a = { vat:0, wht:0, base:0, net:0, paymentBy:'', paymentDate:'', link:'', types:new Set() };
       docIds.forEach(id=>{
         const d = state.documents.find(x=>x.id===id);
         if(!d) return;
         a.vat += num(d.vatAmount); a.wht += num(d.whtAmount); a.base += num(d.baseAmount); a.net += num(d.netAmount);
         if(d.payType) a.types.add(d.payType);
         if(d.paymentBy) a.paymentBy = d.paymentBy;
+        if(d.docPaymentLink) a.link = d.docPaymentLink;
         if((d.paymentDate||'') > a.paymentDate) a.paymentDate = d.paymentDate;
       });
       a.payTypeLabel = a.types.size===0 ? '-' : (a.types.size===1 ? payTypeLabel([...a.types][0]) : 'หลายประเภท');
@@ -4131,7 +4132,7 @@ function paymentApprovalHTML(){
       <td>${agg.paymentBy||v.createdBy||'-'}</td>
       <td>${agg.paymentDate||v.createdDate||'-'}</td>
       <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
-      <td style="white-space:nowrap;"><button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
+      <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : ''}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
     </tr>`;
     let actionRow = '';
     if(expanded && canAct && !isRejectedItem){
@@ -4696,7 +4697,7 @@ function paymentHTML(){
       <label>ลิงก์ไฟล์ Doc Payment (สลิป/หลักฐานการโอน — ไม่บังคับ)</label>
       <input id="payment-doclink" type="url" placeholder="https://drive.google.com/..." value="${state.paymentDocLink}" oninput="setPaymentDocLink(this.value)" ${noCompanyPicked?'disabled':''}>
     </div>
-    <button class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim()) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
+    <button id="payment-confirm-btn" class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim()) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
   </div>`;
 
   const paidList = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
@@ -5216,7 +5217,13 @@ function generateVoucherSummary(){
 function setPaymentCompany(v){ state.paymentCompany = v; state.expandedRow=null; state.paymentSelected=[]; render(); }
 function setPaymentSearch(field, val){ state.paymentSearch[field] = val; render(); }
 function clearPaymentSearch(){ state.paymentSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
-function setPaymentDocNumber(v){ state.paymentDocNumber = v; }
+function refreshPaymentConfirmBtn_(){
+  const b = document.getElementById('payment-confirm-btn');
+  if(!b) return;
+  const ok = state.paymentCompany!=='all' && state.paymentSelected.length>0 && String(state.paymentDocNumber||'').trim()!=='';
+  b.disabled = !ok;
+}
+function setPaymentDocNumber(v){ state.paymentDocNumber = v; refreshPaymentConfirmBtn_(); }
 function setPaymentDocLink(v){ state.paymentDocLink = v; }
 function togglePaymentSelect(id){
   if(state.paymentCompany==='all') return; // must pick a single company before selecting
