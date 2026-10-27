@@ -4121,6 +4121,7 @@ function paymentApprovalHTML(){
       : `<span style="font-size:11.5px;color:var(--ink-soft);" title="ชุดนี้ถูกมอบหมายไว้เฉพาะบุคคล">มอบหมายให้: ${pvAssignedActorName(v)||'-'}</span>`;
     const mainRow = `
     <tr>
+      <td class="mono" style="white-space:nowrap;">${v.id||'-'}</td>
       <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
       <td>${companyName(v.companyCode)}</td>
       <td>${docIds.length} รายการ</td>
@@ -4138,7 +4139,7 @@ function paymentApprovalHTML(){
     if(expanded && canAct && !isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="12">
+        <td colspan="13">
           <div class="note-box">
             <div style="width:100%;margin-top:4px;">
               <textarea id="pv-note-${v.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
@@ -4153,7 +4154,7 @@ function paymentApprovalHTML(){
     } else if(expanded && canAct && isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="12">
+        <td colspan="13">
           <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
             <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจากผู้อนุมัติ Payment:</strong> ${v.approverNote||'ไม่ได้ระบุเหตุผล'}
           </div>
@@ -4164,7 +4165,7 @@ function paymentApprovalHTML(){
       </tr>`;
     }
     return mainRow + actionRow;
-  }).join('') : `<tr class="empty-row"><td colspan="12">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="13">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
@@ -4206,7 +4207,7 @@ function paymentApprovalHTML(){
     <hr class="div">
     <div class="table-scroll">
     <div class="table-scroll"><table>
-      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     </div>
@@ -5431,6 +5432,7 @@ function reportPaymentHTML(){
 
   const rows = batchList.length ? batchList.map(b=>`
     <tr>
+      <td class="mono" style="white-space:nowrap;">${b.stage.v ? b.stage.v.id : '-'}</td>
       <td class="mono">${b.docPayment}</td>
       <td>${companyName(b.companyCode)}</td>
       <td>${b.count} รายการ</td>
@@ -5446,7 +5448,7 @@ function reportPaymentHTML(){
         ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
         <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
       </td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="13">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
 
   return `
   ${companyHeader}
@@ -5461,7 +5463,7 @@ function reportPaymentHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -5566,9 +5568,9 @@ function exportReportPaymentToExcel(){
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
   if(!docs.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
   // export at document level (one row per document) so payType/amounts are exact, not aggregated
-  const header = ['Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
+  const header = ['ID Payment Voucher','Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
   const rows = docs.map(d=>[
-    d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
+    (pvStageOfBatch_(d.docPayment).v||{}).id||'', d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
     payTypeLabel(d.payType), parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
     d.paymentBy||'', d.paymentDate||'', pvStageOfBatch_(d.docPayment).label,
   ]);
