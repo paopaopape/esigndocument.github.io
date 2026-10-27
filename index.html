@@ -299,10 +299,11 @@ let state = {
   reportCompany:'all',
   trackingCompany:'all',
   reportSearch:{docPayment:'', by:'', from:'', to:''},
+  reportStatus:'all',
   trackingSearch:{type:'', name:'', createdBy:'', from:'', to:'', status:'', id:'', docSAP:'', docPayment:'', idFrom:'', idTo:''},
   memberSearch:{name:'', email:''},
   permSearch:{name:'', email:''},
-  saOwnSapLines:[],
+  saOwnSapLines:[], pendingSaOwnExcel:null,
 };
 
 /* Document IDs are stored as "{companyCode}-D{seq}" so each company's running number is
@@ -652,7 +653,10 @@ function canOwnerEditDoc(d){
 }
 function canEditVoucherReport(){ return state.user.role === 'ผู้ตรวจสอบ' || isAdmin(); }
 function companySelectOptions(selected){
-  return state.companies.map(c=>`<option value="${c.code}" ${selected===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('');
+  // only the companies this user is allowed to see (plus the doc's current company when editing)
+  const allowed = userCompanyOptions();
+  const list = state.companies.filter(c=>c.code===selected || allowed.some(a=>a.code===c.code));
+  return list.map(c=>`<option value="${c.code}" ${selected===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('');
 }
 
 /* ============================= API (Google Apps Script backend) ============================= */
@@ -663,10 +667,11 @@ async function apiCall(action, payload){
     const res = await fetch(API_URL, {
       method:'POST',
       headers: {'Content-Type':'text/plain;charset=utf-8'}, // avoids CORS preflight against Apps Script
-      body: JSON.stringify({ action, payload: payload||{} }),
+      body: JSON.stringify({ action, payload: Object.assign({}, payload||{}, (typeof state!=='undefined' && state.user) ? {_actor: state.user.id} : {}) }),
     });
     const data = await res.json();
     if(!data.success && data.error) console.warn('API', action, 'returned error:', data.error);
+    if(data && data.error==='company_forbidden'){ showToast('คุณไม่มีสิทธิ์ทำรายการในบริษัทนี้'); }
     return data;
   }catch(err){
     console.error('API call failed', action, err);
@@ -2276,7 +2281,7 @@ async function saveDashDocEdit(e, id){
 /* ============================= SUBMIT BILL ============================= */
 function submitHTML(){
   const typeOptions = state.docTypes.map(t=>`<option value="${t.key}" data-auto="${t.autoComplete?'1':'0'}">${t.label}</option>`).join('');
-  const companyOptions = state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
+  const companyOptions = userCompanyOptions().map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
   const firstTypeAuto = state.docTypes.length ? !!state.docTypes[0].autoComplete : false;
 
   const myRejected = state.documents.filter(d=>d.status==='ตีกลับแก้ไข(นักบัญชี)' && d.createdBy===fullName(state.user));
@@ -2402,7 +2407,7 @@ async function submitNewDoc(e){
 }
 function submitApproveOwnHTML(){
   const typeOptions = state.docTypes.map(t=>`<option value="${t.key}">${t.label}</option>`).join('');
-  const companyOptions = state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
+  const companyOptions = userCompanyOptions().map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
   return `
   <div class="card">
     <div class="eyebrow">New Submission · Self-approve</div>
@@ -2457,8 +2462,12 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
         <span>รายการ SAP แยกย่อย (Sub ID) <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">— ถ้าเอกสารนี้ถูกตัดเป็นหลาย FI Doc</span></span>
-        <button type="button" class="btn btn-sm btn-outline" onclick="addSaOwnSapLine()">+ เพิ่มรายการ SAP</button>
+        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์ Excel สรุปการจ่าย (แถวสีเหลือง = ยอดรวมรายเจ้าหนี้) ระบบสรุปเป็น 1 บรรทัดต่อ Vendor แล้วให้ตรวจสอบก่อนนำเข้า">⬆ อัปโหลด Excel สรุปรายเจ้าหนี้<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadSaOwnExcel(event)"></label>
+          <button type="button" class="btn btn-sm btn-outline" onclick="addSaOwnSapLine()">+ เพิ่มรายการ SAP</button>
+        </span>
       </div>
+      <div style="font-size:12px;color:var(--ink-soft);"><span id="saown-excel-status"></span> <a href="javascript:void(0)" onclick="downloadSapSummaryTemplate()" style="color:var(--blue);">⬇ ดาวน์โหลดฟอร์มตัวอย่าง</a></div>
       <div id="saown-sapline-container">${saOwnSapLinesContainerHTML()}</div>
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ตัวเลือกเพิ่มเติม (ไม่บังคับ)</div>
@@ -2686,6 +2695,393 @@ function toggleSaOwnSkipReasonOther(){
   const other = document.getElementById('saown-skip-reason-other');
   if(!sel || !other) return;
   other.style.display = sel.value === 'อื่นๆ' ? 'block' : 'none';
+}
+
+/* ============ Excel upload (สรุปรายเจ้าหนี้) for the self-approve form ============
+   The file is the SAP payment-run workbook: one sheet per payment type (direct / Media / ...),
+   header row "Doc. Number | Account | Account Name | ... | Tax Base Amt. | Amount in Doc. | ...",
+   detail rows (one per FI Doc) grouped by vendor, a yellow subtotal row after each vendor, and a
+   final "Total" row. We collapse each vendor's detail rows into ONE sub-line (FI Doc range,
+   Base, VAT = Amount in Doc - Tax Base, WHT, Net = Amount in Local Curr.), cross-check it
+   against the sheet's own subtotal/Total rows, and show a review screen before filling the form. */
+function xlsNorm_(v){ return String(v==null?'':v).replace(/\s+/g,'').toLowerCase(); }
+function xlsNum_(v){
+  if(typeof v==='number') return v;
+  const n = parseFloat(String(v==null?'':v).replace(/,/g,''));
+  return isNaN(n) ? null : n;
+}
+function xlsR2_(x){ return Math.round((x + Number.EPSILON)*100)/100; }
+function xlsFiDocLabel_(docs){
+  const list = docs.slice();
+  if(list.length===1) return list[0];
+  const nums = list.map(d=>/^\d+$/.test(d) ? BigInt(d) : null);
+  const allNum = nums.every(n=>n!==null) && list.every(d=>d.length===list[0].length);
+  if(allNum){
+    let consecutive = true;
+    for(let i=1;i<nums.length;i++){ if(nums[i] !== nums[i-1]+1n){ consecutive = false; break; } }
+    if(consecutive) return list[0] + '-' + list[list.length-1].slice(-2);
+  }
+  return list.join(', ');
+}
+const SAP_SUMMARY_COLS_ = {
+  doc:     { label:'Doc. Number',          alias:['doc.number','docnumber','docno','docno.','documentnumber','documentno','เลขที่เอกสาร','เลขเอกสาร'] },
+  account: { label:'Account',              alias:['account','vendor','vendorcode','vendornumber','vendorno','รหัสเจ้าหนี้','รหัสvendor'] },
+  name:    { label:'Account Name',         alias:['accountname','vendorname','ชื่อเจ้าหนี้','ชื่อvendor'], optional:true },
+  base:    { label:'Tax Base Amt.',        alias:['taxbaseamt.','taxbaseamt','taxbase','baseamount','baseamt','ฐานภาษี'] },
+  amt:     { label:'Amount in Doc.',       alias:['amountindoc.','amountindoc','amountindocument','grossamount','จำนวนเงินในเอกสาร'] },
+  tax:     { label:'Tax Code',             alias:['taxcode','รหัสภาษี'], optional:true },
+  wht:     { label:'Amt WHT.',             alias:['amtwht.','amtwht','whtamount','whtamt','wht','ภาษีหักณที่จ่าย'] },
+  net:     { label:'Amount in Local Curr.',alias:['amountinlocalcurr.','amountinlocalcurr','amountinlocalcurrency','netamount','paymentamount','ยอดจ่ายสุทธิ'] },
+  pm:      { label:'Payment Method',       alias:['paymentmethod','paymethod','ประเภทการจ่าย'], optional:true },
+};
+const SAP_SUMMARY_TOTAL_WORDS_ = ['total','grandtotal','รวม','รวมทั้งสิ้น','รวมทั้งหมด','ยอดรวม'];
+function parseSapSummarySheet_(aoa){
+  const docAliases = SAP_SUMMARY_COLS_.doc.alias;
+  const hIdx = aoa.findIndex(r=>r.some(c=>docAliases.indexOf(xlsNorm_(c))!==-1));
+  if(hIdx===-1) return null;
+  const head = aoa[hIdx].map(xlsNorm_);
+  const colOf = key => head.findIndex(h=>SAP_SUMMARY_COLS_[key].alias.indexOf(h)!==-1);
+  const iDoc=colOf('doc'), iAcc=colOf('account'), iName=colOf('name'), iBase=colOf('base'),
+        iAmt=colOf('amt'), iTax=colOf('tax'), iWht=colOf('wht'), iNet=colOf('net'), iPm=colOf('pm');
+  const missing = Object.keys(SAP_SUMMARY_COLS_).filter(k=>!SAP_SUMMARY_COLS_[k].optional && colOf(k)===-1).map(k=>SAP_SUMMARY_COLS_[k].label);
+  if(missing.length) return { missing };
+  let comcode = '';
+  for(let r=0;r<hIdx;r++){
+    const ci = aoa[r].findIndex(c=>xlsNorm_(c)==='comcode');
+    if(ci!==-1) comcode = String(aoa[r][ci+1]||'').trim();
+  }
+  const vendors = []; const byCode = {};
+  let last = null, sheetTotal = null, totalRowIdx = -1;
+  for(let r=hIdx+1; r<aoa.length; r++){
+    const row = aoa[r];
+    if(row.some(c=>SAP_SUMMARY_TOTAL_WORDS_.indexOf(xlsNorm_(c))!==-1)){
+      totalRowIdx = r;
+      sheetTotal = { base:xlsNum_(row[iBase]), amt:xlsNum_(row[iAmt]), wht:xlsNum_(row[iWht]), net:xlsNum_(row[iNet]) };
+      break;
+    }
+    const doc = String(row[iDoc]==null?'':row[iDoc]).trim();
+    const acc = String(row[iAcc]==null?'':row[iAcc]).trim();
+    if(doc && acc){
+      let v = byCode[acc];
+      if(!v){
+        v = byCode[acc] = { code:acc, name:String(row[iName]||'').trim(), docs:[], base:0, amt:0, wht:0, net:0, sub:null, pm:new Set(), vats:0 };
+        vendors.push(v);
+      }
+      v.docs.push(doc);
+      v.base += xlsNum_(row[iBase])||0; v.amt += xlsNum_(row[iAmt])||0;
+      v.wht += xlsNum_(row[iWht])||0;   v.net += xlsNum_(row[iNet])||0;
+      if(iPm!==-1 && row[iPm]!=='' && row[iPm]!=null) v.pm.add(String(row[iPm]).trim());
+      last = v;
+    } else if(last){
+      const b=xlsNum_(row[iBase]), a=xlsNum_(row[iAmt]), w=xlsNum_(row[iWht]), n=xlsNum_(row[iNet]);
+      if(b!==null || a!==null || n!==null){
+        last.sub = { base:b, amt:a, wht:w, net:n };
+      }
+    }
+  }
+  // anything that still looks like a data row below the Total row (footers/notes are ignored)
+  const trailing = [];
+  if(totalRowIdx!==-1){
+    for(let r=totalRowIdx+1; r<aoa.length; r++){
+      const doc = String(aoa[r][iDoc]==null?'':aoa[r][iDoc]).trim();
+      const acc = String(aoa[r][iAcc]==null?'':aoa[r][iAcc]).trim();
+      if(doc && acc) trailing.push({ doc, acc, amt: xlsNum_(aoa[r][iAmt]) });
+    }
+  }
+  const lines = vendors.map(v=>{
+    const base = xlsR2_(v.base), amt = xlsR2_(v.amt), wht = xlsR2_(v.wht), net = xlsR2_(v.net);
+    const vat = xlsR2_(amt - base);
+    return { code:v.code, name:v.name, docs:v.docs, fiDoc:xlsFiDocLabel_(v.docs), base, vat, wht, net,
+      taxCode: vat>0 ? 'V7' : 'VX', pm:[...v.pm], sub:v.sub, checked:true };
+  });
+  return { comcode, lines, sheetTotal, trailing, hasTotalRow: totalRowIdx!==-1 };
+}
+function saOwnExcelValidate_(parsed, formCompany){
+  const issues = [];   // {level:'error'|'warn', text}
+  const lines = parsed.lines.filter(l=>l.checked);
+  const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const tol = 0.011;
+  const existing = state.documents.map(d=>String(d.docSAP||'')+' '+String(d.sapLines||'')).join(' ');
+  parsed.lines.forEach(l=>{
+    l.issues = [];
+    const calc = xlsR2_(l.base + l.vat - l.wht);
+    if(Math.abs(calc - l.net) > tol) l.issues.push({level:'error', text:'Base + VAT − WHT = '+money(calc)+' ไม่เท่ากับยอดสุทธิ '+money(l.net)});
+    if(l.sub){
+      const sb = l.sub;
+      const diffs = [];
+      if(sb.base!==null && Math.abs(xlsR2_(sb.base) - l.base) > tol) diffs.push('Base ในไฟล์ '+money(sb.base));
+      if(sb.amt!==null && Math.abs(xlsR2_(sb.amt) - xlsR2_(l.base+l.vat)) > tol) diffs.push('Amount in Doc ในไฟล์ '+money(sb.amt));
+      if(sb.wht!==null && Math.abs(xlsR2_(sb.wht) - l.wht) > tol) diffs.push('WHT ในไฟล์ '+money(sb.wht));
+      if(sb.net!==null && Math.abs(xlsR2_(sb.net) - l.net) > tol) diffs.push('Net ในไฟล์ '+money(sb.net));
+      if(diffs.length) l.issues.push({level:'error', text:'ไม่ตรงกับแถวสรุป (สีเหลือง) ของ Vendor นี้: '+diffs.join(', ')});
+    } else {
+      l.issues.push({level:'warn', text:'ไม่พบแถวสรุปของ Vendor นี้ในไฟล์ — ใช้ผลรวมที่คำนวณจากรายการ'});
+    }
+    if(!state.vendors.some(v=>String(v.vendorCode)===String(l.code))) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
+    const dupDocs = l.docs.filter(d=>existing.indexOf(d)!==-1);
+    if(dupDocs.length) l.issues.push({level:'warn', text:'FI Doc '+dupDocs.join(', ')+' มีอยู่ในเอกสารอื่นในระบบแล้ว อาจซ้ำ'});
+    if(l.net < 0) l.issues.push({level:'warn', text:'ยอดสุทธิติดลบ (ใบลดหนี้/รายการกลับ)'});
+    if(l.pm.length > 1) l.issues.push({level:'warn', text:'Payment Method ปะปนกัน: '+l.pm.join(', ')});
+  });
+  if(parsed.hasTotalRow && parsed.sheetTotal){
+    const t = parsed.sheetTotal;
+    const all = parsed.lines;
+    const sum = f => xlsR2_(all.reduce((a,l)=>a+f(l),0));
+    const comps = [
+      ['Base', t.base, sum(l=>l.base)], ['Amount in Doc', t.amt, sum(l=>l.base+l.vat)],
+      ['WHT', t.wht, sum(l=>l.wht)], ['Net', t.net, sum(l=>l.net)],
+    ];
+    comps.forEach(([label, fileVal, calcVal])=>{
+      if(fileVal!==null && Math.abs(xlsR2_(fileVal) - calcVal) > tol){
+        issues.push({level:'error', text:'แถว Total ของไฟล์ ('+label+' '+money(fileVal)+') ไม่เท่ากับผลรวมรายการที่อ่านได้ ('+money(calcVal)+') ผลต่าง '+money(calcVal - fileVal)});
+      }
+    });
+  } else if(!parsed.hasTotalRow){
+    issues.push({level:'warn', text:'ไม่พบแถว "Total" ในชีทนี้ — ไม่สามารถเทียบยอดรวมได้'});
+  }
+  const pmAll = new Set(); lines.forEach(l=>l.pm.forEach(x=>pmAll.add(x)));
+  if(pmAll.size > 1) issues.push({level:'warn', text:'Payment Method ในไฟล์ปะปนกัน ('+[...pmAll].join(', ')+') แต่เอกสารหนึ่งใบมีประเภทการจ่ายได้ 1 แบบ — ระบบจะไม่เลือกประเภทการจ่ายให้ กรุณาเลือกเอง หรือติ๊กเฉพาะ Vendor ที่จ่ายแบบเดียวกัน'});
+  if(parsed.trailing.length){
+    issues.push({level:'warn', text:'พบรายการข้อมูลอยู่ใต้แถว Total '+parsed.trailing.length+' แถว (FI Doc '+parsed.trailing.map(t=>t.doc).join(', ')+') — ระบบข้ามไปไม่นำเข้า กรุณาตรวจสอบไฟล์'});
+  }
+  if(parsed.comcode && formCompany && String(parsed.comcode)!==String(formCompany)){
+    issues.push({level:'warn', text:'รหัสบริษัทในไฟล์ ('+parsed.comcode+') ไม่ตรงกับบริษัทที่เลือกในฟอร์ม ('+formCompany+')'});
+  }
+  parsed.lines.forEach(l=>l.issues.forEach(i=>{ if(i.level==='error' && l.checked) issues.push({level:'error', text:'Vendor '+l.code+': '+i.text}); }));
+  return issues;
+}
+function showSapTemplateHelp_(fileName, problems){
+  const reqCols = Object.keys(SAP_SUMMARY_COLS_).map(k=>SAP_SUMMARY_COLS_[k]).filter(c=>!c.optional).map(c=>c.label);
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  showInfoModal('อ่านไฟล์ตามรูปแบบที่ระบบกำหนดไม่ได้', `
+    <div style="font-size:13px;margin-bottom:10px;">ไฟล์ <b>${esc(fileName)}</b> ไม่ตรงกับรูปแบบที่ระบบอ่านได้ จึงยังไม่ได้นำเข้าข้อมูลใดๆ</div>
+    ${problems.length ? `<div style="padding:10px 12px;border-radius:8px;background:#FBE9E7;border:1px solid var(--stamp-red);font-size:12.5px;margin-bottom:10px;">${problems.map(x=>`<div>✕ ${esc(x)}</div>`).join('')}</div>` : `<div style="padding:10px 12px;border-radius:8px;background:#FBE9E7;border:1px solid var(--stamp-red);font-size:12.5px;margin-bottom:10px;">✕ ไม่พบแถวหัวตารางที่มีคอลัมน์ Doc. Number ในทุกชีทของไฟล์</div>`}
+    <div style="font-size:12.5px;margin-bottom:6px;"><b>คอลัมน์ที่ต้องมี</b> (ชื่อหัวตารางต้องตรง): ${reqCols.map(esc).join(' · ')}</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px;">โครงสร้าง: แถวรายการ FI Doc แยกตาม Vendor → ตามด้วยแถวสรุปยอดของ Vendor นั้น (แถวสีเหลือง ไม่มี Doc. Number) → จบด้วยแถว "Total" ข้อมูลใต้แถว Total จะไม่ถูกนำเข้า</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-sm btn-outline" onclick="hideBusyOverlay()">ปิด</button>
+      <button class="btn btn-sm btn-approve" onclick="downloadSapSummaryTemplate()">⬇ ดาวน์โหลดฟอร์มตัวอย่าง</button>
+    </div>`);
+}
+async function downloadSapSummaryTemplate(){
+  const header = ['Entry Date','Doc. Date','Doc. Number','Account','Account Name','Reference','Tax Base Amt.','Amount in Doc.','Tax Code','WHT Code','Amt WHT.','Amount in Local Curr.','Text','User Name','Payment Method'];
+  const d = (y,m,dd)=>new Date(y,m-1,dd);
+  const rows = [
+    {t:'top', cells:['Comcode','1160']},
+    {t:'top', cells:['Name','ชื่อบริษัท (ตัวอย่าง)']},
+    {t:'top', cells:['วันที่ทำงาน','วันที่เอกสาร']},
+    {t:'head', cells:header},
+    {t:'d', cells:[d(2026,10,23),d(2026,10,9),'5100000001','100001','บริษัท ตัวอย่าง จำกัด','INV-001',1850.47,1980,'V7','',0,1980,'รายละเอียดรายการ','user1',2]},
+    {t:'d', cells:[d(2026,10,23),d(2026,10,9),'5100000002','100001','บริษัท ตัวอย่าง จำกัด','INV-002',55924.30,59839,'V7','',0,59839,'รายละเอียดรายการ','user1',2]},
+    {t:'sub', cells:['','','','','','',57774.77,61819,'','',0,61819]},
+    {t:'d', cells:[d(2026,9,8),d(2026,8,24),'5100000010','100002','ร้านตัวอย่าง (มีหัก ณ ที่จ่าย)','26/001',50000,50000,'VX','0.03',1500,48500,'ค่าบริการ','user1',2]},
+    {t:'sub', cells:['','','','','','',50000,50000,'','',1500,48500]},
+    {t:'total', cells:['','','','','Total','',107774.77,111819,'','',1500,110319]},
+  ];
+  try{
+    if(typeof ExcelJS === 'undefined') throw new Error('no ExcelJS');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('direct');
+    ws.columns = header.map((h,i)=>({ width:[12,12,14,10,34,16,15,15,9,9,12,20,28,12,14][i] }));
+    rows.forEach(r=>{
+      const row = ws.addRow(r.cells);
+      if(r.t==='head'){ row.font = { bold:true }; row.alignment = { wrapText:true }; row.eachCell(c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFD9E1F2'}}; }); }
+      if(r.t==='sub'){ row.font = { bold:true }; row.eachCell({includeEmpty:true},c=>{ c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF2CC'}}; }); }
+      if(r.t==='total'){ row.font = { bold:true }; }
+      if(r.t==='d'){ row.getCell(1).numFmt='dd/mm/yyyy'; row.getCell(2).numFmt='dd/mm/yyyy'; }
+      [7,8,11,12].forEach(ci=>{ row.getCell(ci).numFmt='#,##0.00'; });
+    });
+    const note = wb.addWorksheet('คำอธิบาย');
+    [
+      'วิธีใช้ฟอร์มนี้',
+      '1. ชื่อหัวตาราง (แถว Doc. Number ...) ต้องไม่เปลี่ยน — ระบบหาคอลัมน์จากชื่อหัวตาราง ลำดับคอลัมน์สลับได้ มีคอลัมน์เพิ่มได้',
+      '2. 1 แถวรายการ = 1 FI Doc ใส่ Account (รหัส Vendor) และ Account Name ทุกแถว เรียงรายการของ Vendor เดียวกันไว้ติดกัน',
+      '3. หลังรายการของแต่ละ Vendor ใส่แถวสรุปยอด (ไม่ต้องมี Doc. Number / Account) — ใช้ตรวจเทียบกับยอดที่ระบบคำนวณ',
+      '4. จบข้อมูลด้วยแถวที่เขียนคำว่า Total — ข้อมูลใต้แถวนี้ (ลายเซ็น, หมายเหตุ) จะไม่ถูกนำเข้า',
+      '5. VAT = Amount in Doc. − Tax Base Amt. | WHT = Amt WHT. | ยอดสุทธิ = Amount in Local Curr.',
+      '6. Payment Method: 1 = Direct, 2 = Media (ถ้าไม่ใส่ ต้องเลือกประเภทการจ่ายในฟอร์มเอง)',
+      '7. ระบบนำเข้าเป็น 1 บรรทัดต่อ Vendor แล้วให้ตรวจสอบก่อนบันทึกเสมอ',
+    ].forEach((t,i)=>{ const r = note.addRow([t]); if(i===0) r.font={bold:true}; });
+    note.getColumn(1).width = 120;
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'ฟอร์มตัวอย่าง_สรุปรายเจ้าหนี้.xlsx';
+    document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }catch(err){
+    // fallback without colours if ExcelJS is unavailable
+    if(typeof XLSX === 'undefined'){ showToast('สร้างไฟล์ตัวอย่างไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'); return; }
+    const ws = XLSX.utils.aoa_to_sheet(rows.map(r=>r.cells));
+    const wb2 = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb2, ws, 'direct');
+    XLSX.writeFile(wb2, 'ฟอร์มตัวอย่าง_สรุปรายเจ้าหนี้.xlsx');
+  }
+}
+function uploadSaOwnExcel(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const st = document.getElementById('saown-excel-status');
+  if(st) st.textContent = 'กำลังอ่านไฟล์...';
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    try{
+      if(typeof XLSX === 'undefined'){ if(st) st.textContent = 'โหลดไลบรารีอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'; return; }
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
+      const sheets = {}; const problems = [];
+      wb.SheetNames.forEach(name=>{
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:'', raw:true});
+        const parsed = parseSapSummarySheet_(aoa);
+        if(!parsed) return;
+        if(parsed.missing){ problems.push('ชีท "'+name+'" พบหัวตารางแต่ขาดคอลัมน์: '+parsed.missing.join(', ')); return; }
+        if(parsed.lines.length) sheets[name] = parsed;
+        else problems.push('ชีท "'+name+'" ไม่พบแถวรายการที่มี Doc. Number และ Account');
+      });
+      e.target.value = '';
+      const names = Object.keys(sheets);
+      if(!names.length){
+        if(st) st.textContent = 'อ่านไฟล์ไม่ได้ตามรูปแบบที่ระบบกำหนด';
+        showSapTemplateHelp_(file.name, problems);
+        return;
+      }
+      if(st) st.textContent = 'อ่านไฟล์แล้ว: '+file.name+' ('+names.length+' ชีท)';
+      state.pendingSaOwnExcel = { fileName:file.name, sheets, selected:names[0] };
+      renderSaOwnExcelModal();
+    }catch(err){
+      if(st) st.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function renderSaOwnExcelModal(){
+  const pend = state.pendingSaOwnExcel;
+  if(!pend) return;
+  const parsed = pend.sheets[pend.selected];
+  const companyEl = document.querySelector('form select[name="companyCode"]');
+  const issues = saOwnExcelValidate_(parsed, companyEl ? companyEl.value : '');
+  const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const errCount = issues.filter(i=>i.level==='error').length;
+  const warnCount = issues.filter(i=>i.level==='warn').length;
+  const sel = parsed.lines.filter(l=>l.checked);
+  const tot = f => sel.reduce((a,l)=>a+f(l),0);
+  const sheetOpts = Object.keys(pend.sheets).map(n=>`<option value="${n.replace(/"/g,'&quot;')}" ${n===pend.selected?'selected':''}>${n} (${pend.sheets[n].lines.length} Vendor)</option>`).join('');
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const rows = parsed.lines.map((l,i)=>{
+    const hasErr = l.issues.some(x=>x.level==='error');
+    const hasWarn = l.issues.some(x=>x.level==='warn');
+    return `<tr style="${hasErr?'background:#FBE9E7;':(hasWarn?'background:#FFF8E1;':'')}">
+      <td style="text-align:center;"><input type="checkbox" ${l.checked?'checked':''} onchange="setSaOwnExcelChecked(${i},this.checked)"></td>
+      <td class="mono">${i+1}</td>
+      <td>${esc(l.fiDoc)}<div style="font-size:10.5px;color:var(--ink-soft);">${l.docs.length} FI Doc</div></td>
+      <td class="mono">${esc(l.code)}</td>
+      <td>${esc(l.name)}</td>
+      <td style="text-align:right;">${money(l.vat)}</td>
+      <td style="text-align:right;">${money(l.wht)}</td>
+      <td style="text-align:right;">${money(l.base)}</td>
+      <td style="text-align:right;"><b>${money(l.net)}</b></td>
+      <td style="font-size:11.5px;">${l.issues.length ? l.issues.map(x=>`<div style="color:${x.level==='error'?'var(--stamp-red)':'#8A6D00'};">${x.level==='error'?'✕':'⚠'} ${esc(x.text)}</div>`).join('') : '<span style="color:var(--forest);">✓ ตรงกับแถวสรุป</span>'}</td>
+    </tr>`;
+  }).join('');
+  const issueBox = issues.length ? `<div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:${errCount?'#FBE9E7':'#FFF8E1'};border:1px solid ${errCount?'var(--stamp-red)':'var(--gold)'};font-size:12.5px;">
+      <b>ผลการตรวจสอบ: ผิดพลาด ${errCount} · ควรตรวจสอบ ${warnCount}</b>
+      ${issues.filter(i=>!/^Vendor /.test(i.text)).map(i=>`<div style="margin-top:4px;color:${i.level==='error'?'var(--stamp-red)':'#8A6D00'};">${i.level==='error'?'✕':'⚠'} ${esc(i.text)}</div>`).join('')}
+      ${issues.some(i=>/^Vendor /.test(i.text)) ? `<div style="margin-top:4px;color:var(--ink-soft);">รายละเอียดรายเจ้าหนี้ดูในคอลัมน์ "ผลตรวจสอบ" ของตาราง</div>` : ''}
+    </div>` : `<div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#E8F5E9;border:1px solid var(--forest);font-size:12.5px;"><b>✓ ผ่านการตรวจสอบทั้งหมด</b> — ผลรวมตรงกับแถวสรุปและแถว Total ของไฟล์</div>`;
+  const body = `
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">ไฟล์ ${esc(pend.fileName)} · รหัสบริษัทในไฟล์ ${esc(parsed.comcode||'-')} · สรุป 1 บรรทัดต่อ Vendor จากรายการ FI Doc ทั้งหมดของ Vendor นั้น</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+      <label style="font-size:12px;font-weight:600;">ชีท</label>
+      <select onchange="setSaOwnExcelSheet(this.value)">${sheetOpts}</select>
+      <span style="font-size:12px;color:var(--ink-soft);">ติ๊กเลือก Vendor ที่ต้องการนำเข้า · ${sel.length}/${parsed.lines.length} รายการ</span>
+    </div>
+    ${issueBox}
+    <div class="table-scroll" style="max-height:380px;overflow:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr>
+        <th style="padding:6px;"><input type="checkbox" ${parsed.lines.every(l=>l.checked)?'checked':''} onchange="toggleAllSaOwnExcel(this.checked)"></th>
+        <th style="text-align:left;padding:6px;">#</th>
+        <th style="text-align:left;padding:6px;">FI Doc</th>
+        <th style="text-align:left;padding:6px;">Vendor</th>
+        <th style="text-align:left;padding:6px;">Vendor Name</th>
+        <th style="text-align:right;padding:6px;">VAT</th>
+        <th style="text-align:right;padding:6px;">WHT</th>
+        <th style="text-align:right;padding:6px;">Base</th>
+        <th style="text-align:right;padding:6px;">Net</th>
+        <th style="text-align:left;padding:6px;">ผลตรวจสอบ</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line);">
+        <td colspan="5" style="padding:6px;text-align:right;">รวมที่เลือก ${sel.length} รายการ</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.vat))}</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.wht))}</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.base))}</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.net))}</td>
+        <td></td>
+      </tr></tfoot>
+    </table>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-sm btn-outline" onclick="cancelSaOwnExcel()">ยกเลิก</button>
+      <button class="btn btn-sm btn-approve" onclick="confirmSaOwnExcel()">✓ นำเข้าเข้าฟอร์ม (${sel.length} รายการ)</button>
+    </div>
+    <div style="margin-top:6px;font-size:11.5px;color:var(--ink-soft);text-align:right;">นำเข้าแล้วยังแก้ไขในฟอร์มได้ และยังไม่บันทึกจนกว่าจะกดส่งเอกสาร</div>`;
+  showInfoModal('ตรวจสอบข้อมูลจาก Excel ก่อนนำเข้า', body);
+}
+function setSaOwnExcelChecked(i, v){
+  const pend = state.pendingSaOwnExcel; if(!pend) return;
+  pend.sheets[pend.selected].lines[i].checked = v;
+  renderSaOwnExcelModal();
+}
+function toggleAllSaOwnExcel(v){
+  const pend = state.pendingSaOwnExcel; if(!pend) return;
+  pend.sheets[pend.selected].lines.forEach(l=>{ l.checked = v; });
+  renderSaOwnExcelModal();
+}
+function setSaOwnExcelSheet(name){
+  const pend = state.pendingSaOwnExcel; if(!pend) return;
+  pend.selected = name;
+  renderSaOwnExcelModal();
+}
+function cancelSaOwnExcel(){ state.pendingSaOwnExcel = null; hideBusyOverlay(); }
+function confirmSaOwnExcel(){
+  const pend = state.pendingSaOwnExcel; if(!pend) return;
+  const parsed = pend.sheets[pend.selected];
+  const sel = parsed.lines.filter(l=>l.checked);
+  if(!sel.length){ showToast('กรุณาติ๊กเลือกอย่างน้อย 1 รายการ'); return; }
+  const companyEl = document.querySelector('form select[name="companyCode"]');
+  const issues = saOwnExcelValidate_(parsed, companyEl ? companyEl.value : '');
+  const errCount = issues.filter(i=>i.level==='error').length;
+  if(errCount && !confirm('ยังมีรายการที่ตรวจสอบไม่ผ่าน '+errCount+' จุด (แสดงเป็นสีแดง)\n\nต้องการนำเข้าต่อหรือไม่?')) return;
+  const lines = sel.map(l=>({
+    fiDoc:l.fiDoc, webDocNo:'', vendor:l.code, vendorName:l.name, taxCode:l.taxCode,
+    vat:l.vat, wht:l.wht, base:l.base, net:l.net,
+  }));
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
+  if(lines.length === 1){
+    const l = lines[0];
+    state.saOwnSapLines = [];
+    refreshSaOwnSapLineContainer();
+    setVal('saown-docSAP', l.fiDoc); setVal('saown-vendor', l.vendor); setVal('saown-vendorName', l.vendorName);
+    setVal('saown-vatAmount', formatMoney(l.vat)); setVal('saown-whtAmount', formatMoney(l.wht));
+    setVal('saown-baseAmount', formatMoney(l.base)); setVal('saown-netAmount', formatMoney(l.net));
+    const tx = document.getElementById('saown-taxCode'); if(tx) tx.value = l.taxCode;
+    updateSaOwnHints();
+  } else {
+    state.saOwnSapLines = lines;
+    refreshSaOwnSapLineContainer();
+    recomputeSaOwnSapTotalsLive();
+    // the single-line "main" fields are required by the form — seed them from the first line
+    const first = lines[0];
+    setVal('saown-docSAP', first.fiDoc); setVal('saown-vendor', first.vendor); setVal('saown-vendorName', first.vendorName);
+  }
+  // payment type from the sheet's Payment Method column, when every selected vendor agrees
+  const pms = new Set(); sel.forEach(l=>l.pm.forEach(x=>pms.add(x)));
+  if(pms.size===1){
+    const v = [...pms][0];
+    const radio = document.querySelector('input[name="payType"][value="'+v+'"]');
+    if(radio) radio.checked = true;
+  }
+  state.pendingSaOwnExcel = null;
+  hideBusyOverlay();
+  showToast('นำเข้าจาก Excel '+lines.length+' รายการเรียบร้อย — ตรวจสอบในฟอร์มอีกครั้งก่อนกดส่ง');
 }
 
 async function submitApproveOwn(e){
@@ -3748,7 +4144,7 @@ function paymentApprovalHTML(){
             </div>
             <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
               <button class="btn btn-sm btn-approve" onclick="processPaymentStage('${v.id}','approve')">✓ อนุมัติ / ส่งต่อ</button>
-              <button class="btn btn-sm btn-reject" onclick="processPaymentStage('${v.id}','reject')">↺ ตีกลับแก้ไข</button>
+              ${meta.status==='รอผู้อนุมัติPayment' ? `<button class="btn btn-sm btn-reject" onclick="processPaymentStage('${v.id}','reject')">↺ ตีกลับแก้ไข</button>` : ''}
             </div>
           </div>
         </td>
@@ -3828,6 +4224,7 @@ async function processPaymentStage(id, decision){
     'รอผู้อนุมัติPayment': {actor:'approverBy', date:'approverDate', note:'approverNote', reject:'ตีกลับแก้ไข(ผู้อนุมัติPayment)', next:null, stageLabel:'ผู้อนุมัติ Payment'},
   }[v.status];
   if(!cfg) return;
+  if(decision==='reject' && v.status==='รอผู้ตรวจสอบPayment'){ showToast('ผู้ตรวจสอบ Payment ไม่สามารถตีกลับได้ — หากพบปัญหาให้ติดต่อผู้ทำรายการ/Admin'); return; }
   const patch = { id };
   if(decision==='approve'){
     patch[cfg.actor] = fullName(state.user);
@@ -4995,14 +5392,23 @@ function reportPaymentHTML(){
     if((d.paymentDate||'') > b.paymentDate) b.paymentDate = d.paymentDate;
   });
   const batchList = Object.values(batches).sort((a,b)=>(b.paymentDate||'').localeCompare(a.paymentDate||''));
+  batchList.forEach(b=>{ b.stage = pvStageOfBatch_(b.docPayment); });
+  const cntReview = batchList.filter(b=>b.stage.key==='review').length;
+  const cntApprove = batchList.filter(b=>b.stage.key==='approve').length;
+  const allBatches = batchList.slice();
+  if(state.reportStatus==='review' || state.reportStatus==='approve' || state.reportStatus==='done'){
+    for(let i=batchList.length-1;i>=0;i--) if(batchList[i].stage.key!==state.reportStatus) batchList.splice(i,1);
+  }
   const batchPayTypeLabel = b => b.payTypes.size===0 ? '-' : (b.payTypes.size===1 ? payTypeLabel([...b.payTypes][0]) : 'หลายประเภท');
 
-  const totalNet = batchList.reduce((sum,b)=>sum+b.net,0);
+  const totalNet = allBatches.reduce((sum,b)=>sum+b.net,0);
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 
   const summary = `
-  <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
-    <div class="stat-card s-finance"><div class="num">${batchList.length}</div><div class="lbl">Doc Payment ทั้งหมด</div></div>
+  <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+    <div class="stat-card s-finance" onclick="setReportStatus('all')"><div class="num">${allBatches.length}</div><div class="lbl">Doc Payment ทั้งหมด</div></div>
+    <div class="stat-card s-reviewer" style="${state.reportStatus==='review'?'border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset;':''}" onclick="setReportStatus('review')"><div class="num">${cntReview}</div><div class="lbl">รอตรวจสอบ (Payment)</div></div>
+    <div class="stat-card s-approver" style="${state.reportStatus==='approve'?'border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset;':''}" onclick="setReportStatus('approve')"><div class="num">${cntApprove}</div><div class="lbl">รออนุมัติ (Payment)</div></div>
     <div class="stat-card s-approver"><div class="num">${docs.length}</div><div class="lbl">เอกสารที่จ่ายแล้ว</div></div>
     <div class="stat-card s-complete"><div class="num" style="font-size:22px;">${money(totalNet)}</div><div class="lbl">ยอดจ่ายสุทธิรวม (บาท)</div></div>
   </div>`;
@@ -5028,11 +5434,12 @@ function reportPaymentHTML(){
       <td><b>${money(b.net)}</b></td>
       <td>${b.paymentBy||'-'}</td>
       <td>${b.paymentDate||'-'}</td>
+      <td>${b.stage.key==='none' ? '<span style="color:var(--ink-soft);">-</span>' : `<span class="status-pill ${b.stage.rejected?'reject':''}">${b.stage.label}</span>${(b.stage.key==='review'||b.stage.key==='approve') && pvStageWho_(b.stage) ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">รอ: ${pvStageWho_(b.stage)}</div>`:''}`}</td>
       <td style="white-space:nowrap;">
         ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
         <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
       </td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
 
   return `
   ${companyHeader}
@@ -5047,7 +5454,7 @@ function reportPaymentHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th></th></tr></thead>
+      <thead><tr><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -5055,7 +5462,26 @@ function reportPaymentHTML(){
 }
 function setReportCompany(v){ state.reportCompany = v; render(); }
 function setReportSearch(field, val){ state.reportSearch[field] = val; render(); }
-function clearReportSearch(){ state.reportSearch = {docPayment:'', by:'', from:'', to:''}; render(); }
+function clearReportSearch(){ state.reportSearch = {docPayment:'', by:'', from:'', to:''}; state.reportStatus='all'; render(); }
+function setReportStatus(v){ state.reportStatus = (state.reportStatus===v ? 'all' : v); render(); }
+// stage of a Doc Payment batch in the Payment close-out flow (from PaymentVouchers)
+function pvStageOfBatch_(docPayment){
+  const v = state.paymentVouchers.find(x=>String(x.docPayment)===String(docPayment));
+  if(!v) return {key:'none', label:'-', v:null};
+  const st = v.status||'';
+  if(st==='รอผู้ตรวจสอบPayment') return {key:'review', label:'รอผู้ตรวจสอบ', v};
+  if(st==='รอผู้อนุมัติPayment') return {key:'approve', label:'รอผู้อนุมัติ', v};
+  if(st.indexOf('ตีกลับ')===0) return {key:'review', label:'↺ '+st, v, rejected:true};
+  if(st==='Complete') return {key:'done', label:'อนุมัติแล้ว', v};
+  return {key:'none', label:st||'-', v};
+}
+function pvStageWho_(stage){
+  if(!stage.v) return '';
+  const m = getPaymentMapping(stage.v.companyCode);
+  const id = m && (stage.key==='approve' ? m.approverId : m.reviewerId);
+  const mem = id && state.members.find(x=>x.id===id);
+  return mem ? fullName(mem) : '';
+}
 
 /* ---- Excel export (SheetJS) — shared by Payment Voucher and Report Payment ---- */
 function exportAoaToExcel(aoa, filename, sheetName){
@@ -5133,11 +5559,11 @@ function exportReportPaymentToExcel(){
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
   if(!docs.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
   // export at document level (one row per document) so payType/amounts are exact, not aggregated
-  const header = ['Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย'];
+  const header = ['Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
   const rows = docs.map(d=>[
     d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
     payTypeLabel(d.payType), parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
-    d.paymentBy||'', d.paymentDate||'',
+    d.paymentBy||'', d.paymentDate||'', pvStageOfBatch_(d.docPayment).label,
   ]);
   exportAoaToExcel([header, ...rows], 'ReportPayment_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Report Payment');
 }
