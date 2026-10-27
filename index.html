@@ -2446,6 +2446,9 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ยอดเงิน</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="field"><label>VAT Amt</label><input type="text" inputmode="decimal" name="vatAmount" id="saown-vatAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"></div>
+        <div class="field"><label>WHT Amt</label><input type="text" inputmode="decimal" name="whtAmount" id="saown-whtAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"><div id="saown-wht-hint"></div></div>
+        <div class="field"><label>Base Amt</label><input type="text" inputmode="decimal" name="baseAmount" id="saown-baseAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"></div>
         <div class="field"><label>ยอดจ่ายสุทธิ</label><input type="text" inputmode="decimal" name="netAmount" id="saown-netAmount" placeholder="0.00" style="width:120px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)" required></div>
         <div class="field"><label>Tax Code</label>
           <select id="saown-taxCode" name="taxCode" style="width:120px;" onchange="applySaOwnTaxCalc(this.value)">
@@ -2454,9 +2457,6 @@ function submitApproveOwnHTML(){
             <option value="VX">VX (ไม่มี VAT)</option>
           </select>
         </div>
-        <div class="field"><label>VAT Amt</label><input type="text" inputmode="decimal" name="vatAmount" id="saown-vatAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"></div>
-        <div class="field"><label>WHT Amt</label><input type="text" inputmode="decimal" name="whtAmount" id="saown-whtAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"><div id="saown-wht-hint"></div></div>
-        <div class="field"><label>Base Amt</label><input type="text" inputmode="decimal" name="baseAmount" id="saown-baseAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"></div>
       </div>
       <div id="saown-net-hint" style="margin-top:2px;"></div>
 
@@ -2557,6 +2557,10 @@ function saOwnSapLineRowHTML(l, i){
     <td><input type="text" class="sap-input" style="width:140px;" id="saownsap-webdocno-${i}" value="${l.webDocNo||''}" placeholder="Web Doc No."></td>
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-vendor-${i}" list="saown-vendor-dl" value="${l.vendor||''}" oninput="onSaOwnSapLineVendorInput(${i})" placeholder="Vendor"></td>
     <td><input type="text" class="sap-input" style="width:150px;" id="saownsap-vendorname-${i}" value="${l.vendorName||''}" placeholder="Vendor Name"></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-vat-${i}" value="${money(l.vat)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-wht-${i}" value="${money(l.wht)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-base-${i}" value="${money(l.base)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-net-${i}" value="${money(l.net)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
     <td>
       <select class="sap-input" id="saownsap-tax-${i}" onchange="applySaOwnSapLineTaxCalc(${i},this.value)">
         <option value="" ${!l.taxCode?'selected':''}>—</option>
@@ -2564,10 +2568,6 @@ function saOwnSapLineRowHTML(l, i){
         <option value="VX" ${l.taxCode==='VX'?'selected':''}>VX</option>
       </select>
     </td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-vat-${i}" value="${money(l.vat)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-wht-${i}" value="${money(l.wht)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-base-${i}" value="${money(l.base)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-net-${i}" value="${money(l.net)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
     <td><button type="button" class="icon-btn" title="ลบแถวนี้" onclick="removeSaOwnSapLine(${i})">✕</button></td>
   </tr>`;
 }
@@ -2583,11 +2583,11 @@ function saOwnSapLinesContainerHTML(){
         <th style="text-align:left;padding:4px;">Web Doc No.</th>
         <th style="text-align:left;padding:4px;">Vendor</th>
         <th style="text-align:left;padding:4px;">Vendor Name</th>
-        <th style="text-align:left;padding:4px;">Tax</th>
-        <th style="text-align:right;padding:4px;">VAT</th>
-        <th style="text-align:right;padding:4px;">WHT</th>
-        <th style="text-align:right;padding:4px;">Base</th>
-        <th style="text-align:right;padding:4px;">Net</th>
+        <th style="text-align:right;padding:4px;">VAT Amt</th>
+        <th style="text-align:right;padding:4px;">WHT Amt</th>
+        <th style="text-align:right;padding:4px;">Base Amt</th>
+        <th style="text-align:right;padding:4px;">ยอดจ่ายสุทธิ</th>
+        <th style="text-align:left;padding:4px;">Tax Code</th>
         <th style="padding:4px;"></th>
       </tr></thead>
       <tbody>${rows}</tbody>
