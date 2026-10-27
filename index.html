@@ -1934,17 +1934,28 @@ function trailHTML(doc){
   if(doc.status.startsWith('ตีกลับ')){
     return `<span class="status-pill reject">↺ ${doc.status}</span>`;
   }
-  // รอผู้อนุมัติ2 (the optional parallel ผู้อนุมัติ2/3 tier) isn't its own dot on this trail —
-  // it's still conceptually part of the "ผู้อนุมัติ" stage, just with extra named approvers —
-  // so it maps onto the same dot as 'รอผู้อนุมัติ', with the label distinguishing it.
-  const idx = STAGES.findIndex(s=>s.status===(doc.status==='รอผู้อนุมัติ2' ? 'รอผู้อนุมัติ' : doc.status));
-  const dots = STAGES.map((s,i)=>{
+  // trail follows the chain mapped for THIS document's type + company:
+  // นักบัญชี → ผู้ตรวจสอบ → ผู้อนุมัติ → [ผู้อนุมัติ 2/3 — only when mapped] → การเงิน
+  const skipAppr = doc.skipApprover==='TRUE' || doc.skipApprover===true;
+  const has2 = approver2Slots(doc).length > 0;
+  const chain = [
+    {status:'รอนักบัญชี', label:'นักบัญชี'},
+    {status:'รอผู้ตรวจสอบ', label:'ผู้ตรวจสอบ'},
+  ];
+  if(!skipAppr){
+    chain.push({status:'รอผู้อนุมัติ', label:'ผู้อนุมัติ'});
+    if(has2 || doc.status==='รอผู้อนุมัติ2') chain.push({status:'รอผู้อนุมัติ2', label:'ผู้อนุมัติ (ลำดับ 2/3)'});
+  }
+  chain.push({status:'รอชำระเงิน', label:'การเงิน'});
+  const idx = chain.findIndex(s=>s.status===doc.status);
+  const dots = chain.map((s,i)=>{
     const cls = i<idx ? 'done' : (i===idx ? 'current' : '');
     const bar = i>0 ? `<span class="bar ${i-1<idx?'done':''}"></span>` : '';
     return bar + `<span class="stg ${cls}" title="${s.label}"></span>`;
   }).join('');
-  const trailLabel = doc.status==='รอผู้อนุมัติ2' ? 'ผู้อนุมัติ (ลำดับ 2/3)' : (STAGES[idx] ? STAGES[idx].label : '');
-  return `<div><div class="trail">${dots}</div><div class="trail-label">รอ${trailLabel}</div></div>`;
+  const trailLabel = chain[idx] ? chain[idx].label : '';
+  const who = assignedActorName(doc);
+  return `<div><div class="trail">${dots}</div><div class="trail-label">รอ${trailLabel}${who ? `<div style="font-weight:400;opacity:.85;">${who}</div>` : ''}</div></div>`;
 }
 
 /* ============================= SHARED: GROUP BY DUE ============================= */
@@ -3963,6 +3974,12 @@ function openApprovalReport(id){
   let history = [];
   try{ history = d.historyLog ? JSON.parse(d.historyLog) : []; }catch(e){ history = []; }
   const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)' };
+  const mappedSlots_ = approver2Slots(d);
+  const slotName_ = n => { const m = state.members.find(x=>x.id===(mappedSlots_.find(z=>z.slot===n)||{}).id); return m ? fullName(m) : ''; };
+  // signature block that also works when the person hasn't signed yet: blank line + the mapped name in grey
+  const chainSign_ = (label, signedBy, roleTag, pendingName) => signedBy
+    ? signBlock(label, signedBy, roleTag)
+    : `<div>${label}<div class="sign-line"></div>${pendingName ? `<span style="color:#999;">${pendingName} (รอลงนาม)</span>` : '-'}<br><span style="color:#666;">${roleTag}</span></div>`;
   const trailRows = history.length ? history.map(h=>`
     <tr>
       <td>${h.stage||'-'}</td>
@@ -3974,8 +3991,8 @@ function openApprovalReport(id){
     ['นักบัญชี', d.accountantBy, d.accountantDate, d.accountantNote],
     ['ผู้ตรวจสอบ', d.reviewerBy, d.reviewerDate, d.reviewerNote],
     ['ผู้อนุมัติ', d.approverBy, d.approverDate, d.approverNote],
-  ].concat(d.approver2By ? [['ผู้อนุมัติ2', d.approver2By, d.approver2Date, d.approver2Note]] : [])
-   .concat(d.approver3By ? [['ผู้อนุมัติ3', d.approver3By, d.approver3Date, d.approver3Note]] : [])
+  ].concat((d.approver2By || mappedSlots_.some(x=>x.slot===2)) ? [['ผู้อนุมัติ2', d.approver2By, d.approver2Date, d.approver2Note]] : [])
+   .concat((d.approver3By || mappedSlots_.some(x=>x.slot===3)) ? [['ผู้อนุมัติ3', d.approver3By, d.approver3Date, d.approver3Note]] : [])
    .map(([label,by,date,note])=>`
     <tr>
       <td>${label}</td>
@@ -4060,12 +4077,12 @@ function openApprovalReport(id){
       <thead><tr><th>ขั้นตอน</th><th>ผู้ดำเนินการ</th><th>วันที่</th><th>การดำเนินการ</th><th>หมายเหตุ</th></tr></thead>
       <tbody>${trailRows}</tbody>
     </table>
-    <div class="sign-grid" style="grid-template-columns:repeat(${3+(d.approver2By?1:0)+(d.approver3By?1:0)},1fr);">
+    <div class="sign-grid" style="grid-template-columns:repeat(${3+((d.approver2By||slotName_(2))?1:0)+((d.approver3By||slotName_(3))?1:0)},1fr);">
       ${signBlock('ผู้จัดเตรียม', d.accountantBy, 'นักบัญชี')}
       ${signBlock('ผู้ตรวจสอบ', d.reviewerBy, 'ผู้ตรวจสอบ')}
-      ${signBlock('ผู้อนุมัติ', d.approverBy, 'ผู้อนุมัติ')}
-      ${d.approver2By ? signBlock('ผู้อนุมัติ (ลำดับ 2)', d.approver2By, 'ผู้อนุมัติ') : ''}
-      ${d.approver3By ? signBlock('ผู้อนุมัติ (ลำดับ 3)', d.approver3By, 'ผู้อนุมัติ') : ''}
+      ${(function(){ const m=getApprovalMapping(d.docType,d.companyCode); const mem=m&&m.approverId&&state.members.find(x=>x.id===m.approverId); return chainSign_('ผู้อนุมัติ', d.approverBy, 'ผู้อนุมัติ', mem?fullName(mem):''); })()}
+      ${(d.approver2By||slotName_(2)) ? chainSign_('ผู้อนุมัติ (ลำดับ 2)', d.approver2By, 'ผู้อนุมัติ', slotName_(2)) : ''}
+      ${(d.approver3By||slotName_(3)) ? chainSign_('ผู้อนุมัติ (ลำดับ 3)', d.approver3By, 'ผู้อนุมัติ', slotName_(3)) : ''}
     </div>
     <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
   </body></html>`;
@@ -4436,7 +4453,8 @@ async function processStage(id, decision){
     if(skipApprover){
       patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
     } else {
-      patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : 'รอผู้อนุมัติ';
+      // always go to ผู้อนุมัติ (1) first — the ผู้อนุมัติ 2/3 tier only comes AFTER ผู้อนุมัติ (1) signs
+      patch.status = 'รอผู้อนุมัติ';
     }
   } else if(doc.status==='รอผู้อนุมัติ'){
     patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : (skipFinance ? 'Complete' : 'รอชำระเงิน');
