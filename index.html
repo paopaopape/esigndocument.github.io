@@ -290,7 +290,7 @@ let state = {
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
   paymentCompany:'all',
-  paymentSelected:[], paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
+  vendorAdminCo:'all', paymentAccounts:[], paymentAccountNo:'', paymentSelected:[], paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
   voucherReportCompany:'all', voucherReportSelected:[], voucherReportTitle:'', voucherEditRow:null,
   voucherReportSearch:{type:'', name:'', due:'', createdBy:''},
   pendingSapImport:null,
@@ -396,24 +396,42 @@ function payTypeLabel(v){
   const f = PAY_TYPES.find(x=>x[0]===String(v));
   return f ? f[1] : '-';
 }
-function vendorBankInfoText(vendorCode){
+// ---- Vendor Master is per company: a vendor is only visible/usable under its own company.
+// Rows with a blank companyCode are legacy rows and stay usable by every company until Com is filled in.
+function vendorsFor_(co){ const c = String(co||''); return state.vendors.filter(v=>!v.companyCode || String(v.companyCode)===c); }
+function findVendor_(co, code){
+  const list = vendorsFor_(co).filter(v=>String(v.vendorCode)===String(code));
+  return list.find(v=>String(v.companyCode)===String(co)) || list[0] || null;
+}
+function findVendorByLabel_(co, label){ return vendorsFor_(co).find(v=>`${v.vendorCode} — ${v.vendorName}`===label) || null; }
+function vendorOptionsHTML_(co){ return vendorsFor_(co).map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join(''); }
+function currentFormCompany_(){ const el = document.querySelector('form select[name="companyCode"]'); return el ? el.value : ''; }
+function refreshVendorLists_(){
+  const co = currentFormCompany_();
+  ['submit-vendor-dl','saown-vendor-dl'].forEach(id=>{ const dl = document.getElementById(id); if(dl) dl.innerHTML = vendorOptionsHTML_(co); });
+  [['submit-vendor','submit-vendorName'],['saown-vendor','saown-vendorName']].forEach(([vi,ni])=>{
+    const el = document.getElementById(vi); if(!el || !el.value) return;
+    if(!findVendor_(co, el.value)){ el.value=''; const n = document.getElementById(ni); if(n) n.value=''; const bb = document.getElementById('saown-bank-block'); if(bb && vi==='saown-vendor') bb.innerHTML=''; }
+  });
+}
+function vendorBankInfoText(vendorCode, co){
   if(!vendorCode) return 'ยังไม่ได้เลือก Vendor';
-  const v = state.vendors.find(x=>String(x.vendorCode)===String(vendorCode));
+  const v = findVendor_(co, vendorCode);
   if(!v || (!v.bankAccount && !v.bankName)) return 'ไม่มีข้อมูลบัญชี/ธนาคารของ Vendor นี้';
   return `เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}`;
 }
 function vendorBankAccountFor(d){
   if(d.manualBankAccount) return d.manualBankAccount;
-  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  const v = findVendor_(d.companyCode, d.vendor);
   return (v && v.bankAccount) || '';
 }
 function vendorBankNameFor(d){
   if(d.manualBankName) return d.manualBankName;
-  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  const v = findVendor_(d.companyCode, d.vendor);
   return (v && v.bankName) || '';
 }
 function vendorBankBlockHTML(d){
-  const v = state.vendors.find(x=>String(x.vendorCode)===String(d.vendor));
+  const v = findVendor_(d.companyCode, d.vendor);
   const hasManual = d.manualBankAccount || d.manualBankName;
   if(!hasManual && v && (v.bankAccount || v.bankName)){
     return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`;
@@ -430,7 +448,7 @@ function vendorBankBlockHTML(d){
 function onVendorInput(id){
   const el = document.getElementById('vendor-'+id);
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_((state.documents.find(x=>x.id===id)||{}).companyCode, el.value);
   if(match){
     el.value = match.vendorCode;
     const nameEl = document.getElementById('vendorName-'+id);
@@ -699,7 +717,8 @@ async function refreshData(){
     state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
-    state.vendors = data.vendors || [];
+    state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
+    state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo) }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.paymentVouchers = (data.paymentVouchers || []).map(v=>({ ...v, companyCode:String(v.companyCode) }));
     state.documents = (data.documents || []).map(d=>{
@@ -984,7 +1003,7 @@ function toggleSapLineDetailLocal(docId, idx){
 function onSapLineVendorInput(docId, idx){
   const el = document.getElementById('sapline-vendor-'+docId+'-'+idx);
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_((state.documents.find(x=>x.id===docId)||{}).companyCode, el.value);
   if(match){
     el.value = match.vendorCode;
     const nameEl = document.getElementById('sapline-vendorname-'+docId+'-'+idx);
@@ -1172,7 +1191,7 @@ function renderSapImportModal(){
       <td style="text-align:center;"><button class="icon-btn" title="ลบแถวนี้" onclick="removeSapImportLine(${i})">✕</button></td>
     </tr>`).join('') || `<tr class="empty-row"><td colspan="11">ยังไม่มีรายการ — อัปโหลดไฟล์หรือเพิ่มแถวเองด้านล่าง</td></tr>`;
 
-  const vendorOptions = state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('');
+  const vendorOptions = vendorOptionsHTML_((state.documents.find(x=>x.id===id)||{}).companyCode);
   const body = `
     <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">รายการทั้งหมด ${lines.length} รายการ (รวมรายการที่เคยบันทึกไว้แล้ว ถ้ามี) — ติ๊กเลือกเฉพาะแถวที่ต้องการเก็บไว้เป็น SAP Line ของเอกสาร <b>${displayId(id)}</b> ถอดติ๊กหรือกด ✕ เพื่อลบรายการที่ไม่ต้องการออก แล้วกดยืนยันเพื่อบันทึกทับของเดิม (Sub ID จะเรียงใหม่เป็น ${displayId(id)}-1, ${displayId(id)}-2 ...)</div>
     <div class="table-scroll" style="max-height:420px;overflow:auto;">
@@ -1235,7 +1254,7 @@ function removeSapImportLine(i){
 function onManualVendorInput(){
   const el = document.getElementById('manual-vendor');
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_(state.pendingSapImport ? (state.documents.find(x=>x.id===state.pendingSapImport.id)||{}).companyCode : '', el.value);
   if(match){
     el.value = match.vendorCode;
     const nameEl = document.getElementById('manual-vendorname');
@@ -1788,7 +1807,7 @@ function toggleSidebar(){ state.sidebarCollapsed = !state.sidebarCollapsed; rend
 function sidebarHTML(){
   const nav = [];
   nav.push(navItem('dashboard','แดชบอร์ด'));
-  nav.push(navItem('submit','วางบิลเอกสาร'));
+  if(canSubmitBill()) nav.push(navItem('submit','วางบิลเอกสาร'));
   if(['นักบัญชี','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
   if(state.user.role!=='เจ้าหน้าที่การเงิน') nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
@@ -1822,6 +1841,7 @@ function sidebarHTML(){
         ['admin-permissions','กำหนดสิทธิ์การใช้งาน'],
         ['admin-settings','ตั้งค่าทั่วไป'],
         ['admin-vendors','Vendor Master'],
+        ['admin-accounts','บัญชีโอน (Payment)'],
         ['admin-notifications','แจ้งเตือนทางอีเมล'],
       ].map(([v,l])=>`<div class="nav-item ${state.view===v?'active':''}" onclick="goView('${v}')">${l}</div>`).join('');
       nav.push(`<div class="nav-sub">${subs}</div>`);
@@ -1846,7 +1866,10 @@ function sidebarHTML(){
 function navItem(view,label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="goView('${view}')"><span class="dot"></span>${label}</div>`;
 }
+// the plain "วางบิลเอกสาร" form is not for นักบัญชี / ผู้ตรวจสอบ (they use "วางบิล (นักบัญชี)") — hidden from the menu AND blocked if reached directly
+function canSubmitBill(){ return !['นักบัญชี','ผู้ตรวจสอบ'].includes(state.user.role); }
 function goView(v){
+  if(v==='submit' && !canSubmitBill()){ showToast('บทบาทของคุณไม่ใช้เมนูนี้ — ใช้ "วางบิล (นักบัญชี)" แทน'); return; }
   state.view=v; state.expandedRow=null;
   if(v==='approval'){
     state.approvalGroup = allowedApprovalGroups().includes(state.approvalGroup) ? state.approvalGroup : defaultApprovalGroup();
@@ -1873,6 +1896,7 @@ function topbarHTML(){
     'admin-members':['Admin · เพิ่ม Member','ลงทะเบียนผู้ใช้งานเข้าสู่ระบบ'],
     'admin-permissions':['Admin · กำหนดสิทธิ์การใช้งาน','ผูก Role และรหัสบริษัทให้สมาชิก'],
     'admin-settings':['Admin · ตั้งค่าทั่วไป','จัดการรหัสบริษัทและประเภทเอกสาร'],
+    'admin-accounts':['Admin · บัญชีโอน (Payment)','กำหนดบัญชีธนาคารที่การเงินใช้เลือกตอนยืนยันรวบจ่าย แยกตามบริษัท'],
     'admin-vendors':['Admin · Vendor Master','จัดการรายชื่อ Vendor สำหรับใช้ค้นหาตอนอนุมัติเอกสาร'],
     'admin-notifications':['Admin · แจ้งเตือนทางอีเมล','ตั้งค่าการส่งอีเมลแจ้งเตือนนักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติ'],
   };
@@ -1893,7 +1917,7 @@ function topbarHTML(){
 function viewHTML(){
   switch(state.view){
     case 'dashboard': return dashboardHTML();
-    case 'submit': return submitHTML();
+    case 'submit': return canSubmitBill() ? submitHTML() : `<div class="card"><h3>เมนูนี้ไม่เปิดให้บทบาทของคุณ</h3><div class="helper">กรุณาใช้เมนู "วางบิล (นักบัญชี)" แทน</div></div>`;
     case 'submitApproveOwn': return submitApproveOwnHTML();
     case 'tracking': return trackingHTML();
     case 'approval': return approvalHTML();
@@ -1904,6 +1928,7 @@ function viewHTML(){
     case 'admin-permissions': return adminPermissionsHTML();
     case 'admin-settings': return adminSettingsHTML();
     case 'admin-vendors': return adminVendorsHTML();
+    case 'admin-accounts': return adminAccountsHTML();
     case 'admin-notifications': return adminNotificationsHTML();
     default: return '';
   }
@@ -2361,11 +2386,11 @@ function submitHTML(){
       <div id="submit-autocomplete-hint" class="helper" style="display:${firstTypeAuto?'block':'none'};color:var(--forest);font-weight:600;margin-bottom:10px;">⚡ ยืนยันเลือกประเภทเอกสาร "<span id="submit-autocomplete-type-label">${state.docTypes[0]?state.docTypes[0].label:''}</span>" — เอกสารนี้จะถูกบันทึกเป็นสถานะ "Complete" ทันทีที่กดวางบิล ไม่ต้องผ่านขั้นตอนอนุมัติ<br>หากยืนยัน โปรดส่งเอกสารต้นฉบับตัวจริงไปยังแผนกบัญชีด้วย</div>
       <div class="form-grid">
         <div class="field"><label>ประเภทเอกสาร</label><select name="docType" id="submit-docType" required onchange="onSubmitDocTypeChange()">${typeOptions}</select></div>
-        <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required>${companyOptions}</select></div>
+        <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required onchange="refreshVendorLists_()">${companyOptions}</select></div>
         <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
         <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
         <div class="field"><label>Link File Folder</label><input type="url" name="linkFile" placeholder="https://drive.google.com/..." required></div>
-        <div class="field"><label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ถ้าทราบ — ไม่บังคับ)</span></label><input type="text" name="vendor" id="submit-vendor" list="submit-vendor-dl" placeholder="ค้นหารหัสหรือชื่อ Vendor..." oninput="onSubmitVendorInput()"><datalist id="submit-vendor-dl">${state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('')}</datalist></div>
+        <div class="field"><label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ถ้าทราบ — ไม่บังคับ)</span></label><input type="text" name="vendor" id="submit-vendor" list="submit-vendor-dl" placeholder="ค้นหารหัสหรือชื่อ Vendor..." oninput="onSubmitVendorInput()"><datalist id="submit-vendor-dl">${vendorOptionsHTML_((userCompanyOptions()[0]||{}).code)}</datalist></div>
         <div class="field"><label>Vendor Name</label><input type="text" name="vendorName" id="submit-vendorName" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)"></div>
         <div class="field"><label>ยอดจ่ายสุทธิ <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ถ้าทราบ — ไม่บังคับ)</span></label><input type="number" step="0.01" name="netAmount" placeholder="0.00"></div>
         <div class="field full"><label>Comment</label><textarea name="comment" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></div>
@@ -2386,7 +2411,7 @@ function onSubmitDocTypeChange(){
 function onSubmitVendorInput(){
   const el = document.getElementById('submit-vendor');
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_(currentFormCompany_(), el.value);
   if(match){
     el.value = match.vendorCode;
     const nameEl = document.getElementById('submit-vendorName');
@@ -2463,7 +2488,7 @@ function submitApproveOwnHTML(){
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:4px 0 8px;">ข้อมูลเอกสาร</div>
       <div class="form-grid">
         <div class="field"><label>ประเภทเอกสาร</label><select name="docType" required>${typeOptions}</select></div>
-        <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required>${companyOptions}</select></div>
+        <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required onchange="refreshVendorLists_()">${companyOptions}</select></div>
         <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
         <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
         <div class="field"><label>Link File Folder</label><input type="url" name="linkFile" placeholder="https://drive.google.com/..." required></div>
@@ -2477,7 +2502,7 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ผู้รับเงิน</div>
       <div class="form-grid">
-        <div class="field"><label>Vendor (ค้นหาได้ทั้งรหัส/ชื่อ)</label><input type="text" name="vendor" id="saown-vendor" list="saown-vendor-dl" placeholder="พิมพ์รหัสหรือชื่อ Vendor..." oninput="onSaOwnVendorInput()" required><datalist id="saown-vendor-dl">${state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('')}</datalist></div>
+        <div class="field"><label>Vendor (ค้นหาได้ทั้งรหัส/ชื่อ)</label><input type="text" name="vendor" id="saown-vendor" list="saown-vendor-dl" placeholder="พิมพ์รหัสหรือชื่อ Vendor..." oninput="onSaOwnVendorInput()" required><datalist id="saown-vendor-dl">${vendorOptionsHTML_((userCompanyOptions()[0]||{}).code)}</datalist></div>
         <div class="field"><label>Vendor Name</label><input type="text" name="vendorName" id="saown-vendorName" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" required></div>
       </div>
       <div id="saown-bank-block" style="margin-top:6px;"></div>
@@ -2539,7 +2564,7 @@ function submitApproveOwnHTML(){
 function onSaOwnVendorInput(){
   const el = document.getElementById('saown-vendor');
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_(currentFormCompany_(), el.value);
   const bankBlock = document.getElementById('saown-bank-block');
   if(match){
     el.value = match.vendorCode;
@@ -2547,7 +2572,7 @@ function onSaOwnVendorInput(){
     if(nameEl) nameEl.value = match.vendorName;
   }
   if(bankBlock){
-    const v = state.vendors.find(x=>String(x.vendorCode)===String(el.value));
+    const v = findVendor_(currentFormCompany_(), el.value);
     bankBlock.innerHTML = (v && (v.bankAccount||v.bankName))
       ? `<span style="font-size:12px;color:var(--ink-soft);">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`
       : (el.value ? `<span style="font-size:11.5px;color:var(--stamp-red);">ไม่พบใน Vendor Master — สามารถกรอกเพิ่มเองได้ทีหลังจากหน้าอนุมัติเอกสาร</span>` : '');
@@ -2712,7 +2737,7 @@ function applySaOwnSapLineTaxCalc(idx, taxCode){
 function onSaOwnSapLineVendorInput(idx){
   const el = document.getElementById('saownsap-vendor-'+idx);
   if(!el) return;
-  const match = state.vendors.find(v => `${v.vendorCode} — ${v.vendorName}` === el.value);
+  const match = findVendorByLabel_(currentFormCompany_(), el.value);
   if(match){
     el.value = match.vendorCode;
     const nameEl = document.getElementById('saownsap-vendorname-'+idx);
@@ -2860,7 +2885,7 @@ function saOwnExcelValidate_(parsed, formCompany){
     } else {
       l.issues.push({level:'warn', text:'ไม่พบแถวสรุปของ Vendor นี้ในไฟล์ — ใช้ผลรวมที่คำนวณจากรายการ'});
     }
-    if(!state.vendors.some(v=>String(v.vendorCode)===String(l.code))) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
+    if(!findVendor_(currentFormCompany_(), l.code)) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
     const dupDocs = l.docs.filter(d=>existing.indexOf(d)!==-1);
     if(dupDocs.length) l.issues.push({level:'warn', text:'FI Doc '+dupDocs.join(', ')+' มีอยู่ในเอกสารอื่นในระบบแล้ว อาจซ้ำ'});
     if(l.net < 0) l.issues.push({level:'warn', text:'ยอดสุทธิติดลบ (ใบลดหนี้/รายการกลับ)'});
@@ -3702,7 +3727,7 @@ function accountingApprovalHTML(){
               <div class="sap-wrap">
                 <label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ค้นหาได้)</span></label>
                 <input class="sap-input" id="sapline-vendor-${d.id}-${i}" list="sapline-vendor-dl-${d.id}-${i}" type="text" value="${l.vendor||''}" oninput="onSapLineVendorInput('${d.id}',${i})" style="width:170px;">
-                <datalist id="sapline-vendor-dl-${d.id}-${i}">${state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('')}</datalist>
+                <datalist id="sapline-vendor-dl-${d.id}-${i}">${vendorOptionsHTML_(d.companyCode)}</datalist>
               </div>
               <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="sapline-vendorname-${d.id}-${i}" type="text" value="${l.vendorName||''}" style="width:170px;"></div>
               <button class="btn btn-sm btn-approve" onclick="saveSapLineDetailsLocal('${d.id}',${i})">✓ ยืนยัน (ยังไม่บันทึกขึ้นระบบ)</button>
@@ -3773,7 +3798,7 @@ function accountingApprovalHTML(){
         </tr>`;
 
       let actionRow = '';
-      const vendorOptions = state.vendors.map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join('');
+      const vendorOptions = vendorOptionsHTML_(d.companyCode);
       const sectionLabel = txt => `<div style="width:100%;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--gold);margin:10px 0 6px;">${txt}</div>`;
       const flagFields = (state.approvalTab==='accountant' || state.approvalTab==='reviewer') ? `
           ${sectionLabel('ผู้รับเงิน')}
@@ -4030,7 +4055,7 @@ function openApprovalReport(id){
           const lines = parseSapLines(d);
           if(lines.length>1){
             return lines.map(l=>{
-              const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+              const vRec = findVendor_(d.companyCode, l.vendor);
               return `
         <tr>
           <td>${displayId(l.subId||d.id)}</td>
@@ -4179,7 +4204,7 @@ function paymentApprovalHTML(){
     <tr>
       <td class="mono" style="white-space:nowrap;">${v.id||'-'}</td>
       <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
-      <td>${companyName(v.companyCode)}</td>
+      <td>${pvItemCellHTML_(v)}</td>
       <td>${docIds.length} รายการ</td>
       <td>${agg.payTypeLabel}</td>
       <td>${money(agg.vat)}</td>
@@ -4268,7 +4293,7 @@ function paymentApprovalHTML(){
     ${pvFilterBar}
     <div class="table-scroll">
     <div class="table-scroll"><table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     </div>
@@ -4712,7 +4737,7 @@ function paymentHTML(){
       const lines = parseSapLines(d);
       const subRows = lines.length>1 ? lines.map(l=>{
         const money2 = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        const vRec = findVendor_(d.companyCode, l.vendor);
         return `
         <tr style="background:var(--paper);font-size:12px;">
           <td></td>
@@ -4768,11 +4793,18 @@ function paymentHTML(){
       <label>เลข Doc Payment</label>
       <input id="payment-docnum" type="text" placeholder="ระบุเลขที่ Doc Payment" value="${state.paymentDocNumber}" oninput="setPaymentDocNumber(this.value)" style="width:200px;" ${noCompanyPicked?'disabled':''}>
     </div>
+    <div class="f-field" style="margin:0;min-width:240px;">
+      <label>บัญชีที่โอน (บังคับ)</label>
+      <select id="payment-account" onchange="setPaymentAccount(this.value)" ${noCompanyPicked?'disabled':''} style="width:100%;">
+        <option value="">${noCompanyPicked ? '— เลือกบริษัทก่อน —' : (accountsForCompany_(state.paymentCompany).length ? '— เลือกบัญชี —' : '— ยังไม่มีบัญชีของบริษัทนี้ (แจ้ง Admin) —')}</option>
+        ${noCompanyPicked ? '' : accountsForCompany_(state.paymentCompany).map(a=>`<option value="${a.accountNo}" ${state.paymentAccountNo===a.accountNo?'selected':''}>${a.owner} · ${a.accountNo}</option>`).join('')}
+      </select>
+    </div>
     <div class="f-field" style="margin:0;flex:1;min-width:220px;">
       <label>ลิงก์ไฟล์ Doc Payment (สลิป/หลักฐานการโอน — ไม่บังคับ)</label>
       <input id="payment-doclink" type="url" placeholder="https://drive.google.com/..." value="${state.paymentDocLink}" oninput="setPaymentDocLink(this.value)" ${noCompanyPicked?'disabled':''}>
     </div>
-    <button id="payment-confirm-btn" class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim()) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
+    <button id="payment-confirm-btn" class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim() && state.paymentAccountNo) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
   </div>`;
 
   const paidList = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
@@ -5057,7 +5089,7 @@ async function exportVoucherReportToExcel(){
     const lines = parseSapLines(d);
     if(lines.length>1){
       lines.forEach(l=>{
-        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        const vRec = findVendor_(d.companyCode, l.vendor);
         lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
       });
     } else {
@@ -5209,7 +5241,7 @@ function generateVoucherSummary(){
     const lines = parseSapLines(d);
     if(lines.length>1){
       return lines.map(l=>{
-        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        const vRec = findVendor_(d.companyCode, l.vendor);
         return `
         <tr>
           <td>${displayId(d.id)}</td>
@@ -5289,13 +5321,21 @@ function generateVoucherSummary(){
   window.open(url, '_blank');
 }
 
-function setPaymentCompany(v){ state.paymentCompany = v; state.expandedRow=null; state.paymentSelected=[]; render(); }
+function setPaymentCompany(v){ state.paymentCompany = v; state.expandedRow=null; state.paymentSelected=[]; state.paymentAccountNo=''; render(); }
 function setPaymentSearch(field, val){ state.paymentSearch[field] = val; render(); }
 function clearPaymentSearch(){ state.paymentSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
+// transfer-from bank accounts Finance may pick for a company — strictly that company's own accounts
+function accountsForCompany_(co){ return state.paymentAccounts.filter(a=>String(a.companyCode)===String(co)); }
+function pvItemCellHTML_(v){
+  if(!v || !v.payAccountNo) return '<span style="color:var(--ink-soft);">-</span>';
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return `<div>${esc(v.payAccountOwner||'-')}</div><div style="font-weight:700;">${esc(v.payAccountNo)}</div>`;
+}
+function setPaymentAccount(v){ state.paymentAccountNo = v; refreshPaymentConfirmBtn_(); }
 function refreshPaymentConfirmBtn_(){
   const b = document.getElementById('payment-confirm-btn');
   if(!b) return;
-  const ok = state.paymentCompany!=='all' && state.paymentSelected.length>0 && String(state.paymentDocNumber||'').trim()!=='';
+  const ok = state.paymentCompany!=='all' && state.paymentSelected.length>0 && String(state.paymentDocNumber||'').trim()!=='' && !!state.paymentAccountNo;
   b.disabled = !ok;
 }
 function setPaymentDocNumber(v){ state.paymentDocNumber = v; refreshPaymentConfirmBtn_(); }
@@ -5374,6 +5414,8 @@ async function confirmBatchPayment(){
   const docNum = state.paymentDocNumber.trim();
   const docLink = state.paymentDocLink.trim();
   if(!docNum || !state.paymentSelected.length) return;
+  const payAcc = accountsForCompany_(state.paymentCompany).find(a=>a.accountNo===state.paymentAccountNo);
+  if(!payAcc){ showToast('กรุณาเลือกบัญชีที่โอนของบริษัทนี้ก่อนยืนยันรวบจ่าย'); return; }
   if(state.paymentCompany==='all'){ showToast('กรุณาเลือกบริษัทก่อนรวบจ่าย ห้ามรวบจ่ายข้ามบริษัทในใบเดียวกัน'); return; }
   const ids = state.paymentSelected.slice();
   const selectedDocs = ids.map(id=>state.documents.find(d=>d.id===id)).filter(Boolean);
@@ -5406,11 +5448,13 @@ async function confirmBatchPayment(){
       showToast('หมายเหตุ: Doc Payment นี้ปิดรอบ Payment ไปแล้ว เอกสารที่เพิ่มใหม่จะไม่ถูกรวมในชุดปิดรอบเดิม กรุณาแจ้ง Admin หากต้องการปลดล็อกเพื่อรวมเพิ่ม');
     } else {
       const mergedIds = Array.from(new Set(pvDocIds(existingPv).concat(ids)));
-      const upRes = await apiCall('updatePaymentVoucher', { id: existingPv.id, docIds: JSON.stringify(mergedIds), netTotal: String(netTotal) });
+      const mergePatch = { id: existingPv.id, docIds: JSON.stringify(mergedIds), netTotal: String(netTotal) };
+      if(!existingPv.payAccountNo){ mergePatch.payAccountNo = payAcc.accountNo; mergePatch.payAccountOwner = payAcc.owner; }
+      const upRes = await apiCall('updatePaymentVoucher', mergePatch);
       if(!upRes || !upRes.success) pvFailed = true;
     }
   } else {
-    const pvRes = await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
+    const pvRes = await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, payAccountNo: payAcc.accountNo, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
     if(!pvRes || !pvRes.success) pvFailed = true;
   }
   hideBusyOverlay();
@@ -5422,6 +5466,7 @@ async function confirmBatchPayment(){
   state.paymentSelected = [];
   state.paymentDocNumber = '';
   state.paymentDocLink = '';
+  state.paymentAccountNo = '';
   await refreshData();
   render();
   openPaymentReport(docNum);
@@ -5508,7 +5553,7 @@ function reportPaymentHTML(){
     <tr>
       <td class="mono" style="white-space:nowrap;">${b.stage.v ? b.stage.v.id : '-'}</td>
       <td class="mono">${b.docPayment}</td>
-      <td>${companyName(b.companyCode)}</td>
+      <td>${pvItemCellHTML_(b.stage.v)}</td>
       <td>${b.count} รายการ</td>
       <td>${batchPayTypeLabel(b)}</td>
       <td>${money(b.vat)}</td>
@@ -5537,7 +5582,7 @@ function reportPaymentHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>บริษัท</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -5642,9 +5687,9 @@ function exportReportPaymentToExcel(){
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
   if(!docs.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
   // export at document level (one row per document) so payType/amounts are exact, not aggregated
-  const header = ['ID Payment Voucher','Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
+  const header = ['ID Payment Voucher','Owner (บัญชีที่โอน)','เลขที่บัญชีที่โอน','Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
   const rows = docs.map(d=>[
-    (pvStageOfBatch_(d.docPayment).v||{}).id||'', d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
+    (pvStageOfBatch_(d.docPayment).v||{}).id||'', (pvStageOfBatch_(d.docPayment).v||{}).payAccountOwner||'-', (pvStageOfBatch_(d.docPayment).v||{}).payAccountNo||'-', d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
     payTypeLabel(d.payType), parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
     d.paymentBy||'', d.paymentDate||'', pvStageOfBatch_(d.docPayment).label,
   ]);
@@ -5665,7 +5710,7 @@ function openPaymentReport(docPayment){
     const lines = parseSapLines(d);
     if(lines.length>1){
       return lines.map(l=>{
-        const vRec = state.vendors.find(v=>String(v.vendorCode)===String(l.vendor));
+        const vRec = findVendor_(d.companyCode, l.vendor);
         return `
         <tr>
           <td>${dateStr}</td>
@@ -5729,6 +5774,7 @@ function openPaymentReport(docPayment){
     <h1>Journal Voucher Report</h1>
     <div class="meta">
       <div>Company Code: <b>${companyCode}</b> — ${companyName(companyCode)}</div>
+      <div>บัญชีที่โอน: ${(pv && pv.payAccountNo) ? `Owner <b>${pv.payAccountOwner||'-'}</b> · เลขที่บัญชี <b>${pv.payAccountNo}</b>` : '-'}</div>
       <div>Doc Payment: <b>${docPayment}</b>${lastDoc.docPaymentLink?` &nbsp;·&nbsp; <a href="${lastDoc.docPaymentLink}" target="_blank" rel="noopener">ไฟล์สลิป/หลักฐานการโอน ↗</a>`:''}</div>
     </div>
     <table>
@@ -6151,18 +6197,78 @@ async function saveQuickLinks(e){
   render();
 }
 
+/* ============================= ADMIN: PAYMENT ACCOUNTS ============================= */
+function adminAccountsHTML(){
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const rows = state.paymentAccounts.slice().sort((a,b)=>String(a.companyCode).localeCompare(String(b.companyCode)) || String(a.accountNo).localeCompare(String(b.accountNo))).map(a=>`
+    <tr>
+      <td class="mono" style="font-weight:700;">${esc(a.companyCode)}</td>
+      <td>${esc(a.owner)}</td>
+      <td class="mono" style="font-weight:700;">${esc(a.accountNo)}</td>
+      <td>${esc(a.createdBy||'-')}</td>
+      <td>${esc(a.createdDate||'-')}</td>
+      <td><button class="btn btn-sm btn-reject" onclick="deletePaymentAccount('${a.id}')">ลบ</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="6">ยังไม่มีบัญชีโอน</td></tr>`;
+  return `
+  <div class="card">
+    <div class="eyebrow">Payment Accounts</div>
+    <h3 style="margin-top:4px;">เพิ่มบัญชีโอน</h3>
+    <div class="helper">บัญชีเหล่านี้ใช้ให้เจ้าหน้าที่การเงินเลือกตอน "ยืนยันรวบจ่าย" — การเงินเห็นและเลือกได้เฉพาะบัญชีของบริษัทที่กำลังรวบจ่ายเท่านั้น การลบบัญชีไม่กระทบชุดที่รวบจ่ายไปแล้ว (เก็บ Owner/เลขที่บัญชีไว้ในชุดนั้นแล้ว)</div>
+    <hr class="div">
+    <form onsubmit="addPaymentAccount(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div class="field" style="margin-bottom:0;"><label>Com</label><select name="companyCode" required><option value="">— เลือก —</option>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
+      <div class="field" style="margin-bottom:0;"><label>เลขที่บัญชี</label><input type="text" name="accountNo" placeholder="เลขที่บัญชีธนาคาร" required></div>
+      <div class="field" style="margin-bottom:0;flex:1;min-width:200px;"><label>Owner</label><input type="text" name="owner" placeholder="ชื่อเจ้าของบัญชี" required></div>
+      <button class="btn btn-primary" type="submit">เพิ่มบัญชี</button>
+    </form>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Account List</div>
+    <h3 style="margin-top:4px;">บัญชีโอนทั้งหมด (${state.paymentAccounts.length})</h3>
+    <hr class="div">
+    <div class="table-scroll"><table>
+      <thead><tr><th>Com</th><th>Owner</th><th>เลขที่บัญชี</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+}
+async function addPaymentAccount(e){
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const companyCode = String(f.get('companyCode')||'').trim();
+  const accountNo = String(f.get('accountNo')||'').trim();
+  const owner = String(f.get('owner')||'').trim();
+  if(!companyCode || !accountNo || !owner){ showToast('กรุณากรอก Com, เลขที่บัญชี และ Owner ให้ครบ'); return; }
+  const res = await apiCall('savePaymentAccount', { companyCode, accountNo, owner, createdBy: fullName(state.user) });
+  if(!res.success){ showToast('บันทึกบัญชีไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast(res.updated ? 'มีเลขที่บัญชีนี้ใน Com นี้แล้ว — อัปเดต Owner ให้' : 'เพิ่มบัญชีโอนเรียบร้อย');
+  e.target.reset();
+  await refreshData();
+  render();
+}
+async function deletePaymentAccount(id){
+  const res = await apiCall('deletePaymentAccount', { id });
+  if(!res.success){ showToast('ลบบัญชีไม่สำเร็จ'); return; }
+  showToast('ลบบัญชีแล้ว');
+  await refreshData();
+  render();
+}
+
 /* ============================= ADMIN: VENDOR MASTER ============================= */
 function adminVendorsHTML(){
-  const rows = state.vendors.slice().sort((a,b)=>String(a.vendorCode||'').localeCompare(String(b.vendorCode||''))).map(v=>`
+  const vf = state.vendorAdminCo || 'all';
+  const shown = state.vendors.filter(v=> vf==='all' ? true : (vf==='blank' ? !v.companyCode : v.companyCode===vf));
+  const rows = shown.slice().sort((a,b)=>String(a.companyCode||'').localeCompare(String(b.companyCode||'')) || String(a.vendorCode||'').localeCompare(String(b.vendorCode||''))).map(v=>`
     <tr>
+      <td class="mono" style="font-weight:700;">${v.companyCode || '<span style="color:var(--gold);font-weight:400;" title="ยังไม่ระบุ Com — ใช้ได้ทุกบริษัทชั่วคราว">(ว่าง)</span>'}</td>
       <td class="mono">${v.vendorCode}</td>
       <td>${v.vendorName||'-'}</td>
       <td>${v.bankAccount||'-'}</td>
       <td>${v.bankName||'-'}</td>
       <td>${v.createdBy||'-'}</td>
       <td>${v.createdDate||'-'}</td>
-      <td><button class="btn btn-sm btn-reject" onclick="deleteVendor('${v.vendorCode}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="7">ยังไม่มี Vendor ในระบบ</td></tr>`;
+      <td><button class="btn btn-sm btn-reject" onclick="deleteVendor('${v.companyCode||''}','${v.vendorCode}')">ลบ</button></td>
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="8">ยังไม่มี Vendor ในระบบ</td></tr>`;
 
   return `
   <div class="card">
@@ -6171,6 +6277,7 @@ function adminVendorsHTML(){
     <div class="helper">ข้อมูล Vendor นี้ใช้ค้นหาตอนกรอก Vendor/Vendor Name ในหน้าอนุมัติเอกสาร (นักบัญชี/ผู้ตรวจสอบ) — พิมพ์ค้นหาได้ทั้งรหัสและชื่อ ถ้าเลือกจาก dropdown ชื่อ Vendor/เลขที่บัญชี/ธนาคารจะเติมให้อัตโนมัติ แต่ยังพิมพ์เองได้ถ้าไม่เจอใน master</div>
     <hr class="div">
     <form onsubmit="addVendor(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;"><label>Com</label><select name="companyCode" required><option value="">— เลือก —</option>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
       <div class="field" style="margin-bottom:0;"><label>Vendor Code</label><input type="text" name="vendorCode" placeholder="เช่น V0001" required></div>
       <div class="field" style="margin-bottom:0;flex:1;min-width:200px;"><label>Vendor Name</label><input type="text" name="vendorName" placeholder="ชื่อ Vendor" required></div>
       <div class="field" style="margin-bottom:0;"><label>เลขที่บัญชี (ถ้ามี)</label><input type="text" name="bankAccount" placeholder="เลขที่บัญชีธนาคาร"></div>
@@ -6182,7 +6289,7 @@ function adminVendorsHTML(){
   <div class="card">
     <div class="eyebrow">Bulk Upload</div>
     <h3 style="margin-top:4px;">อัปโหลดรายชื่อ Vendor เป็นชุด</h3>
-    <div class="helper">รองรับไฟล์ .xlsx หรือ .csv — ต้องมีคอลัมน์: Vendor (รหัส), Vendor Name, เลขที่บัญชี (ไม่บังคับ), ชื่อธนาคาร/bankName (ไม่บังคับ) — ถ้ารหัส Vendor ซ้ำกับที่มีอยู่แล้ว ระบบจะอัปเดตข้อมูลทับให้อัตโนมัติ ไม่สร้างซ้ำ</div>
+    <div class="helper">รองรับไฟล์ .xlsx หรือ .csv — ต้องมีคอลัมน์: Com (รหัสบริษัท), Vendor (รหัส), Vendor Name, เลขที่บัญชี (ไม่บังคับ), ชื่อธนาคาร/bankName (ไม่บังคับ) — ถ้ารหัส Vendor ซ้ำกับที่มีอยู่แล้ว ระบบจะอัปเดตข้อมูลทับให้อัตโนมัติ ไม่สร้างซ้ำ</div>
     <hr class="div">
     <input type="file" id="vendor-upload-file" accept=".xlsx,.xls,.csv" onchange="uploadVendorFile(event)">
     <div id="vendor-upload-status" style="margin-top:8px;font-size:12.5px;color:var(--ink-soft);"></div>
@@ -6190,11 +6297,13 @@ function adminVendorsHTML(){
 
   <div class="card">
     <div class="eyebrow">Vendor List</div>
-    <h3 style="margin-top:4px;">รายชื่อ Vendor ทั้งหมด (${state.vendors.length})</h3>
+    <h3 style="margin-top:4px;">รายชื่อ Vendor (${shown.length}${vf!=='all'?' / '+state.vendors.length:''})</h3>
+    <div class="helper">Vendor รหัสเดียวกันมีได้หลายแถวถ้าต่างบริษัท (1 แถว = 1 Com + 1 รหัส Vendor) — แถวที่ Com ยังว่างจะใช้ได้ทุกบริษัทชั่วคราวจนกว่าจะเติม Com ในชีท VendorMaster</div>
+    <div class="filter-bar" style="margin-bottom:10px;"><div class="f-field"><label>กรองตาม Com</label><select onchange="state.vendorAdminCo=this.value;render();"><option value="all" ${vf==='all'?'selected':''}>ทุกบริษัท</option><option value="blank" ${vf==='blank'?'selected':''}>ยังไม่ระบุ Com (ว่าง)</option>${state.companies.map(c=>`<option value="${c.code}" ${vf===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}</select></div></div>
     <hr class="div">
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Vendor Code</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <thead><tr><th>Com</th><th>Vendor Code</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -6203,22 +6312,24 @@ function adminVendorsHTML(){
 async function addVendor(e){
   e.preventDefault();
   const f = new FormData(e.target);
+  const companyCode = String(f.get('companyCode')||'').trim();
   const vendorCode = f.get('vendorCode').trim();
   const vendorName = f.get('vendorName').trim();
+  if(!companyCode){ showToast('กรุณาเลือก Com'); return; }
   const bankAccount = f.get('bankAccount').trim();
   const bankName = f.get('bankName').trim();
-  if(state.vendors.some(v=>String(v.vendorCode).toLowerCase()===vendorCode.toLowerCase())){
-    showToast('มีรหัส Vendor นี้อยู่แล้ว — บันทึกนี้จะอัปเดตข้อมูลเดิมทับ');
+  if(state.vendors.some(v=>String(v.companyCode)===companyCode && String(v.vendorCode).toLowerCase()===vendorCode.toLowerCase())){
+    showToast('มีรหัส Vendor นี้ใน Com '+companyCode+' อยู่แล้ว — บันทึกนี้จะอัปเดตข้อมูลเดิมทับ');
   }
-  const res = await apiCall('saveVendor', { vendorCode, vendorName, bankAccount, bankName, createdBy: fullName(state.user) });
+  const res = await apiCall('saveVendor', { companyCode, vendorCode, vendorName, bankAccount, bankName, createdBy: fullName(state.user) });
   if(!res.success){ showToast('บันทึก Vendor ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('บันทึก Vendor เรียบร้อย');
   e.target.reset();
   await refreshData();
   render();
 }
-async function deleteVendor(vendorCode){
-  const res = await apiCall('deleteVendor', { vendorCode });
+async function deleteVendor(companyCode, vendorCode){
+  const res = await apiCall('deleteVendor', { companyCode, vendorCode });
   if(!res.success){ showToast('ลบ Vendor ไม่สำเร็จ'); return; }
   showToast('ลบ Vendor แล้ว');
   await refreshData();
@@ -6240,25 +6351,31 @@ function uploadVendorFile(e){
       if(!aoa.length){ if(statusEl) statusEl.textContent='ไฟล์ว่างเปล่า'; return; }
       const header = aoa[0].map(h=>String(h).trim().toLowerCase());
       const findCol = names => header.findIndex(h=>names.some(n=>h.includes(n)));
-      const codeIdx = findCol(['vendor code','vendor','รหัส']);
+      const comIdx = header.findIndex(h=>['com','company','companycode','company code','รหัสบริษัท','บริษัท'].includes(h));
+      const codeIdx = header.findIndex((h,i)=>i!==comIdx && ['vendor code','vendor','รหัส'].some(n=>h.includes(n)));
       const nameIdx = findCol(['vendor name','ชื่อ']);
       const bankIdx = findCol(['เลขที่บัญชี','bankaccount','account']);
       const bankNameIdx = findCol(['bankname','ธนาคาร']);
+      if(comIdx===-1){ if(statusEl) statusEl.textContent='ไม่พบคอลัมน์ Com (รหัสบริษัท) ในไฟล์ — ต้องมีคอลัมน์ Com เป็นคอลัมน์แรก'; return; }
       if(codeIdx===-1 || nameIdx===-1){ if(statusEl) statusEl.textContent='ไม่พบคอลัมน์ Vendor / Vendor Name ในไฟล์ กรุณาตรวจสอบหัวคอลัมน์'; return; }
+      const validCos = new Set(state.companies.map(c=>String(c.code)));
+      let badCom = 0;
       const rows = aoa.slice(1)
         .filter(r=>r[codeIdx] && String(r[codeIdx]).trim())
+        .filter(r=>{ const ok = validCos.has(String(r[comIdx]).trim()); if(!ok) badCom++; return ok; })
         .map(r=>({
+          companyCode: String(r[comIdx]).trim(),
           vendorCode: String(r[codeIdx]).trim(),
           vendorName: String(r[nameIdx]||'').trim(),
           bankAccount: bankIdx!==-1 ? String(r[bankIdx]||'').trim() : '',
           bankName: bankNameIdx!==-1 ? String(r[bankNameIdx]||'').trim() : '',
         }));
-      if(!rows.length){ if(statusEl) statusEl.textContent='ไม่พบข้อมูล Vendor ในไฟล์'; return; }
+      if(!rows.length){ if(statusEl) statusEl.textContent='ไม่พบข้อมูล Vendor ที่มี Com ถูกต้องในไฟล์'+(badCom?' (ข้าม '+badCom+' แถวที่ Com ว่างหรือไม่ตรงกับบริษัทในระบบ)':''); return; }
       showBusyOverlay('กำลังอัปโหลด Vendor Master ('+rows.length+' รายการ) กรุณารอสักครู่...');
       const res = await apiCall('bulkUploadVendors', { rows, createdBy: fullName(state.user) });
       hideBusyOverlay();
       if(!res.success){ if(statusEl) statusEl.textContent='อัปโหลดไม่สำเร็จ ลองใหม่อีกครั้ง'; return; }
-      if(statusEl) statusEl.textContent = 'อัปโหลดสำเร็จ '+rows.length+' รายการ';
+      if(statusEl) statusEl.textContent = 'อัปโหลดสำเร็จ '+rows.length+' รายการ'+(badCom?' · ข้าม '+badCom+' แถวที่ Com ว่างหรือไม่ตรงกับบริษัทในระบบ':'');
       showToast('อัปโหลด Vendor Master เรียบร้อย ('+rows.length+' รายการ)');
       e.target.value = '';
       await refreshData();
