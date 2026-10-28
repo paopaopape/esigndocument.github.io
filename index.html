@@ -564,24 +564,31 @@ function pvStageRoleForVoucher(v){
   if(v.status==='รอผู้อนุมัติPayment') return 'pvApprover';
   return null;
 }
+// reviewerId / approverId on a PaymentMapping row are ';'-separated lists — several people can be Payment
+// reviewers/approvers of one company
+function pvIds_(s){ return String(s==null?'':s).split(';').map(x=>x.trim()).filter(Boolean); }
+// who may act on this voucher at its current stage: the reviewer/approver set on the bank account it was paid
+// from (Admin → บัญชีโอน), otherwise everybody listed for the company. [] = nothing configured (unrestricted fallback)
+function pvEligibleIds_(v, role){
+  const field = role==='pvReviewer' ? 'reviewerId' : 'approverId';
+  const acc = v.payAccountNo ? state.paymentAccounts.find(a=>String(a.companyCode)===String(v.companyCode) && String(a.accountNo)===String(v.payAccountNo)) : null;
+  const specific = acc && String(acc[field]||'').trim();
+  if(specific) return [specific];
+  const mapping = getPaymentMapping(v.companyCode);
+  return mapping ? pvIds_(mapping[field]) : [];
+}
 function pvCanActOnStage(v){
   const role = pvStageRoleForVoucher(v);
   if(!role) return true;
-  const mapping = getPaymentMapping(v.companyCode);
-  if(!mapping) return true; // no mapping configured for this company -> unrestricted fallback (any user with the matching role)
-  const targetId = role==='pvReviewer' ? mapping.reviewerId : mapping.approverId;
-  if(!targetId) return true;
-  return isAdmin() || state.user.id === targetId;
+  const ids = pvEligibleIds_(v, role);
+  if(!ids.length) return true; // nothing configured for this company/account -> unrestricted fallback (any user with the matching role)
+  return isAdmin() || ids.includes(state.user.id);
 }
 function pvAssignedActorName(v){
   const role = pvStageRoleForVoucher(v);
   if(!role) return null;
-  const mapping = getPaymentMapping(v.companyCode);
-  if(!mapping) return null;
-  const targetId = role==='pvReviewer' ? mapping.reviewerId : mapping.approverId;
-  if(!targetId) return null;
-  const m = state.members.find(x=>x.id===targetId);
-  return m ? fullName(m) : null;
+  const names = pvEligibleIds_(v, role).map(id=>{ const m = state.members.find(x=>x.id===id); return m ? fullName(m) : null; }).filter(Boolean);
+  return names.length ? names.join(' , ') : null;
 }
 function pvDocIds(v){
   try{ return v.docIds ? JSON.parse(v.docIds) : []; }catch(e){ return []; }
@@ -718,7 +725,7 @@ async function refreshData(){
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
     state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
-    state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo) }));
+    state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.paymentVouchers = (data.paymentVouchers || []).map(v=>({ ...v, companyCode:String(v.companyCode) }));
     state.documents = (data.documents || []).map(d=>{
@@ -1671,7 +1678,7 @@ function canSeeApproval(){ return ['นักบัญชี','ผู้ตร�
 // reviewer/approver for another, since the per-company split is driven entirely by Payment
 // Mapping data, never by the single role field.
 function hasPvDuty(){
-  return state.paymentMappings.some(mp=>mp.reviewerId===state.user.id || mp.approverId===state.user.id);
+  return state.paymentMappings.some(mp=>pvIds_(mp.reviewerId).includes(state.user.id) || pvIds_(mp.approverId).includes(state.user.id));
 }
 // หัวหน้าแผนกการเงิน/ผู้อนุมัติการเงิน (the Payment Voucher close-out reviewer/approver) get the
 // same Payment Voucher / Report Payment access เจ้าหน้าที่การเงิน has, per the agreed spec
@@ -1706,8 +1713,8 @@ function defaultApprovalGroup(){
 function allowedPvTabs(){
   if(isAdmin()) return ['pvReviewer','pvApprover'];
   const tabs = [];
-  const isReviewerAnywhere = state.user.role==='หัวหน้าแผนกการเงิน' || state.paymentMappings.some(mp=>mp.reviewerId===state.user.id);
-  const isApproverAnywhere = state.user.role==='ผู้อนุมัติการเงิน' || state.paymentMappings.some(mp=>mp.approverId===state.user.id);
+  const isReviewerAnywhere = state.user.role==='หัวหน้าแผนกการเงิน' || state.paymentMappings.some(mp=>pvIds_(mp.reviewerId).includes(state.user.id));
+  const isApproverAnywhere = state.user.role==='ผู้อนุมัติการเงิน' || state.paymentMappings.some(mp=>pvIds_(mp.approverId).includes(state.user.id));
   if(isReviewerAnywhere) tabs.push('pvReviewer');
   if(isApproverAnywhere) tabs.push('pvApprover');
   return tabs;
@@ -5605,10 +5612,7 @@ function pvStageOfBatch_(docPayment){
 }
 function pvStageWho_(stage){
   if(!stage.v) return '';
-  const m = getPaymentMapping(stage.v.companyCode);
-  const id = m && (stage.key==='approve' ? m.approverId : m.reviewerId);
-  const mem = id && state.members.find(x=>x.id===id);
-  return mem ? fullName(mem) : '';
+  return pvAssignedActorName(stage.v) || '';
 }
 
 /* ---- Excel export (SheetJS) — shared by Payment Voucher and Report Payment ---- */
@@ -5866,8 +5870,8 @@ function adminPermissionsHTML(){
         const mp = state.paymentMappings.find(x=>String(x.companyCode)===String(code));
         if(!mp) return '';
         const bits = [];
-        if(mp.reviewerId===m.id) bits.push('ตรวจ');
-        if(mp.approverId===m.id) bits.push('อนุมัติ');
+        if(pvIds_(mp.reviewerId).includes(m.id)) bits.push('ตรวจ');
+        if(pvIds_(mp.approverId).includes(m.id)) bits.push('อนุมัติ');
         return bits.length ? ` <span class="badge badge-forest" title="สิทธิ์ Payment บริษัท ${code}" style="margin-left:6px;">${code} Payment:${bits.join('/')}</span>` : '';
       }).join('');
       return `
@@ -5886,8 +5890,8 @@ function adminPermissionsHTML(){
     // Payment-reviewer for one company only, without touching their primary Role at all.
     const companyRows = state.companies.map(c=>{
       const mp = state.paymentMappings.find(x=>String(x.companyCode)===String(c.code));
-      const pvReview = !!(mp && mp.reviewerId===m.id);
-      const pvApprove = !!(mp && mp.approverId===m.id);
+      const pvReview = !!(mp && pvIds_(mp.reviewerId).includes(m.id));
+      const pvApprove = !!(mp && pvIds_(mp.approverId).includes(m.id));
       return `
       <tr>
         <td><label class="chip-check" style="font-weight:400;"><input type="checkbox" name="companyCodes" value="${c.code}" ${(m.companyCodes||[]).includes(c.code)?'checked':''}> ${c.code}</label></td>
@@ -6065,14 +6069,13 @@ function adminSettingsHTML(){
   const pvReviewerOptions = state.members.map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
   const pvApproverOptions = pvReviewerOptions;
   const pvMappingRows = state.paymentMappings.map(mp=>{
-    const reviewerName = state.members.find(m=>m.id===mp.reviewerId);
-    const approverName = state.members.find(m=>m.id===mp.approverId);
+    const namesOf = s => pvIds_(s).map(id=>{ const m = state.members.find(x=>x.id===id); return m ? fullName(m) : null; }).filter(Boolean).join(' , ');
     const unset = '<span style="color:var(--ink-soft);">— ไม่กำหนด —</span>';
     return `
     <tr>
       <td>${companyName(mp.companyCode)}</td>
-      <td>${reviewerName ? fullName(reviewerName) : unset}</td>
-      <td>${approverName ? fullName(approverName) : unset}</td>
+      <td>${namesOf(mp.reviewerId) || unset}</td>
+      <td>${namesOf(mp.approverId) || unset}</td>
       <td><button class="btn btn-sm btn-reject" onclick="deletePaymentMapping('${mp.id}')">ลบ</button></td>
     </tr>`;
   }).join('') || `<tr class="empty-row"><td colspan="4">ยังไม่มี Mapping — บริษัทที่ไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ</td></tr>`;
@@ -6152,14 +6155,14 @@ function adminSettingsHTML(){
 
   <div class="card">
     <div class="eyebrow">Payment Mapping</div>
-    <h3 style="margin-top:4px;">มอบหมายผู้ตรวจสอบ / ผู้อนุมัติ Payment ตามบริษัท (ชุดปิดรอบ Doc Payment)</h3>
+    <h3 style="margin-top:4px;">มอบหมายผู้ตรวจสอบ / ผู้อนุมัติ Payment ตามบริษัท (ชุดปิดรอบ Doc Payment) — กำหนดได้หลายคนต่อบริษัท</h3>
     <div class="helper">แยกต่างหากจาก Approval Mapping ด้านบน — ใช้สำหรับ Flow ปิดรอบ Payment Voucher หลังยืนยันรวบจ่ายแล้วเท่านั้น กำหนดเป็นต่อบริษัท (ไม่แยกตามประเภทเอกสาร) เลือกได้จากสมาชิกที่มี role หัวหน้าแผนกการเงิน / ผู้อนุมัติการเงิน เท่านั้น — บริษัทที่ไม่ได้กำหนดจะเปิดให้ทุกคนที่มี role ตรงกันทำได้ตามปกติ</div>
     <hr class="div">
     <form onsubmit="savePaymentMapping(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
       <div class="field" style="margin-bottom:0;"><label>บริษัท</label><select name="companyCode" required>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
       <div class="field" style="margin-bottom:0;"><label>ผู้ตรวจสอบ Payment</label><select name="reviewerId"><option value="">— ไม่กำหนด —</option>${pvReviewerOptions}</select></div>
       <div class="field" style="margin-bottom:0;"><label>ผู้อนุมัติ Payment</label><select name="approverId"><option value="">— ไม่กำหนด —</option>${pvApproverOptions}</select></div>
-      <button class="btn btn-primary" type="submit">บันทึก Mapping</button>
+      <button class="btn btn-primary" type="submit">เพิ่มเข้า Mapping</button>
     </form>
     <table>
       <thead><tr><th>บริษัท</th><th>ผู้ตรวจสอบ Payment</th><th>ผู้อนุมัติ Payment</th><th></th></tr></thead>
@@ -6205,15 +6208,16 @@ function adminAccountsHTML(){
       <td class="mono" style="font-weight:700;">${esc(a.companyCode)}</td>
       <td>${esc(a.owner)}</td>
       <td class="mono" style="font-weight:700;">${esc(a.accountNo)}</td>
+      <td>${accountRoutingSelect_(a,'reviewerId')}</td>
+      <td>${accountRoutingSelect_(a,'approverId')}</td>
       <td>${esc(a.createdBy||'-')}</td>
-      <td>${esc(a.createdDate||'-')}</td>
       <td><button class="btn btn-sm btn-reject" onclick="deletePaymentAccount('${a.id}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="6">ยังไม่มีบัญชีโอน</td></tr>`;
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="7">ยังไม่มีบัญชีโอน</td></tr>`;
   return `
   <div class="card">
     <div class="eyebrow">Payment Accounts</div>
     <h3 style="margin-top:4px;">เพิ่มบัญชีโอน</h3>
-    <div class="helper">บัญชีเหล่านี้ใช้ให้เจ้าหน้าที่การเงินเลือกตอน "ยืนยันรวบจ่าย" — การเงินเห็นและเลือกได้เฉพาะบัญชีของบริษัทที่กำลังรวบจ่ายเท่านั้น การลบบัญชีไม่กระทบชุดที่รวบจ่ายไปแล้ว (เก็บ Owner/เลขที่บัญชีไว้ในชุดนั้นแล้ว)</div>
+    <div class="helper">บัญชีเหล่านี้ใช้ให้เจ้าหน้าที่การเงินเลือกตอน "ยืนยันรวบจ่าย" — การเงินเห็นและเลือกได้เฉพาะบัญชีของบริษัทที่กำลังรวบจ่ายเท่านั้น การลบบัญชีไม่กระทบชุดที่รวบจ่ายไปแล้ว (เก็บ Owner/เลขที่บัญชีไว้ในชุดนั้นแล้ว)<br>ในตารางด้านล่างเลือก "ผู้ตรวจสอบ/ผู้อนุมัติ Payment" ของแต่ละบัญชีได้ — ชุดที่รวบจ่ายจากบัญชีนั้นจะส่งถึงคนนั้นคนเดียว ถ้าไม่เลือกจะส่งถึงทุกคนที่ได้สิทธิ์ของบริษัทนั้น (ติ๊กสิทธิ์ได้หลายคนที่หน้า กำหนดสิทธิ์การใช้งาน)</div>
     <hr class="div">
     <form onsubmit="addPaymentAccount(event)" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
       <div class="field" style="margin-bottom:0;"><label>Com</label><select name="companyCode" required><option value="">— เลือก —</option>${state.companies.map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('')}</select></div>
@@ -6227,10 +6231,26 @@ function adminAccountsHTML(){
     <h3 style="margin-top:4px;">บัญชีโอนทั้งหมด (${state.paymentAccounts.length})</h3>
     <hr class="div">
     <div class="table-scroll"><table>
-      <thead><tr><th>Com</th><th>Owner</th><th>เลขที่บัญชี</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <thead><tr><th>Com</th><th>Owner</th><th>เลขที่บัญชี</th><th>ผู้ตรวจสอบ Payment</th><th>ผู้อนุมัติ Payment</th><th>สร้างโดย</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
   </div>`;
+}
+// dropdown of the people who hold that Payment duty for the account's company (ticked on กำหนดสิทธิ์การใช้งาน)
+function accountRoutingSelect_(a, field){
+  const mp = getPaymentMapping(a.companyCode);
+  const ids = mp ? pvIds_(mp[field]) : [];
+  const cur = String(a[field]||'');
+  const opts = ids.map(id=>{ const m = state.members.find(x=>x.id===id); return m ? `<option value="${id}" ${cur===id?'selected':''}>${fullName(m)}</option>` : ''; }).join('');
+  const stale = cur && !ids.includes(cur) ? `<option value="${cur}" selected>(ไม่มีสิทธิ์แล้ว)</option>` : '';
+  return `<select onchange="setAccountRouting('${a.id}','${field}',this.value)" style="min-width:160px;"><option value="">— ทุกคนของบริษัท —</option>${opts}${stale}</select>`;
+}
+async function setAccountRouting(id, field, value){
+  const res = await apiCall('setPaymentAccountRouting', { id, [field]: value });
+  if(!res.success){ showToast(res.error==='not_eligible' ? 'คนนี้ไม่ได้รับสิทธิ์ Payment ของบริษัทนี้' : 'บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  showToast('บันทึกเรียบร้อย');
+  await refreshData();
+  render();
 }
 async function addPaymentAccount(e){
   e.preventDefault();
