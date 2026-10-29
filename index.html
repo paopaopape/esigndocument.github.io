@@ -48,6 +48,7 @@ html[data-theme="dark"] [style*="background:#E8F5E9"],
 html[data-theme="dark"] [style*="background:#E6F4EA"]{background:var(--surface) !important;color:var(--ink);}
 html[data-theme="dark"] .calc-window{background:#2C3A55;}
 html[data-theme="dark"] .link-cell a, html[data-theme="dark"] a{color:#8FB6F0;}
+.sent-at{margin-top:3px;font-size:11px;color:var(--ink-soft);white-space:nowrap;}
 .theme-select{padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:12px;}
 *{box-sizing:border-box;}
 @keyframes busy-spin{ to{ transform:rotate(360deg); } }
@@ -773,7 +774,7 @@ async function refreshData(){
       m.canTrack = (m.canTrack===true || m.canTrack==='TRUE' || m.canTrack==='true');
       return m;
     });
-    state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code) }));
+    state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code), trackingEnabled: !(c.trackingEnabled===false || String(c.trackingEnabled).toUpperCase()==='FALSE') }));
     state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
@@ -1736,6 +1737,8 @@ function hasPvDuty(){
 }
 // หัวหน้าแผนกการเงิน/ผู้อนุมัติการเงิน (the Payment Voucher close-out reviewer/approver) get the
 // same Payment Voucher / Report Payment access เจ้าหน้าที่การเงิน has, per the agreed spec
+// the Payment Voucher (ยืนยันรวบจ่าย) menu is for finance only — reviewers/approvers with Payment duty use อนุมัติ Payment instead
+function canSeePaymentVoucherMenu(){ return ['เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'].includes(state.user.role); }
 function canSeePayment(){ return ['เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'].includes(state.user.role) || hasPvDuty(); }
 function canSeeVoucherReport(){ return ['นักบัญชี','ผู้ตรวจสอบ','Admin'].includes(state.user.role); }
 function isAdmin(){ return state.user.role === 'Admin'; }
@@ -1778,6 +1781,10 @@ function defaultPvTab(){
   const tabs = allowedPvTabs();
   return tabs[0] || (isAdmin() ? 'pvReviewer' : '');
 }
+// Tracking Invoice can be switched off per company (Admin → ตั้งค่าทั่วไป → รหัสบริษัท)
+function companyTrackingOn_(code){ const c = state.companies.find(x=>x.code===String(code)); return !c || c.trackingEnabled!==false; }
+function trackingCompanyOptions_(){ return userCompanyOptions().filter(c=>c.trackingEnabled!==false); }
+function canSeeTracking_(){ return trackingCompanyOptions_().length>0; }
 function userCompanyOptions(){
   if(isAdmin() || !state.user.companyCodes || !state.user.companyCodes.length) return state.companies;
   return state.companies.filter(c=>state.user.companyCodes.includes(c.code));
@@ -1872,7 +1879,7 @@ function sidebarHTML(){
   nav.push(navItem('dashboard','แดชบอร์ด'));
   if(canSubmitBill()) nav.push(navItem('submit','วางบิลเอกสาร'));
   if(['นักบัญชี','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
-  if(state.user.role!=='เจ้าหน้าที่การเงิน') nav.push(navItem('tracking','Tracking Invoice'));
+  if(state.user.role!=='เจ้าหน้าที่การเงิน' && canSeeTracking_()) nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
     const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
     nav.push(`<div class="nav-item ${state.view==='approval'?'active':''}" onclick="goView('approval')"><span class="dot"></span>การอนุมัติเอกสาร${pendingBadgeHTML(approvalTotalPending)}</div>`);
@@ -1894,7 +1901,7 @@ function sidebarHTML(){
     }
   }
   if(canSeeVoucherReport()) nav.push(navItem('report-voucher','Report ใบสำคัญจ่าย'));
-  if(canSeePayment()) nav.push(navItem('payment','Payment Voucher'));
+  if(canSeePaymentVoucherMenu()) nav.push(navItem('payment','Payment Voucher'));
   if(canSeePayment()) nav.push(navItem('report-payment','Report Payment'));
   if(isAdmin()){
     nav.push(`<div class="nav-item ${state.view.startsWith('admin')?'active':''}" onclick="goView('admin-members')"><span class="dot"></span>Admin</div>`);
@@ -1932,6 +1939,8 @@ function navItem(view,label){
 // the plain "วางบิลเอกสาร" form is not for นักบัญชี / ผู้ตรวจสอบ (they use "วางบิล (นักบัญชี)") — hidden from the menu AND blocked if reached directly
 function canSubmitBill(){ return !['นักบัญชี','ผู้ตรวจสอบ'].includes(state.user.role); }
 function goView(v){
+  if(v==='tracking' && !canSeeTracking_()){ showToast('บริษัทของคุณไม่ได้เปิดใช้ Tracking Invoice'); return; }
+  if(v==='payment' && !canSeePaymentVoucherMenu()){ showToast('เมนูนี้สำหรับฝ่ายการเงินเท่านั้น'); return; }
   if(v==='submit' && !canSubmitBill()){ showToast('บทบาทของคุณไม่ใช้เมนูนี้ — ใช้ "วางบิล (นักบัญชี)" แทน'); return; }
   state.view=v; state.expandedRow=null;
   if(v==='approval'){
@@ -3443,7 +3452,7 @@ function trackingStatusOf(d){
 }
 function trackingHTML(){
   const canEdit = canEditTracking();
-  const companyOpts = userCompanyOptions();
+  const companyOpts = trackingCompanyOptions_();
   const companyHeader = `
   <div class="company-header">
     <label>บริษัท</label>
@@ -3454,7 +3463,7 @@ function trackingHTML(){
     <span style="font-size:11.5px;color:#C9C2AC;">เลือกบริษัทเพื่อดูเอกสารทีละบริษัท</span>
   </div>`;
 
-  let scoped = state.documents.filter(d=>d.status!=='ยกเลิก'); // cancelled/duplicate docs don't need physical-receipt tracking
+  let scoped = state.documents.filter(d=>d.status!=='ยกเลิก' && companyTrackingOn_(d.companyCode)); // cancelled/duplicate docs and companies with Tracking switched off are left out
   const cancelledCount = state.documents.filter(d=>d.status==='ยกเลิก').length;
   if(state.user.role==='User'){
     scoped = scoped.filter(d=>d.createdBy===fullName(state.user));
@@ -3791,7 +3800,7 @@ function accountingApprovalHTML(mode){
   const groupBar = groupBarHTML_(state.approvalGroupBy, 'setApprovalGroupBy');
   const groups = groupForApproval_(list, state.approvalGroupBy, d=>dtMs_(docPrevStepDate_(d)), d=>d.dueDate, d=>d.docType);
   const bodyRows = list.length ? groups.map(g=>{
-    const header = g.label ? `<tr class="group-header"><td colspan="15">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '';
+    const header = g.label ? `<tr class="group-header"><td colspan="14">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '';
     const rows = g.items.map(d=>{
       const isRejectedItem = d.status !== meta.status && !(meta.extraStatus && d.status===meta.extraStatus);
       const expanded = state.expandedRow===d.id;
@@ -3799,7 +3808,7 @@ function accountingApprovalHTML(mode){
       if(state.approvalDocEditId === d.id){
         return `
         <tr class="action-row">
-          <td colspan="15">
+          <td colspan="14">
             <form onsubmit="saveApprovalDocEdit(event,'${d.id}')">
               <div class="form-grid">
                 <div class="field"><label>ประเภทเอกสาร</label><select name="docType">${state.docTypes.map(t=>`<option value="${t.key}" ${d.docType===t.key?'selected':''}>${t.label}</option>`).join('')}</select></div>
@@ -3842,7 +3851,6 @@ function accountingApprovalHTML(mode){
           <td></td>
           <td>${l.vendor||'-'}</td>
           <td></td>
-          <td></td>
           <td style="text-align:right;">${money(l.vat)}</td>
           <td style="text-align:right;">${money(l.wht)}</td>
           <td style="text-align:right;">${money(l.base)}</td>
@@ -3854,7 +3862,7 @@ function accountingApprovalHTML(mode){
           const editKey = d.id+'-'+i;
           const detailRow = `
         <tr style="background:#fff;display:none;" id="sapline-detail-${d.id}-${i}" data-sapline-detail="1">
-          <td colspan="15" style="padding:10px 14px;">
+          <td colspan="14" style="padding:10px 14px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
               <div class="sap-wrap"><label>FI Doc Number</label><input class="sap-input" id="sapline-fidoc-${d.id}-${i}" type="text" value="${l.fiDoc||''}" style="width:140px;"></div>
               <div class="sap-wrap"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="sapline-webdocno-${d.id}-${i}" type="text" value="${l.webDocNo||''}" style="width:150px;"></div>
@@ -3879,7 +3887,6 @@ function accountingApprovalHTML(mode){
           <td></td>
           <td>${l.vendor||'-'}</td>
           <td></td>
-          <td></td>
           <td>${sapLineAmtInput(d.id,i,'vat',l.vat)}</td>
           <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}<div id="sapline-wht-hint-${d.id}-${i}">${whtPercentHTML(l.base,l.wht)}</div></td>
           <td>${sapLineAmtInput(d.id,i,'base',l.base)}</td>
@@ -3900,7 +3907,7 @@ function accountingApprovalHTML(mode){
         if(canEditLines){
           rows += `
         <tr style="background:#fff;">
-          <td colspan="15" style="text-align:center;padding:8px;">
+          <td colspan="14" style="text-align:center;padding:8px;">
             <button class="btn btn-sm btn-outline" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
             ${showBreakdown ? `<button class="btn btn-sm btn-outline" id="sapline-save-btn-${d.id}" onclick="saveSapLineRowsNow('${d.id}')" style="margin-left:8px;">💾 บันทึกรายการ SAP</button>` : ''}
           </td>
@@ -3917,8 +3924,7 @@ function accountingApprovalHTML(mode){
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${fmtDate(d.dueDate)}</td>
           <td>${d.createdBy}</td>
-          <td>${trailHTML(d)}</td>
-          <td style="white-space:nowrap;font-size:12px;" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">${fmtDateTime(docPrevStepDate_(d))}</td>
+          <td>${trailHTML(d)}<div class="sent-at" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">ส่งมาเมื่อ ${fmtDateTime(docPrevStepDate_(d))}</div></td>
           <td>${amtInput(d,'vatAmount','0.00')}</td>
           <td>${amtInput(d,'whtAmount','0.00')}<div id="amt-wht-hint-${d.id}">${whtPercentHTML(d.baseAmount,d.whtAmount)}</div></td>
           <td>${amtInput(d,'baseAmount','0.00')}</td>
@@ -3979,7 +3985,7 @@ function accountingApprovalHTML(mode){
           </div>` : '';
         actionRow = `
         <tr class="action-row">
-          <td colspan="15">
+          <td colspan="14">
             <div class="note-box">
               ${getSkipReviewerReason(d) ? `<div style="width:100%;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:8px;padding:10px 12px;margin-bottom:12px;">
                 <b style="color:var(--stamp-red);">⚠ เอกสารชุดนี้ยังไม่ได้ผ่านหัวหน้าแผนกตรวจสอบ</b><br>
@@ -4040,7 +4046,7 @@ function accountingApprovalHTML(mode){
           </div>` : '';
         actionRow = `
         <tr class="action-row">
-          <td colspan="15">
+          <td colspan="14">
             ${getSkipReviewerReason(d) ? `<div style="margin-bottom:10px;padding:10px 12px;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:7px;">
               <b style="color:var(--stamp-red);">⚠ เอกสารชุดนี้ยังไม่ได้ผ่านหัวหน้าแผนกตรวจสอบ</b><br>
               <span style="font-size:12.5px;color:var(--ink);">เนื่องจาก: ${getSkipReviewerReason(d)}</span>
@@ -4067,7 +4073,7 @@ function accountingApprovalHTML(mode){
       return mainRow + sapSubRows + actionRow;
     }).join('');
     return header + rows;
-  }).join('') : `<tr class="empty-row"><td colspan="15">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   return `
   <div class="tabs">${tabs}</div>
@@ -4084,7 +4090,7 @@ function accountingApprovalHTML(mode){
     ${groupBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>Due</th><th>สร้างโดย</th><th>สถานะ</th><th>ส่งมาเมื่อ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>Tax Code</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>Due</th><th>สร้างโดย</th><th>สถานะ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>Tax Code</th><th></th></tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
     </div>
@@ -4358,16 +4364,15 @@ function paymentApprovalHTML(){
       <td>${money(agg.base)}</td>
       <td><b>${money(agg.net)}</b></td>
       <td>${agg.paymentBy||v.createdBy||'-'}</td>
-      <td style="white-space:nowrap;font-size:12px;" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">${fmtDateTime(pvPrevStepDate_(v))}</td>
       <td>${pvDueLabel_(infoOf[v.id])}</td>
-      <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
+      <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}<div class="sent-at" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">ส่งมาเมื่อ ${fmtDateTime(pvPrevStepDate_(v))}</div></td>
       <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : ''}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
     </tr>`;
     let actionRow = '';
     if(expanded && canAct && !isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="14">
+        <td colspan="13">
           <div class="note-box">
             ${getPvSkipReason_(v) ? `<div style="width:100%;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:8px;padding:10px 12px;margin-bottom:8px;"><b style="color:var(--stamp-red);">⚠ ชุดนี้ยังไม่ได้ผ่านผู้ตรวจสอบ Payment</b><br><span style="font-size:12.5px;">เนื่องจาก: ${getPvSkipReason_(v)}</span></div>` : ''}
             <div style="width:100%;margin-top:4px;">
@@ -4383,7 +4388,7 @@ function paymentApprovalHTML(){
     } else if(expanded && canAct && isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="14">
+        <td colspan="13">
           <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
             <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจากผู้อนุมัติ Payment:</strong> ${v.approverNote||'ไม่ได้ระบุเหตุผล'}
           </div>
@@ -4398,8 +4403,8 @@ function paymentApprovalHTML(){
   const pvGroups = groupForApproval_(list.map(v=>({ v, dueDate: infoOf[v.id].due })), state.pvGroupBy, w=>dtMs_(pvPrevStepDate_(w.v)), w=>w.dueDate, w=>{ const dd = infoOf[w.v.id].docs; return dd.length ? dd[0].docType : ''; });
   const pvGroupBar = groupBarHTML_(state.pvGroupBy, 'setPvGroupBy');
   const rows = list.length ? pvGroups.map(g=>
-    (g.label ? `<tr class="group-header"><td colspan="14">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '') + g.items.map(w=>renderPvRow(w.v)).join('')
-  ).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+    (g.label ? `<tr class="group-header"><td colspan="13">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '') + g.items.map(w=>renderPvRow(w.v)).join('')
+  ).join('') : `<tr class="empty-row"><td colspan="13">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
@@ -4443,7 +4448,7 @@ function paymentApprovalHTML(){
     ${pvGroupBar}
     <div class="table-scroll">
     <div class="table-scroll"><table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>ส่งมาเมื่อ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     </div>
@@ -4508,6 +4513,30 @@ async function processPaymentStage(id, decision){
   render();
 }
 // finance fixes the attachment link of a batch the Payment reviewer sent back, then resubmits to the reviewer
+// finance withdraws a batch that was sent back to them: every document returns to รอชำระเงิน so they can be re-grouped
+async function cancelRejectedPv(id){
+  const v = state.paymentVouchers.find(x=>x.id===id);
+  if(!v || v.status!=='ตีกลับแก้ไข(ผู้ตรวจสอบPayment)'){ showToast('ยกเลิกได้เฉพาะชุดที่ถูกตีกลับมาให้การเงิน'); return; }
+  const el = document.getElementById('pv-cancel-reason-'+id);
+  const reason = el ? el.value.trim() : '';
+  if(!reason){ showToast('กรุณาระบุสาเหตุที่ยกเลิกชุดรวบจ่าย'); return; }
+  if(!confirm('ยืนยันยกเลิกชุดรวบจ่าย Doc Payment '+(v.docPayment||'-')+' ใช่หรือไม่?\n\nเอกสารทุกใบในชุดจะกลับไปสถานะ "รอชำระเงิน" เพื่อรวบจ่ายใหม่\nสาเหตุ: '+reason)) return;
+  showBusyOverlay('กำลังยกเลิกชุดรวบจ่าย กรุณารอสักครู่...');
+  const docs = pvDocIds(v).map(i=>state.documents.find(x=>x.id===i)).filter(Boolean);
+  for(const d of docs){
+    const r = await apiCall('updateDocument', { id:d.id, status:'รอชำระเงิน', docPayment:'', docPaymentLink:'', paymentBy:'', paymentDate:'', timeApprove:'', modifiedBy: fullName(state.user), modifiedDate: nowStr() });
+    if(!r.success){ hideBusyOverlay(); showToast('ยกเลิกไม่สำเร็จที่เอกสาร '+displayId(d.id)+' ลองใหม่อีกครั้ง (เอกสารที่ทำไปแล้วจะกลับไปรอชำระเงิน)'); await refreshData(); render(); return; }
+  }
+  let history = [];
+  try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage:'การเงิน ยกเลิกชุดรวบจ่าย', actor: fullName(state.user), date: nowStr(), note: reason, action:'cancel' });
+  const res = await apiCall('updatePaymentVoucher', { id, status:'ยกเลิก', historyLog: JSON.stringify(history) });
+  hideBusyOverlay();
+  if(!res.success){ showToast('เอกสารกลับไปรอชำระเงินแล้ว แต่ปิดชุดไม่สำเร็จ กรุณาแจ้ง Admin'); await refreshData(); render(); return; }
+  showToast('ยกเลิกชุดรวบจ่ายแล้ว เอกสารกลับไปรอชำระเงิน — รวบจ่ายใหม่ได้เลย');
+  await refreshData();
+  render();
+}
 async function resubmitRejectedPv(id){
   const v = state.paymentVouchers.find(x=>x.id===id);
   if(!v) return;
@@ -5055,6 +5084,10 @@ function paymentHTML(){
           <div class="field" style="margin:0;flex:1;min-width:260px;"><label>ลิงก์ไฟล์ Doc Payment</label><input type="url" id="pv-relink-${v.id}" value="${curLink}" placeholder="https://drive.google.com/..."></div>
           ${curLink ? `<a class="icon-btn ql-payment" href="${curLink}" target="_blank" rel="noopener" title="เปิดลิงก์ปัจจุบัน">${PAYMENT_SLIP_SVG}</a>` : ''}
           <button class="btn btn-sm btn-approve" onclick="resubmitRejectedPv('${v.id}')">↻ บันทึกลิงก์ + ส่งตรวจสอบใหม่</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);">
+          <div class="field" style="margin:0;flex:1;min-width:260px;"><label>รวบผิดชุด? ยกเลิกชุดนี้เพื่อรวบจ่ายใหม่ — ระบุสาเหตุที่ยกเลิก (บังคับ)</label><input type="text" id="pv-cancel-reason-${v.id}" placeholder="เช่น เลือกเอกสารผิดใบ / เลือกบัญชีผิด"></div>
+          <button class="btn btn-sm btn-reject" onclick="cancelRejectedPv('${v.id}')">✕ ยกเลิกชุดรวบจ่าย (กลับไปรอชำระเงิน)</button>
         </div>
       </div>`;
     }).join('')}
@@ -5659,7 +5692,7 @@ async function confirmBatchPayment(){
   const pvCompanyCode = selectedDocs[0] ? selectedDocs[0].companyCode : state.paymentCompany;
   const netTotal = selectedDocs.reduce((sum,d)=>sum+(parseFloat(d.netAmount)||0),0);
   let pvFailed = false;
-  const existingPv = state.paymentVouchers.find(v=>String(v.docPayment)===String(docNum) && String(v.companyCode)===String(pvCompanyCode));
+  const existingPv = state.paymentVouchers.find(v=>v.status!=='ยกเลิก' && String(v.docPayment)===String(docNum) && String(v.companyCode)===String(pvCompanyCode));
   if(existingPv){
     if(existingPv.locked==='TRUE'){
       showToast('หมายเหตุ: Doc Payment นี้ปิดรอบ Payment ไปแล้ว เอกสารที่เพิ่มใหม่จะไม่ถูกรวมในชุดปิดรอบเดิม กรุณาแจ้ง Admin หากต้องการปลดล็อกเพื่อรวมเพิ่ม');
@@ -5858,6 +5891,11 @@ async function saveBatchEdit(e, oldDocPayment){
     };
     const res = await apiCall('updateDocument', patch);
     if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่เอกสาร '+displayId(doc.id)+' ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  }
+  // keep the Payment close-out batch's own Doc Payment number in step with the documents
+  if(newDocPayment !== String(oldDocPayment)){
+    const pvs = state.paymentVouchers.filter(v=>v.status!=='ยกเลิก' && String(v.docPayment)===String(oldDocPayment) && docs.some(d=>String(d.companyCode)===String(v.companyCode)));
+    for(const pv of pvs){ await apiCall('updatePaymentVoucher', { id: pv.id, docPayment: newDocPayment }); }
   }
   hideBusyOverlay();
   showToast('แก้ไข Doc Payment เรียบร้อย');
@@ -6243,8 +6281,9 @@ function adminSettingsHTML(){
     <tr>
       <td class="mono">${c.code}</td>
       <td>${c.name}</td>
+      <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${c.trackingEnabled!==false?'checked':''} onchange="toggleCompanyTracking('${c.code}', this.checked)"></label></td>
       <td><button class="btn btn-sm btn-reject" onclick="deleteCompany('${c.code}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="3">ยังไม่มีรหัสบริษัท</td></tr>`;
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="4">ยังไม่มีรหัสบริษัท</td></tr>`;
 
   const typeRows = state.docTypes.map(t=>`
     <tr>
@@ -6303,7 +6342,7 @@ function adminSettingsHTML(){
       <button class="btn btn-primary" type="submit">เพิ่มรหัสบริษัท</button>
     </form>
     <table>
-      <thead><tr><th>รหัส</th><th>ชื่อบริษัท</th><th></th></tr></thead>
+      <thead><tr><th>รหัส</th><th>ชื่อบริษัท</th><th>ใช้ Tracking Invoice</th><th></th></tr></thead>
       <tbody>${companyRows}</tbody>
     </table>
   </div>
@@ -6903,6 +6942,13 @@ async function addCompany(e){
   if(!res.success){ showToast(res.error==='duplicate' ? 'มีรหัสบริษัทนี้อยู่แล้ว' : 'เพิ่มรหัสบริษัทไม่สำเร็จ'); return; }
   showToast('เพิ่มรหัสบริษัท '+code+' เรียบร้อย');
   e.target.reset();
+  await refreshData();
+  render();
+}
+async function toggleCompanyTracking(code, checked){
+  const res = await apiCall('updateCompany', { code, trackingEnabled: checked });
+  if(!res.success){ showToast('อัปเดตไม่สำเร็จ ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  showToast(checked ? 'เปิดใช้ Tracking Invoice ให้บริษัท '+code+' แล้ว' : 'ปิด Tracking Invoice ของบริษัท '+code+' แล้ว');
   await refreshData();
   render();
 }
