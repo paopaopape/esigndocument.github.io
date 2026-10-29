@@ -680,6 +680,11 @@ function canEditDocuments(){ return ['นักบัญชี','ผู้ตร
 function canOwnerEditDoc(d){
   return state.user.role === 'User' && d.createdBy === fullName(state.user) && d.status === 'รอนักบัญชี';
 }
+// a document sent back for correction can be cancelled by whoever keyed it, or by a reviewer / Admin
+function canCancelRejectedDoc_(d){
+  if(!String(d.status||'').startsWith('ตีกลับแก้ไข')) return false;
+  return d.createdBy === fullName(state.user) || ['ผู้ตรวจสอบ','Admin'].includes(state.user.role);
+}
 function canEditVoucherReport(){ return state.user.role === 'ผู้ตรวจสอบ' || isAdmin(); }
 function companySelectOptions(selected){
   // only the companies this user is allowed to see (plus the doc's current company when editing)
@@ -2304,7 +2309,7 @@ function dashDocRowHTML(d){
     </tr>`;
   }
   const pencil = (canEditDocuments() || canOwnerEditDoc(d)) ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openDashDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
-  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d))
+  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d) || canCancelRejectedDoc_(d))
     ? `<button class="icon-btn" style="color:var(--ink-soft);border-color:var(--ink-soft);" title="ยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด)" onclick="cancelDoc('${d.id}')">✕</button>` : '';
   const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
   return `
@@ -4667,8 +4672,8 @@ async function forwardToSubmitter(id){
 async function cancelDoc(id){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
-  if(!canEditDocuments() && !canOwnerEditDoc(doc)){ showToast('คุณไม่มีสิทธิ์ยกเลิกเอกสารนี้'); return; }
-  if(!canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  if(!canEditDocuments() && !canOwnerEditDoc(doc) && !canCancelRejectedDoc_(doc)){ showToast('คุณไม่มีสิทธิ์ยกเลิกเอกสารนี้'); return; }
+  if(!canCancelRejectedDoc_(doc) && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
   const confirmed = confirm('ยืนยันยกเลิกเอกสาร '+displayId(id)+' ใช่หรือไม่?\nเอกสารจะถูกปิดถาวร ไม่สามารถส่งต่อหรือแก้ไขต่อได้อีก (เหมาะกับเอกสารที่คีย์ซ้ำหรือผิดพลาด)');
   if(!confirmed) return;
   const noteEl = document.getElementById('note-'+id);
