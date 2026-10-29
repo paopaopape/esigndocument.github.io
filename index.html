@@ -623,7 +623,13 @@ function accountingPendingCountForUser(){
   });
   return count;
 }
-// documents of via-Payment types waiting on this user (shown under อนุมัติ Payment → เอกสารประเภท Payment)
+// documents of via-Payment types waiting on this user (shown under อนุมัติ Payment → Payment อื่นๆ)
+// pending count for ONE sub-tab under อนุมัติ Payment (badge on the sub-tab)
+function pvTabCountForUser_(t){
+  if(t==='pvDocs') return viaPendingCountForUser();
+  const status = {pvReviewer:'รอผู้ตรวจสอบPayment', pvApprover:'รอผู้อนุมัติPayment'}[t];
+  return status ? state.paymentVouchers.filter(v=>v.status===status && pvCanActOnStage(v)).length : 0;
+}
 function viaPendingCountForUser(){
   if(!state.user) return 0;
   let count = 0;
@@ -1847,8 +1853,8 @@ function sidebarHTML(){
         subs += `<div class="nav-item ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>`;
       }
       if(state.approvalGroup==='payment' && groups.includes('payment')){
-        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)', pvDocs:'เอกสารประเภท Payment'};
-        subs += allowedPvTabs().map(t=>`<div class="nav-item ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')" style="padding-left:28px;">${pvLabels[t]}</div>`).join('');
+        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)', pvDocs:'Payment อื่นๆ'};
+        subs += allowedPvTabs().map(t=>`<div class="nav-item ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')" style="padding-left:28px;">${pvLabels[t]}${pendingBadgeHTML(pvTabCountForUser_(t))}</div>`).join('');
       } else {
         const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
         subs += allowedApprovalTabs().map(t=>`<div class="nav-item ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')" style="padding-left:28px;">${labels[t]}</div>`).join('');
@@ -3730,8 +3736,10 @@ function accountingApprovalHTML(mode){
     list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
   }
   if(state.approvalCompany!=='all') list = list.filter(d=>d.companyCode===state.approvalCompany);
-  // via-Payment types: accountant stage stays here, the later stages move to อนุมัติ Payment → เอกสารประเภท Payment
+  // via-Payment types: accountant stage stays here, the later stages move to อนุมัติ Payment → Payment อื่นๆ
   if(state.approvalTab!=='accountant') list = list.filter(d=> via ? isViaPaymentDoc_(d) : !isViaPaymentDoc_(d));
+  // only what is assigned to this user — items mapped to someone else are hidden (Admin sees everything)
+  if(!isAdmin()) list = list.filter(d=>canActOnStage(d));
 
   const s = state.approvalSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
@@ -4033,7 +4041,7 @@ function accountingApprovalHTML(mode){
   <div class="tabs">${tabs}</div>
   ${companyHeader}
   <div class="card">
-    <div class="eyebrow">${via ? 'เอกสารประเภท Payment · ' : 'Stage · '}${meta.label}</div>
+    <div class="eyebrow">${via ? 'Payment อื่นๆ · ' : 'Stage · '}${meta.label}</div>
     <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
     <div style="display:${state.showHelp?'block':'none'};">
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" ในตารางนี้คือเอกสารที่ถูกตีกลับโดยขั้นตอนถัดไป ให้แก้ไขแล้วกด Resubmit เพื่อส่งต่ออนุมัติใหม่ได้ทันที ไม่ต้องวางบิลใหม่</div>' : ''}
@@ -4240,11 +4248,11 @@ function paymentApprovalHTML(){
   const tabMeta = {
     pvReviewer: {status:'รอผู้ตรวจสอบPayment', label:'ผู้ตรวจสอบ (Payment)'},
     pvApprover: {status:'รอผู้อนุมัติPayment', label:'ผู้อนุมัติ (Payment)'},
-    pvDocs: {status:'', label:'เอกสารประเภท Payment'},
+    pvDocs: {status:'', label:'Payment อื่นๆ'},
   };
   const allowed = allowedPvTabs();
   if(!allowed.length) return `<div class="card"><div class="helper">คุณไม่มีสิทธิ์เข้าถึงขั้นตอนนี้</div></div>`;
-  const tabs = allowed.map(t=>`<div class="tab ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')">${tabMeta[t].label}</div>`).join('');
+  const tabs = allowed.map(t=>`<div class="tab ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')">${tabMeta[t].label}${pendingBadgeHTML(pvTabCountForUser_(t))}</div>`).join('');
   if(state.pvTab==='pvDocs' && allowed.includes('pvDocs')) return `<div class="tabs">${tabs}</div>` + accountingApprovalHTML('via');
   const meta = tabMeta[state.pvTab] || tabMeta[allowed[0]];
   const rejectBackStatus = PV_REJECT_HANDLED_BY_TAB[state.pvTab];
@@ -4264,6 +4272,7 @@ function paymentApprovalHTML(){
     list = list.filter(v=>state.user.companyCodes.includes(v.companyCode));
   }
   if(state.pvCompany!=='all') list = list.filter(v=>v.companyCode===state.pvCompany);
+  if(!isAdmin()) list = list.filter(v=>pvCanActOnStage(v)); // hide batches assigned to someone else
 
   const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const ps = state.pvSearch;
