@@ -312,7 +312,7 @@ let state = {
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
   paymentCompany:'all',
-  vendorAdminCo:'all', paymentAccounts:[], paymentAccountNo:'', paymentSelected:[], paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
+  vendorAdminCo:'all', paymentAccounts:[], paymentAccountNo:'', paymentSelected:[], receiveSelected:[], reportReceiveCompany:'all', reportReceiveSearch:{rv:'',by:'',from:'',to:''}, paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
   voucherReportCompany:'all', voucherReportSelected:[], voucherReportTitle:'', voucherEditRow:null,
   voucherReportSearch:{type:'', name:'', due:'', createdBy:''},
   pendingSapImport:null,
@@ -775,7 +775,7 @@ async function refreshData(){
       return m;
     });
     state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code), trackingEnabled: !(c.trackingEnabled===false || String(c.trackingEnabled).toUpperCase()==='FALSE') }));
-    state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true') }));
+    state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true'), receivable: (t.receivable===true||t.receivable==='TRUE'||t.receivable==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
     state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
@@ -791,6 +791,7 @@ async function refreshData(){
       if(d.docPayment===undefined) d.docPayment='';
       if(d.skipApprover===undefined) d.skipApprover='';
       if(d.skipFinance===undefined) d.skipFinance='';
+      if(isReceivableType_(d.docType)){ d.skipApprover='TRUE'; d.skipFinance='TRUE'; } // AR types: reviewer signs as approver too, then wait for money (รอรับเงิน)
       if(isViaPaymentType_(d.docType)) d.skipFinance='TRUE'; // via-Payment types always Complete after approval, never go to finance
       if(d.payType===undefined || d.payType===null) d.payType=''; else d.payType=String(d.payType);
       if(d.cancelledBy===undefined) d.cancelledBy='';
@@ -1883,26 +1884,12 @@ function sidebarHTML(){
   if(canSeeApproval()){
     const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
     nav.push(`<div class="nav-item ${state.view==='approval'?'active':''}" onclick="goView('approval')"><span class="dot"></span>การอนุมัติเอกสาร${pendingBadgeHTML(approvalTotalPending)}</div>`);
-    if(state.view==='approval'){
-      const groups = allowedApprovalGroups();
-      let subs = '';
-      if(groups.length > 1){
-        subs += `<div class="nav-item ${state.approvalGroup==='accounting'?'active':''}" onclick="setApprovalGroup('accounting')">อนุมัติบันทึกบัญชี${pendingBadgeHTML(accountingPendingCountForUser())}</div>`;
-        subs += `<div class="nav-item ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>`;
-      }
-      if(state.approvalGroup==='payment' && groups.includes('payment')){
-        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)', pvDocs:'Payment อื่นๆ'};
-        subs += allowedPvTabs().map(t=>`<div class="nav-item ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')" style="padding-left:28px;">${pvLabels[t]}${pendingBadgeHTML(pvTabCountForUser_(t))}</div>`).join('');
-      } else {
-        const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
-        subs += allowedApprovalTabs().map(t=>`<div class="nav-item ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')" style="padding-left:28px;">${labels[t]}</div>`).join('');
-      }
-      nav.push(`<div class="nav-sub">${subs}</div>`);
-    }
+    // sub-tabs (บันทึกบัญชี / Payment / ผู้ตรวจสอบ …) live in the page header — the sidebar only shows one entry with the total pending badge
   }
   if(canSeeVoucherReport()) nav.push(navItem('report-voucher','Report ใบสำคัญจ่าย'));
   if(canSeePaymentVoucherMenu()) nav.push(navItem('payment','Payment Voucher'));
   if(canSeePayment()) nav.push(navItem('report-payment','Report Payment'));
+  if(canSeePayment()) nav.push(navItem('report-receive','Report Receive'));
   if(isAdmin()){
     nav.push(`<div class="nav-item ${state.view.startsWith('admin')?'active':''}" onclick="goView('admin-members')"><span class="dot"></span>Admin</div>`);
     if(state.view.startsWith('admin')){
@@ -1965,6 +1952,7 @@ function topbarHTML(){
     payment:['Payment Voucher','บันทึกการชำระเงินสำหรับเอกสารที่อนุมัติแล้ว'],
     'report-voucher':['Report ใบสำคัญจ่าย','เลือกเอกสารหลายรายการ ออกเป็นใบสรุป 1 ใบ สำหรับนักบัญชี/ผู้ตรวจสอบ'],
     'report-payment':['Report Payment','รายงานประวัติการรวบจ่ายเงินทั้งหมด'],
+    'report-receive':['Report Receive','รายงานประวัติการรับเงิน (Receive Voucher)'],
     'admin-members':['Admin · เพิ่ม Member','ลงทะเบียนผู้ใช้งานเข้าสู่ระบบ'],
     'admin-permissions':['Admin · กำหนดสิทธิ์การใช้งาน','ผูก Role และรหัสบริษัทให้สมาชิก'],
     'admin-settings':['Admin · ตั้งค่าทั่วไป','จัดการรหัสบริษัทและประเภทเอกสาร'],
@@ -1997,6 +1985,7 @@ function viewHTML(){
     case 'payment': return paymentHTML();
     case 'report-voucher': return voucherReportHTML();
     case 'report-payment': return reportPaymentHTML();
+    case 'report-receive': return reportReceiveHTML();
     case 'admin-members': return adminMembersHTML();
     case 'admin-permissions': return adminPermissionsHTML();
     case 'admin-settings': return adminSettingsHTML();
@@ -2044,7 +2033,7 @@ function trailHTML(doc){
     chain.push({status:'รอผู้อนุมัติ', label:'ผู้อนุมัติ'});
     if(has2 || doc.status==='รอผู้อนุมัติ2') chain.push({status:'รอผู้อนุมัติ2', label:'ผู้อนุมัติ (ลำดับ 2/3)'});
   }
-  chain.push({status:'รอชำระเงิน', label:'การเงิน'});
+  if(isReceivableDoc_(doc)) chain.push({status:'รอรับเงิน', label:'รับเงิน (การเงิน)'}); else chain.push({status:'รอชำระเงิน', label:'การเงิน'});
   const idx = chain.findIndex(s=>s.status===doc.status);
   const dots = chain.map((s,i)=>{
     const cls = i<idx ? 'done' : (i===idx ? 'current' : '');
@@ -2125,6 +2114,10 @@ function groupForApproval_(items, mode, msOf, dueOf, typeOf){
 function setApprovalGroupBy(k){ state.approvalGroupBy=k; state.expandedRow=null; render(); }
 function setPvGroupBy(k){ state.pvGroupBy=k; state.expandedRow=null; render(); }
 // document types whose documents are approved on the "อนุมัติ Payment" side (same mapped chain, Complete at the end, no finance step)
+function isReceivableType_(key){ const t = state.docTypes.find(x=>x.key===key); return !!(t && t.receivable); }
+function isReceivableDoc_(d){ return isReceivableType_(d.docType); }
+// status a document moves to once ALL approval sign-offs are done
+function afterApprovalStatus_(doc, skipFinance){ return isReceivableDoc_(doc) ? 'รอรับเงิน' : (skipFinance ? 'Complete' : 'รอชำระเงิน'); }
 function isViaPaymentType_(key){ const t = state.docTypes.find(x=>x.key===key); return !!(t && t.viaPayment); }
 function isViaPaymentDoc_(d){ return isViaPaymentType_(d.docType); }
 function viaTypesExist_(){ return state.docTypes.some(t=>t.viaPayment); }
@@ -2290,6 +2283,7 @@ function dashboardHTML(){
     ${cardDef(count('รอผู้อนุมัติ'), 'รอผู้อนุมัติ', 'รอผู้อนุมัติ', 's-approver')}
     ${count('รอผู้อนุมัติ2') ? cardDef(count('รอผู้อนุมัติ2'), 'รอผู้อนุมัติ2', 'ผู้อนุมัติ (ลำดับ 2/3)', 's-approver') : ''}
     ${cardDef(count('รอชำระเงิน'), 'รอชำระเงิน', 'รอชำระเงิน', 's-finance')}
+    ${cardDef(count('รอรับเงิน'), 'รอรับเงิน', 'รอรับเงิน', 's-finance')}
     ${cardDef(completeCount, 'Complete', 'Complete', 's-complete')}
     ${cardDef(rejectCount, '__REJECTED__', 'ตีกลับแก้ไข', 's-reject')}
     ${cardDef(cancelCount, 'ยกเลิก', 'ยกเลิก', 's-cancel')}
@@ -3961,10 +3955,10 @@ function accountingApprovalHTML(mode){
             <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:8px;">ตัวเลือกเพิ่มเติม (ไม่บังคับ)</div>
             <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;">
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-                <input type="checkbox" id="skipApprover-${d.id}" ${(d.skipApprover==='TRUE'||d.skipApprover===true)?'checked':''}> เลือกผู้อนุมัติ = หัวหน้าแผนกบัญชี (ข้ามขั้นผู้อนุมัติ)
+                <input type="checkbox" id="skipApprover-${d.id}" ${(d.skipApprover==='TRUE'||d.skipApprover===true||isReceivableDoc_(d))?'checked':''} ${isReceivableDoc_(d)?'disabled title="ประเภทนี้ (AR) ผู้ตรวจสอบเซ็นเป็นผู้อนุมัติด้วยเสมอ"':''}> เลือกผู้อนุมัติ = หัวหน้าแผนกบัญชี (ข้ามขั้นผู้อนุมัติ)
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-                <input type="checkbox" id="skipFinance-${d.id}" ${(d.skipFinance==='TRUE'||d.skipFinance===true||isViaPaymentDoc_(d))?'checked':''} ${isViaPaymentDoc_(d)?'disabled title="ประเภทนี้อนุมัติผ่านแท็บ Payment — Complete ทันที ไม่ส่งการเงิน"':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)
+                <input type="checkbox" id="skipFinance-${d.id}" ${(d.skipFinance==='TRUE'||d.skipFinance===true||isViaPaymentDoc_(d)||isReceivableDoc_(d))?'checked':''} ${(isViaPaymentDoc_(d)||isReceivableDoc_(d))?'disabled title="ประเภทนี้อนุมัติผ่านแท็บ Payment — Complete ทันที ไม่ส่งการเงิน"':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)
               </label>
             </div>
           </div>` : '';
@@ -4141,7 +4135,7 @@ function openApprovalReport(id){
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   let history = [];
   try{ history = d.historyLog ? JSON.parse(d.historyLog) : []; }catch(e){ history = []; }
-  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)' };
+  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)', receive:'💰 ยืนยันรับเงิน' };
   const mappedSlots_ = approver2Slots(d);
   const slotName_ = n => { const m = state.members.find(x=>x.id===(mappedSlots_.find(z=>z.slot===n)||{}).id); return m ? fullName(m) : ''; };
   // signature block that also works when the person hasn't signed yet: blank line + the mapped name in grey
@@ -4621,7 +4615,7 @@ async function processStage(id, decision){
   const vendorNameEl = document.getElementById('vendorName-'+id);
   const skipApproverEl = document.getElementById('skipApprover-'+id);
   const skipFinanceEl = document.getElementById('skipFinance-'+id);
-  const skipApprover = skipApproverEl ? skipApproverEl.checked : (doc.skipApprover==='TRUE'||doc.skipApprover===true);
+  const skipApprover = isReceivableDoc_(doc) || (skipApproverEl ? skipApproverEl.checked : (doc.skipApprover==='TRUE'||doc.skipApprover===true));
   const skipFinance = isViaPaymentDoc_(doc) || (skipFinanceEl ? skipFinanceEl.checked : (doc.skipFinance==='TRUE'||doc.skipFinance===true));
   const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
 
@@ -4692,18 +4686,18 @@ async function processStage(id, decision){
     // skipApprover means no separate approver sign-off is needed at all for this document,
     // so it bypasses the ผู้อนุมัติ2/3 tier(s) too, same as it bypasses ผู้อนุมัติ(1)
     if(skipApprover){
-      patch.status = skipFinance ? 'Complete' : 'รอชำระเงิน';
+      patch.status = afterApprovalStatus_(doc, skipFinance);
     } else {
       // always go to ผู้อนุมัติ (1) first — the ผู้อนุมัติ 2/3 tier only comes AFTER ผู้อนุมัติ (1) signs
       patch.status = 'รอผู้อนุมัติ';
     }
   } else if(doc.status==='รอผู้อนุมัติ'){
-    patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : (skipFinance ? 'Complete' : 'รอชำระเงิน');
+    patch.status = approver2Slots(doc).length ? 'รอผู้อนุมัติ2' : afterApprovalStatus_(doc, skipFinance);
   } else if(doc.status==='รอผู้อนุมัติ2'){
     // move on only once every configured slot (approverId2 AND approverId3, when both are set)
     // has signed off — my2Slot just got stamped above, so treat it as already-signed here
     const stillPending = approver2Slots(doc).some(s => s.id!==my2Slot.id && !s.signedBy);
-    patch.status = stillPending ? 'รอผู้อนุมัติ2' : (skipFinance ? 'Complete' : 'รอชำระเงิน');
+    patch.status = stillPending ? 'รอผู้อนุมัติ2' : afterApprovalStatus_(doc, skipFinance);
   }
 
   const stageLabel = {'รอนักบัญชี':'นักบัญชี','รอผู้ตรวจสอบ':'ผู้ตรวจสอบ','รอผู้อนุมัติ':'ผู้อนุมัติ'}[doc.status]
@@ -4897,8 +4891,291 @@ async function cancelDoc(id){
   render();
 }
 
+/* ============================= AR: รอรับเงิน ============================= */
+function receivePendingDocs_(){
+  let list = state.documents.filter(d=>d.status==='รอรับเงิน');
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length) list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  if(state.paymentCompany!=='all') list = list.filter(d=>d.companyCode===state.paymentCompany);
+  return list;
+}
+function canConfirmReceive_(){ return ['เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน','ผู้อนุมัติการเงิน','Admin'].includes(state.user.role); }
+function setPaymentTab(t){ state.paymentTab = t; render(); }
+function payTabsHTML_(){
+  const n = receivePendingDocs_().length;
+  const cur = state.paymentTab==='receive' ? 'receive' : 'pay';
+  return `<div class="tabs">
+    <div class="tab ${cur==='pay'?'active':''}" onclick="setPaymentTab('pay')">รอชำระเงิน</div>
+    <div class="tab ${cur==='receive'?'active':''}" onclick="setPaymentTab('receive')">เอกสารรอรับเงิน${pendingBadgeHTML(n)}</div>
+  </div>`;
+}
+// one selectable "unit" = a whole single-line document, or ONE sub-line of a multi-line document
+function receiveUnits_(d){
+  const lines = parseSapLines(d);
+  const num = v => parseFloat(v)||0;
+  if(lines.length>1) return lines.filter(l=>!l.rvId).map(l=>({key:String(l.subId), docId:d.id, line:l, net:num(l.net)}));
+  return [{key:String(d.id), docId:d.id, line:null, net:num(d.netAmount)}];
+}
+function receiveAllKeys_(){ return receivePendingDocs_().flatMap(d=>receiveUnits_(d).map(u=>u.key)); }
+function receiveHTML(){
+  const companyOpts = userCompanyOptions();
+  const companyHeader = `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select id="payment-company-select" onchange="setPaymentCompany(this.value)">
+      <option value="all" ${state.paymentCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.paymentCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+  </div>`;
+  const noCompanyPicked = state.paymentCompany === 'all';
+  if(noCompanyPicked) state.receiveSelected = [];
+  const list = receivePendingDocs_().sort((a,b)=>dtMs_(a.approverDate||a.reviewerDate)-dtMs_(b.approverDate||b.reviewerDate));
+  const money = v => (parseFloat(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const canAct = canConfirmReceive_();
+  const allKeys = receiveAllKeys_();
+  state.receiveSelected = state.receiveSelected.filter(k=>allKeys.includes(k));
+  const sel = state.receiveSelected;
+  const selUnits = list.flatMap(d=>receiveUnits_(d).filter(u=>sel.includes(u.key)));
+  const selSum = selUnits.reduce((t,u)=>t+u.net,0);
+  const allChecked = allKeys.length>0 && allKeys.every(k=>sel.includes(k));
+  const pendingTotal = list.reduce((t,d)=>t+receiveUnits_(d).reduce((x,u)=>x+u.net,0),0);
+  const cb = (key,disabled) => canAct ? `<input type="checkbox" ${sel.includes(key)?'checked':''} ${noCompanyPicked||disabled?'disabled':''} onchange="toggleReceiveSelect('${key}')">` : '';
+  const rows = list.length ? list.map(d=>{
+    const units = receiveUnits_(d);
+    const multi = parseSapLines(d).length>1;
+    const allOfDoc = units.length>0 && units.every(u=>sel.includes(u.key));
+    const someOfDoc = units.some(u=>sel.includes(u.key));
+    const docCb = canAct ? `<input type="checkbox" ${allOfDoc?'checked':''} ${noCompanyPicked?'disabled':''} onchange="toggleReceiveDoc('${d.id}')">` : '';
+    const doneCnt = multi ? parseSapLines(d).filter(l=>l.rvId).length : 0;
+    const totalCnt = multi ? parseSapLines(d).length : 0;
+    const head = `
+    <tr${multi?' style="background:var(--paper);"':''}>
+      <td style="text-align:center;">${multi?docCb:cb(d.id)}</td>
+      <td class="mono">${displayId(d.id)}</td>
+      <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
+      <td>${d.docName||'-'}${multi?`<div style="font-size:11px;color:var(--ink-soft);">รับแล้ว ${doneCnt}/${totalCnt} รายการ${someOfDoc&&!allOfDoc?' · เลือกบางรายการ':''}</div>`:''}</td>
+      <td class="sap-cell">${multi?'':(d.docSAP||'-')}</td>
+      <td>${multi?'':(d.vendorName||'-')}</td>
+      <td class="link-cell">${d.linkFile?`<a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a>`:'-'}</td>
+      <td>${d.reviewerBy||'-'}</td>
+      <td>${d.dueDate?fmtDate(d.dueDate):'-'}</td>
+      <td style="white-space:nowrap;">${d.approverDate||d.reviewerDate?fmtDateTime(d.approverDate||d.reviewerDate):'-'}</td>
+      <td style="text-align:right;">${multi?'':`<b>${money(d.netAmount)}</b>`}</td>
+    </tr>`;
+    if(!multi) return head;
+    const sub = units.map(u=>`
+    <tr style="font-size:12px;">
+      <td style="text-align:center;">${cb(u.key)}</td>
+      <td class="mono" style="color:var(--blue);">↳ ${u.key}</td>
+      <td style="color:var(--ink-soft);">SAP Line</td>
+      <td></td>
+      <td class="sap-cell">${u.line.fiDoc||'-'}</td>
+      <td>${u.line.vendorName||'-'}</td>
+      <td></td><td></td><td></td><td></td>
+      <td style="text-align:right;"><b>${money(u.line.net)}</b></td>
+    </tr>`).join('');
+    return head + sub;
+  }).join('') : `<tr class="empty-row"><td colspan="11">ไม่มีเอกสารรอรับเงิน</td></tr>`;
+  return `
+  ${companyHeader}
+  ${payTabsHTML_()}
+  <div class="card">
+    <div class="eyebrow">Receivable Stage</div>
+    <h3 style="margin-top:4px;">เอกสารรอรับเงิน (${list.length})</h3>
+    <div class="helper">เอกสารกลุ่มลูกหนี้การค้า (AR) ที่ผู้ตรวจสอบอนุมัติแล้ว — ติ๊กเลือกรายการที่ได้รับเงินแล้ว (เอกสารที่แตก Sub ID ติ๊กรับเป็นบางรายการได้ เอกสารจะ Complete เมื่อรับครบทุก Sub ID) แล้วกด "ยืนยันรับเงิน" · ยอดค้างรับ ${money(pendingTotal)} บาท · <a href="#" onclick="goView('report-receive');return false;" style="color:var(--blue);">ดูรายงานที่ Report Receive →</a></div>
+    ${noCompanyPicked && list.length && canAct ? '<div class="helper" style="color:var(--stamp-red);">กรุณาเลือกบริษัทก่อน แล้วจึงติ๊กเลือกเพื่อยืนยันรับเงิน (1 RV ต่อ 1 บริษัท)</div>' : ''}
+    ${canAct ? `<div class="batch-bar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 12px;padding:10px 12px;background:var(--paper);border-radius:8px;">
+      <span style="font-size:13px;">เลือกแล้ว <b>${selUnits.length}</b> รายการ · ยอดรวม <b>${money(selSum)}</b> บาท</span>
+      <button class="btn btn-sm btn-approve" ${selUnits.length?'':'disabled'} onclick="confirmReceiveBatch()">✓ ยืนยันรับเงิน</button>
+    </div>` : '<div class="helper">เฉพาะเจ้าหน้าที่การเงินที่ยืนยันรับเงินได้</div>'}
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th style="width:32px;"><input type="checkbox" ${allChecked?'checked':''} ${noCompanyPicked||!canAct?'disabled':''} onchange="toggleSelectAllReceive(this.checked)" title="เลือกทั้งหมด"></th><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor Name</th><th>ไฟล์</th><th>ผู้ตรวจสอบ</th><th>Due</th><th>ส่งมาเมื่อ</th><th style="text-align:right;">ยอดสุทธิ</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function toggleReceiveSelect(key){
+  const i = state.receiveSelected.indexOf(key);
+  if(i>=0) state.receiveSelected.splice(i,1); else state.receiveSelected.push(key);
+  render();
+}
+function toggleReceiveDoc(docId){
+  const d = state.documents.find(x=>x.id===docId); if(!d) return;
+  const keys = receiveUnits_(d).map(u=>u.key);
+  const all = keys.every(k=>state.receiveSelected.includes(k));
+  state.receiveSelected = state.receiveSelected.filter(k=>!keys.includes(k)).concat(all ? [] : keys);
+  render();
+}
+function toggleSelectAllReceive(checked){
+  state.receiveSelected = checked ? receiveAllKeys_() : [];
+  render();
+}
+async function confirmReceiveBatch(){
+  if(!canConfirmReceive_()) return;
+  if(state.paymentCompany==='all'){ showToast('กรุณาเลือกบริษัทก่อน'); return; }
+  const docs = receivePendingDocs_();
+  const items = [], logs = {};
+  let n = 0, sum = 0;
+  const me = fullName(state.user), now = nowStr();
+  docs.forEach(d=>{
+    const picked = receiveUnits_(d).filter(u=>state.receiveSelected.includes(u.key));
+    if(!picked.length) return;
+    const multi = parseSapLines(d).length>1;
+    items.push({ id:d.id, subIds: multi ? picked.map(u=>u.key) : [] });
+    n += picked.length; sum += picked.reduce((t,u)=>t+u.net,0);
+    logs[d.id] = appendHistoryLog(d, { stage:'การเงิน (รับเงิน)', actor: me, date: now, note: multi ? 'รับเงิน: '+picked.map(u=>u.key).join(', ') : '', action:'receive' });
+  });
+  if(!items.length){ showToast('กรุณาติ๊กเลือกรายการที่ได้รับเงินแล้ว'); return; }
+  const sumTxt = sum.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(!confirm('ยืนยันว่าได้รับเงินแล้ว '+n+' รายการ ยอดรวม '+sumTxt+' บาท ใช่หรือไม่?\n\nระบบจะออกเลข RV (Receive Voucher) 1 เลข ให้ทุกรายการที่เลือก (เอกสารที่รับครบทุก Sub ID จะเป็น Complete)')) return;
+  showBusyOverlay('กำลังบันทึกการรับเงิน กรุณารอสักครู่...');
+  const res = await apiCall('confirmReceive', { items, companyCode: docs.find(d=>d.id===items[0].id).companyCode, receivedBy: me, receivedDate: now, modifiedBy: me, modifiedDate: now, historyLogs: logs });
+  hideBusyOverlay();
+  if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'+(res.error?' ('+res.error+')':'')); return; }
+  state.receiveSelected = [];
+  showToast('ยืนยันรับเงิน '+n+' รายการเรียบร้อย'+(res.receiveVoucherId?' — เลขที่ '+res.receiveVoucherId:''));
+  await refreshData();
+  render();
+}
+
+/* ---- Report Receive: every Receive Voucher (RV) ever confirmed ---- */
+function receiveReportEntries_(){
+  const num = v => parseFloat(v)||0;
+  let docs = state.documents.slice();
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length) docs = docs.filter(d=>state.user.companyCodes.includes(d.companyCode));
+  if(state.reportReceiveCompany!=='all') docs = docs.filter(d=>d.companyCode===state.reportReceiveCompany);
+  const out = [];
+  docs.forEach(d=>{
+    const lines = parseSapLines(d);
+    if(lines.length>1){
+      lines.forEach(l=>{ if(l.rvId) out.push({rv:l.rvId, d, id:String(l.subId), sap:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net), by:l.receivedBy||d.receivedBy, date:l.receivedDate||d.receivedDate}); });
+    } else if(d.receiveVoucherId){
+      out.push({rv:String(d.receiveVoucherId).split(',').pop().trim(), d, id:displayId(d.id), sap:d.docSAP, vendor:d.vendor, vendorName:d.vendorName, vat:num(d.vatAmount), wht:num(d.whtAmount), base:num(d.baseAmount), net:num(d.netAmount), by:d.receivedBy, date:d.receivedDate});
+    }
+  });
+  const s = state.reportReceiveSearch;
+  let r = out;
+  if(s.rv && s.rv.trim()) r = r.filter(e=>String(e.rv).toLowerCase().includes(s.rv.trim().toLowerCase()));
+  if(s.by && s.by.trim()) r = r.filter(e=>String(e.by||'').toLowerCase().includes(s.by.trim().toLowerCase()));
+  if(s.from){ const f = new Date(s.from).getTime(); r = r.filter(e=>dtMs_(e.date)>=f); }
+  if(s.to){ const t = new Date(s.to).getTime()+86399999; r = r.filter(e=>dtMs_(e.date)<=t); }
+  return r;
+}
+function receiveBatches_(entries){
+  const b = {};
+  entries.forEach(e=>{
+    if(!b[e.rv]) b[e.rv] = { rv:e.rv, items:[], vat:0, wht:0, base:0, net:0, by:e.by, date:e.date, company:e.d.companyCode, dues:new Set() };
+    const x = b[e.rv]; x.items.push(e); x.vat+=e.vat; x.wht+=e.wht; x.base+=e.base; x.net+=e.net;
+    if(e.d.dueDate) x.dues.add(e.d.dueDate);
+  });
+  return Object.values(b).sort((a,c)=>(dtMs_(c.date)>=9e15?-1:dtMs_(c.date))-(dtMs_(a.date)>=9e15?-1:dtMs_(a.date)) || String(c.rv).localeCompare(String(a.rv)));
+}
+function setReportReceiveCompany(v){ state.reportReceiveCompany = v; render(); }
+function setReportReceiveSearch(f,v){ state.reportReceiveSearch[f] = v; render(); }
+function clearReportReceiveSearch(){ state.reportReceiveSearch = {rv:'', by:'', from:'', to:''}; render(); }
+function reportReceiveHTML(){
+  if(!state.reportReceiveSearch) state.reportReceiveSearch = {rv:'', by:'', from:'', to:''};
+  if(!state.reportReceiveCompany) state.reportReceiveCompany = 'all';
+  const companyOpts = userCompanyOptions();
+  const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const entries = receiveReportEntries_();
+  const batches = receiveBatches_(entries);
+  const s = state.reportReceiveSearch;
+  const dueFmt = v => { const t = dtMs_(v); return t>=9e15 ? String(v) : fmtDate(new Date(t)); };
+  const dueLabel = b => { const a=[...b.dues].sort((x,y)=>dtMs_(x)-dtMs_(y)); return !a.length?'-':(a.length===1?dueFmt(a[0]):dueFmt(a[0])+' – '+dueFmt(a[a.length-1])); };
+  const totalNet = batches.reduce((t,b)=>t+b.net,0);
+  const rows = batches.length ? batches.map(b=>`
+    <tr>
+      <td class="mono"><b>${b.rv}</b></td>
+      <td>${b.items.length} รายการ<div style="font-size:11px;color:var(--ink-soft);">${b.items.slice(0,4).map(e=>e.id).join(', ')}${b.items.length>4?' …':''}</div></td>
+      <td>${money(b.vat)}</td><td>${money(b.wht)}</td><td>${money(b.base)}</td><td><b>${money(b.net)}</b></td>
+      <td>${b.by||'-'}</td>
+      <td style="white-space:nowrap;">${b.date||'-'}</td>
+      <td style="white-space:nowrap;">${dueLabel(b)}</td>
+      <td><button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบรับเงิน (Receive Voucher)" onclick="openReceiveVoucher('${b.rv}')">${DOWNLOAD_SVG}</button></td>
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="10">ยังไม่มีประวัติการรับเงิน</td></tr>`;
+  return `
+  <div class="company-header">
+    <label>บริษัท</label>
+    <select onchange="setReportReceiveCompany(this.value)">
+      <option value="all" ${state.reportReceiveCompany==='all'?'selected':''}>ทุกบริษัท</option>
+      ${companyOpts.map(c=>`<option value="${c.code}" ${state.reportReceiveCompany===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}
+    </select>
+  </div>
+  <div class="card">
+    <div class="eyebrow">Report</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin-top:4px;">รายงานการรับเงิน (Receive Voucher)</h3>
+      <button class="btn btn-sm btn-outline" onclick="exportReportReceiveToExcel()">⬇ Export Excel</button>
+    </div>
+    <hr class="div">
+    <div class="stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+      <div class="stat-card s-finance"><div class="num">${batches.length}</div><div class="lbl">Receive Voucher (RV)</div></div>
+      <div class="stat-card s-approver"><div class="num">${entries.length}</div><div class="lbl">รายการที่รับเงินแล้ว</div></div>
+      <div class="stat-card s-complete"><div class="num" style="font-size:22px;">${money(totalNet)}</div><div class="lbl">ยอดรับสุทธิรวม (บาท)</div></div>
+    </div>
+    <div class="filter-bar">
+      <div class="f-field"><label>ค้นหาเลข RV</label><input type="text" placeholder="เช่น 1160-RV0001" value="${s.rv}" oninput="setReportReceiveSearch('rv', this.value)"></div>
+      <div class="f-field"><label>ผู้ทำรายการ</label><input type="text" placeholder="ชื่อผู้ยืนยัน..." value="${s.by}" oninput="setReportReceiveSearch('by', this.value)"></div>
+      <div class="f-field"><label>จากวันที่</label><input type="date" value="${s.from}" onchange="setReportReceiveSearch('from', this.value)"></div>
+      <div class="f-field"><label>ถึงวันที่</label><input type="date" value="${s.to}" onchange="setReportReceiveSearch('to', this.value)"></div>
+      <button class="filter-clear" onclick="clearReportReceiveSearch()">ล้างตัวกรอง</button>
+    </div>
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>RV</th><th>รายการ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดรับสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่รับเงิน</th><th>Due</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>`;
+}
+function exportReportReceiveToExcel(){
+  const entries = receiveReportEntries_();
+  if(!entries.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
+  const header = ['RV','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Vendor','Vendor Name','VAT Amt','WHT Amt','Base Amt','ยอดรับสุทธิ','Due','ผู้ทำรายการ','วันที่รับเงิน'];
+  const rows = entries.sort((a,b)=>String(b.rv).localeCompare(String(a.rv))).map(e=>[e.rv, e.id, docTypeInfo(e.d.docType).label, e.d.docName, companyName(e.d.companyCode), e.sap||'', e.vendor||'', e.vendorName||'', e.vat, e.wht, e.base, e.net, e.d.dueDate||'', e.by||'', e.date||'']);
+  exportAoaToExcel([header, ...rows], 'ReportReceive_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Report Receive');
+}
+function openReceiveVoucher(rv){
+  const items = receiveReportEntries_().filter(e=>String(e.rv)===String(rv));
+  if(!items.length){ showToast('ไม่พบรายการของ RV นี้'); return; }
+  const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const t = items.reduce((a,e)=>({vat:a.vat+e.vat,wht:a.wht+e.wht,base:a.base+e.base,net:a.net+e.net}),{vat:0,wht:0,base:0,net:0});
+  const first = items[0];
+  const rowsH = items.map(e=>`<tr><td>${e.id}</td><td>${docTypeInfo(e.d.docType).label}</td><td>${e.d.docName||'-'}</td><td>${e.sap||'-'}</td><td>${e.vendor||'-'}</td><td>${e.vendorName||'-'}</td><td>${e.d.dueDate?fmtDate(e.d.dueDate):'-'}</td><td class="n">${money(e.vat)}</td><td class="n">${money(e.wht)}</td><td class="n">${money(e.base)}</td><td class="n"><b>${money(e.net)}</b></td></tr>`).join('');
+  const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"><title>Receive Voucher · ${rv}</title>
+  <style>
+    @page{ size:A4 landscape; margin:8mm; }
+    *{ box-sizing:border-box; }
+    body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;background:#e9e9ee;}
+    .sheet{ width:297mm; min-height:210mm; background:#fff; margin:14px auto; padding:8mm; box-shadow:0 2px 14px rgba(0,0,0,.25); }
+    @media screen{ body{ zoom:.7; } }
+    h1{font-size:18px;text-align:center;margin:0 0 10px;}
+    .meta{font-size:11px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px 24px;}
+    table{width:100%;border-collapse:collapse;font-size:10.5px;margin-bottom:16px;}
+    th,td{border-bottom:1px solid #333;padding:4px 5px;text-align:left;vertical-align:top;}
+    thead th{border-bottom:2px solid #000;}
+    .n{text-align:right;white-space:nowrap;}
+    tr.grand td{background:#f5b500;font-weight:700;border-top:2px solid #000;border-bottom:2px solid #000;}
+    .sign{display:flex;justify-content:center;margin-top:40px;text-align:center;font-size:11px;}
+    .sign div{width:240px;} .line{border-top:1px solid #333;margin:34px 12px 6px;}
+    .no-print{margin:16px 0;text-align:center;}
+    @media print{ body{background:#fff;zoom:1;} .sheet{margin:0;box-shadow:none;width:auto;min-height:0;padding:0;} .no-print{display:none;} tr.grand td{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
+  </style></head><body><div class="sheet">
+    <h1>ใบรับเงิน (Receive Voucher)</h1>
+    <div class="meta"><div>เลขที่: <b>${rv}</b></div><div>บริษัท: <b>${companyName(first.d.companyCode)}</b></div><div>ผู้ยืนยันรับเงิน: <b>${first.by||'-'}</b></div><div>วันที่รับเงิน: <b>${first.date||'-'}</b></div></div>
+    <table><thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>Due</th><th class="n">VAT Amt</th><th class="n">WHT Amt</th><th class="n">Base Amt</th><th class="n">ยอดรับสุทธิ</th></tr></thead>
+    <tbody>${rowsH}<tr class="grand"><td colspan="7" style="text-align:center;">Total (${items.length} รายการ)</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.base)}</td><td class="n">${money(t.net)}</td></tr></tbody></table>
+    <div class="sign"><div>ผู้รับเงิน (การเงิน)<div class="line"></div>${first.by||'-'}</div></div>
+    <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
+  </div></body></html>`;
+  window.open(URL.createObjectURL(new Blob([html],{type:'text/html'})),'_blank');
+}
+
 /* ============================= PAYMENT VOUCHER ============================= */
 function paymentHTML(){
+  if(state.paymentTab==='receive') return receiveHTML();
   const companyOpts = userCompanyOptions();
   const companyHeader = `
   <div class="company-header">
@@ -5109,6 +5386,7 @@ function paymentHTML(){
 
   return `
   ${companyHeader}
+  ${payTabsHTML_()}
   ${rejectedPvCard}
   <div class="card">
     <div class="eyebrow">Payment Stage</div>
@@ -5775,15 +6053,19 @@ function reportPaymentHTML(){
   const batches = {};
   docs.forEach(d=>{
     const key = String(d.docPayment);
-    if(!batches[key]) batches[key] = { docPayment:d.docPayment, count:0, vat:0, wht:0, base:0, net:0, paymentDate:d.paymentDate||'', paymentBy:d.paymentBy||'', companyCode:d.companyCode||'', payTypes:new Set(), docPaymentLink:d.docPaymentLink||'' };
+    if(!batches[key]) batches[key] = { docPayment:d.docPayment, count:0, vat:0, wht:0, base:0, net:0, paymentDate:d.paymentDate||'', paymentBy:d.paymentBy||'', companyCode:d.companyCode||'', payTypes:new Set(), docPaymentLink:d.docPaymentLink||'', dues:new Set() };
     const b = batches[key];
     b.count++;
     b.vat += num(d.vatAmount); b.wht += num(d.whtAmount); b.base += num(d.baseAmount); b.net += num(d.netAmount);
     if(d.payType) b.payTypes.add(d.payType);
+    if(d.dueDate) b.dues.add(d.dueDate);
     if(d.docPaymentLink) b.docPaymentLink = d.docPaymentLink;
-    if((d.paymentDate||'') > b.paymentDate) b.paymentDate = d.paymentDate;
+    if(dtMs_(d.paymentDate||'') > dtMs_(b.paymentDate||'')) b.paymentDate = d.paymentDate;
   });
-  const batchList = Object.values(batches).sort((a,b)=>(b.paymentDate||'').localeCompare(a.paymentDate||''));
+  // newest batch first (real date-time compare; Thai D/M/BE strings can't be sorted as text)
+  const batchList = Object.values(batches).sort((a,b)=>{ const x=dtMs_(a.paymentDate), y=dtMs_(b.paymentDate); const ax = x>=9e15?-1:x, by = y>=9e15?-1:y; return by-ax || String(b.docPayment).localeCompare(String(a.docPayment)); });
+  const dueFmt_ = v => { const t = dtMs_(v); return t>=9e15 ? String(v) : fmtDate(new Date(t)); };
+  const batchDueLabel = b => { const arr=[...b.dues].sort((x,y)=>dtMs_(x)-dtMs_(y)); return !arr.length ? '-' : (arr.length===1 ? dueFmt_(arr[0]) : dueFmt_(arr[0])+' – '+dueFmt_(arr[arr.length-1])); };
   batchList.forEach(b=>{ b.stage = pvStageOfBatch_(b.docPayment); });
   const cntReview = batchList.filter(b=>b.stage.key==='review').length;
   const cntApprove = batchList.filter(b=>b.stage.key==='approve').length;
@@ -5827,12 +6109,13 @@ function reportPaymentHTML(){
       <td><b>${money(b.net)}</b></td>
       <td>${b.paymentBy||'-'}</td>
       <td>${b.paymentDate||'-'}</td>
+      <td style="white-space:nowrap;">${batchDueLabel(b)}</td>
       <td>${b.stage.key==='none' ? '<span style="color:var(--ink-soft);">-</span>' : `<span class="status-pill ${b.stage.rejected?'reject':''}">${b.stage.label}</span>${(b.stage.key==='review'||b.stage.key==='approve') && pvStageWho_(b.stage) ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">รอ: ${pvStageWho_(b.stage)}</div>`:''}`}</td>
       <td style="white-space:nowrap;">
         ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
         <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
       </td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="13">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="14">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
 
   return `
   ${companyHeader}
@@ -5847,7 +6130,7 @@ function reportPaymentHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>สถานะ Payment</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่จ่าย</th><th>Due</th><th>สถานะ Payment</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -5953,12 +6236,13 @@ function exportReportPaymentToExcel(){
   if(s.from){ const from = new Date(s.from); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt >= from; }); }
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
   if(!docs.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
+  docs.sort((x,y)=>{ const a=dtMs_(x.paymentDate), b=dtMs_(y.paymentDate); return (b>=9e15?-1:b)-(a>=9e15?-1:a); });
   // export at document level (one row per document) so payType/amounts are exact, not aggregated
-  const header = ['ID Payment Voucher','Owner (บัญชีที่โอน)','เลขที่บัญชีที่โอน','Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','สถานะ Payment'];
+  const header = ['ID Payment Voucher','Owner (บัญชีที่โอน)','เลขที่บัญชีที่โอน','Doc Payment','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','ประเภทการจ่าย','VAT Amt','WHT Amt','Base Amt','ยอดจ่ายสุทธิ','ผู้ทำรายการ','วันที่จ่าย','Due','สถานะ Payment'];
   const rows = docs.map(d=>[
     (pvStageOfBatch_(d.docPayment).v||{}).id||'', (pvStageOfBatch_(d.docPayment).v||{}).payAccountOwner||'-', (pvStageOfBatch_(d.docPayment).v||{}).payAccountNo||'-', d.docPayment, d.id, docTypeInfo(d.docType).label, d.docName, companyName(d.companyCode), d.docSAP||'',
     payTypeLabel(d.payType), parseFloat(d.vatAmount)||0, parseFloat(d.whtAmount)||0, parseFloat(d.baseAmount)||0, parseFloat(d.netAmount)||0,
-    d.paymentBy||'', d.paymentDate||'', pvStageOfBatch_(d.docPayment).label,
+    d.paymentBy||'', d.paymentDate||'', d.dueDate||'', pvStageOfBatch_(d.docPayment).label,
   ]);
   exportAoaToExcel([header, ...rows], 'ReportPayment_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Report Payment');
 }
@@ -6305,8 +6589,9 @@ function adminSettingsHTML(){
       <td class="mono">${t.key}</td>
       <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.autoComplete?'checked':''} onchange="toggleDocTypeAutoComplete('${t.key}', this.checked)"></label></td>
       <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.viaPayment?'checked':''} onchange="toggleDocTypeViaPayment('${t.key}', this.checked)"></label></td>
+      <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.receivable?'checked':''} onchange="toggleDocTypeReceivable('${t.key}', this.checked)"></label></td>
       <td><button class="btn btn-sm btn-reject" onclick="deleteDocType('${t.key}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="5">ยังไม่มีประเภทเอกสาร</td></tr>`;
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="6">ยังไม่มีประเภทเอกสาร</td></tr>`;
 
   const reviewerOptions = state.members.filter(m=>m.role==='ผู้ตรวจสอบ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
   const approverOptions = state.members.filter(m=>m.role==='ผู้อนุมัติ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
@@ -6382,11 +6667,17 @@ function adminSettingsHTML(){
           <input type="checkbox" name="viaPayment"> อนุมัติในแท็บ Payment แล้ว Complete (ไม่ส่งการเงิน)
         </label>
       </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>รอรับเงิน (AR ลูกหนี้การค้า)</label>
+        <label class="chip-check" style="display:flex;align-items:center;gap:6px;font-weight:400;height:38px;">
+          <input type="checkbox" name="receivable"> ผู้ตรวจสอบอนุมัติ → รอรับเงิน → การเงินยืนยันรับเงิน → Complete
+        </label>
+      </div>
       <button class="btn btn-primary" type="submit">เพิ่มประเภทเอกสาร</button>
     </form>
     <div class="helper" style="margin:-8px 0 12px;">ติ๊ก "ข้ามขั้นตอนอนุมัติ" สำหรับเอกสารที่ไม่ต้องผ่านนักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติเลย เช่น ใบเสร็จรับเงิน, ใบกำกับภาษี — User วางบิลเข้ามาแล้วระบบจะบันทึกเป็นสถานะ Complete ให้ทันที ติ๊ก/ยกเลิกได้ทีหลังจากคอลัมน์ในตารางด้านล่าง (มีผลกับเอกสารที่วางบิลหลังจากเปลี่ยนค่าเท่านั้น ไม่ย้อนหลัง)</div>
     <table>
-      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th>ข้ามขั้นตอนอนุมัติ</th><th>อนุมัติผ่านแท็บ Payment</th><th></th></tr></thead>
+      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th>ข้ามขั้นตอนอนุมัติ</th><th>อนุมัติผ่านแท็บ Payment</th><th>รอรับเงิน (AR)</th><th></th></tr></thead>
       <tbody>${typeRows}</tbody>
     </table>
   </div>
@@ -6982,7 +7273,8 @@ async function addDocType(e){
   const autoComplete = f.get('autoComplete') === 'on';
   const viaPayment = f.get('viaPayment') === 'on';
   if(state.docTypes.some(t=>t.key===key)){ showToast('มีประเภทเอกสารนี้อยู่แล้ว'); return; }
-  const res = await apiCall('addDocType', { key, label, color, autoComplete, viaPayment });
+  const receivable = f.get('receivable') === 'on';
+  const res = await apiCall('addDocType', { key, label, color, autoComplete, viaPayment, receivable });
   if(!res.success){ showToast('เพิ่มประเภทเอกสารไม่สำเร็จ'); return; }
   showToast('เพิ่มประเภทเอกสาร '+label+' เรียบร้อย');
   e.target.reset();
@@ -7002,6 +7294,13 @@ async function toggleDocTypeAutoComplete(key, checked){
   const t = state.docTypes.find(x=>x.key===key);
   if(t) t.autoComplete = checked;
   showToast(checked ? 'ตั้งให้ "'+(t?t.label:key)+'" ข้ามขั้นตอนอนุมัติแล้ว (Complete ทันทีที่วางบิล)' : 'ยกเลิกการข้ามขั้นตอนอนุมัติแล้ว');
+  render();
+}
+async function toggleDocTypeReceivable(key, checked){
+  const res = await apiCall('updateDocType', { key, receivable: checked });
+  if(!res.success){ showToast('อัปเดตไม่สำเร็จ ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  showToast(checked ? 'ประเภทนี้ผ่านผู้ตรวจสอบ (เซ็นแทนผู้อนุมัติ) แล้วเข้าสถานะ รอรับเงิน — การเงินยืนยันรับเงินแล้ว Complete' : 'ยกเลิกการตั้งค่า รอรับเงิน (AR) แล้ว');
+  await refreshData();
   render();
 }
 async function toggleDocTypeViaPayment(key, checked){
