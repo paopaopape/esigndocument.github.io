@@ -277,7 +277,7 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 /* ============================= STATE ============================= */
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
-  approvalGroup:null, approvalGroupBy:'due', pvGroupBy:'due', pvTab:null, pvCompany:'all', pvEditId:null, pvSearch:{type:'',name:'',due:'',createdBy:''},
+  paymentSkipReason:'', paymentSkipOther:'', approvalGroup:null, approvalGroupBy:'due', pvGroupBy:'due', pvTab:null, pvCompany:'all', pvEditId:null, pvSearch:{type:'',name:'',due:'',createdBy:''},
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, showHelp:(function(){ try{ return localStorage.getItem('dfShowHelp')==='1'; }catch(e){ return false; } })(), appSettings:{}, vendors:[],
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
@@ -4212,6 +4212,12 @@ function openApprovalReport(id){
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank');
 }
+function getPvSkipReason_(v){
+  try{
+    const h = (JSON.parse(v.historyLog||'[]')||[]).find(x=>x.action==='skip_reviewer');
+    return h ? String(h.note||'').replace(/^ข้ามโดยการเงิน เหตุผล:\s*/,'') : null;
+  }catch(e){ return null; }
+}
 function getSkipReviewerReason(d){
   try{
     const history = d.historyLog ? JSON.parse(d.historyLog) : [];
@@ -4322,6 +4328,7 @@ function paymentApprovalHTML(){
       <tr class="action-row">
         <td colspan="14">
           <div class="note-box">
+            ${getPvSkipReason_(v) ? `<div style="width:100%;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:8px;padding:10px 12px;margin-bottom:8px;"><b style="color:var(--stamp-red);">⚠ ชุดนี้ยังไม่ได้ผ่านผู้ตรวจสอบ Payment</b><br><span style="font-size:12.5px;">เนื่องจาก: ${getPvSkipReason_(v)}</span></div>` : ''}
             <div style="width:100%;margin-top:4px;">
               <textarea id="pv-note-${v.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
             </div>
@@ -4905,6 +4912,17 @@ function paymentHTML(){
     <div class="f-field" style="margin:0;flex:1;min-width:220px;">
       <label>ลิงก์ไฟล์ Doc Payment (สลิป/หลักฐานการโอน — ไม่บังคับ)</label>
       <input id="payment-doclink" type="url" placeholder="https://drive.google.com/..." value="${state.paymentDocLink}" oninput="setPaymentDocLink(this.value)" ${noCompanyPicked?'disabled':''}>
+    </div>
+    <div style="width:100%;background:#FFF8E8;border:1px solid var(--gold);border-radius:8px;padding:10px 12px;">
+      <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">กรณีผู้ตรวจสอบ Payment ไม่พร้อม — ข้ามไปผู้อนุมัติ Payment ได้เลย (ไม่บังคับ)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <select id="payment-skip-reason" style="min-width:190px;" onchange="setPaymentSkipReason(this.value)">
+          <option value="">— ไม่ข้าม (ส่งผู้ตรวจสอบตามปกติ) —</option>
+          ${['ผู้ตรวจสอบลาป่วย','ผู้ตรวจสอบลาพักร้อน','ผู้ตรวจสอบลากิจ'].map(r=>`<option value="${r}" ${state.paymentSkipReason===r?'selected':''}>${r}</option>`).join('')}
+          <option value="อื่นๆ" ${state.paymentSkipReason==='อื่นๆ'?'selected':''}>อื่นๆ (ระบุเอง)</option>
+        </select>
+        <input type="text" id="payment-skip-other" placeholder="ระบุเหตุผล..." value="${state.paymentSkipOther.replace(/"/g,'&quot;')}" oninput="state.paymentSkipOther=this.value" style="display:${state.paymentSkipReason==='อื่นๆ'?'block':'none'};flex:1;min-width:160px;">
+      </div>
     </div>
     <button id="payment-confirm-btn" class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim() && state.paymentAccountNo) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
   </div>`;
@@ -5512,6 +5530,7 @@ async function saveAmountField(id, field, value){
   if(!res.success){ showToast('บันทึกจำนวนเงินไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   doc[field] = value;
 }
+function setPaymentSkipReason(v){ state.paymentSkipReason = v; if(v!=='อื่นๆ') state.paymentSkipOther=''; render(); }
 async function confirmBatchPayment(){
   const docNum = state.paymentDocNumber.trim();
   const docLink = state.paymentDocLink.trim();
@@ -5523,6 +5542,9 @@ async function confirmBatchPayment(){
   const selectedDocs = ids.map(id=>state.documents.find(d=>d.id===id)).filter(Boolean);
   const companySet = new Set(selectedDocs.map(d=>d.companyCode));
   if(companySet.size > 1){ showToast('พบเอกสารจากหลายบริษัทในรายการที่เลือก ห้ามรวบจ่ายข้ามบริษัท กรุณาตรวจสอบอีกครั้ง'); return; }
+  const skipReason = state.paymentSkipReason==='อื่นๆ' ? (state.paymentSkipOther||'').trim() : state.paymentSkipReason;
+  if(state.paymentSkipReason==='อื่นๆ' && !skipReason){ showToast('กรุณาระบุเหตุผลที่ข้ามผู้ตรวจสอบ Payment'); return; }
+  if(skipReason && !confirm('ยืนยันข้ามผู้ตรวจสอบ Payment และส่งตรงไปผู้อนุมัติ Payment ใช่หรือไม่?\n\nเหตุผล: '+skipReason)) return;
   showBusyOverlay('กำลังดำเนินการรวบชุดจ่าย กรุณารอสักครู่... (0/'+ids.length+')');
   let done = 0;
   for(const id of ids){
@@ -5556,19 +5578,20 @@ async function confirmBatchPayment(){
       if(!upRes || !upRes.success) pvFailed = true;
     }
   } else {
-    const pvRes = await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, payAccountNo: payAcc.accountNo, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user) });
+    const pvRes = await apiCall('createPaymentVoucher', { docPayment: docNum, companyCode: pvCompanyCode, payAccountNo: payAcc.accountNo, docIds: ids, netTotal: String(netTotal), createdBy: fullName(state.user), skipReviewerReason: skipReason||'' });
     if(!pvRes || !pvRes.success) pvFailed = true;
   }
   hideBusyOverlay();
   if(pvFailed){
     alert('บันทึกการรวบจ่ายสำเร็จ แต่สร้างชุดปิดรอบ Payment (ส่งต่อผู้ตรวจสอบ Payment) ไม่สำเร็จ\n\nDoc Payment: '+docNum+'\nกรุณาแจ้ง Admin — มักเกิดจาก Apps Script ยังไม่ได้ Deploy เวอร์ชันล่าสุด หรือไม่มีชีท PaymentVouchers');
   } else {
-    showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ) · ส่งต่อผู้ตรวจสอบ Payment แล้ว');
+    showToast('บันทึกการรวบจ่ายเรียบร้อย · Doc Payment '+docNum+' ('+ids.length+' รายการ) · ส่งต่อ'+(skipReason?'ผู้อนุมัติ':'ผู้ตรวจสอบ')+' Payment แล้ว');
   }
   state.paymentSelected = [];
   state.paymentDocNumber = '';
   state.paymentDocLink = '';
   state.paymentAccountNo = '';
+  state.paymentSkipReason = ''; state.paymentSkipOther = '';
   await refreshData();
   render();
   openPaymentReport(docNum);
