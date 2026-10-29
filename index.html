@@ -277,7 +277,7 @@ const SAP_FIORI_URL = 'https://fiori.mitrphol.com/sap/bc/ui2/flp#Shell-startGUI?
 /* ============================= STATE ============================= */
 let state = {
   loading:true, user:null, view:'dashboard', approvalTab:null,
-  approvalGroup:null, pvTab:null, pvCompany:'all', pvEditId:null, pvSearch:{type:'',name:'',due:'',createdBy:''},
+  approvalGroup:null, approvalGroupBy:'due', pvGroupBy:'due', pvTab:null, pvCompany:'all', pvEditId:null, pvSearch:{type:'',name:'',due:'',createdBy:''},
   members:[], companies:[], docTypes:[], documents:[], approvalMappings:[], emailLog:null, showHelp:(function(){ try{ return localStorage.getItem('dfShowHelp')==='1'; }catch(e){ return false; } })(), appSettings:{}, vendors:[],
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
@@ -603,9 +603,9 @@ function pvPendingCountForUser(){
   let count = 0;
   tabs.forEach(t=>{
     const status = statusByTab[t];
-    count += state.paymentVouchers.filter(v=>v.status===status && pvCanActOnStage(v)).length;
+    if(status) count += state.paymentVouchers.filter(v=>v.status===status && pvCanActOnStage(v)).length;
   });
-  return count;
+  return count + viaPendingCountForUser();
 }
 // mirrors pvPendingCountForUser but for the existing accounting-flow tabs, for the matching
 // badge on the "อนุมัติบันทึกบัญชี" top-level tab
@@ -617,8 +617,19 @@ function accountingPendingCountForUser(){
   let count = 0;
   tabs.forEach(t=>{
     const status = statusByTab[t];
-    count += state.documents.filter(d=>d.status===status && canActOnStage(d)).length;
-    if(t==='approver') count += state.documents.filter(d=>d.status==='รอผู้อนุมัติ2' && canActOnStage(d)).length;
+    const mine = d => (t==='accountant' || !isViaPaymentDoc_(d)) && canActOnStage(d);
+    count += state.documents.filter(d=>d.status===status && mine(d)).length;
+    if(t==='approver') count += state.documents.filter(d=>d.status==='รอผู้อนุมัติ2' && mine(d)).length;
+  });
+  return count;
+}
+// documents of via-Payment types waiting on this user (shown under อนุมัติ Payment → เอกสารประเภท Payment)
+function viaPendingCountForUser(){
+  if(!state.user) return 0;
+  let count = 0;
+  viaApprovalTabs_().forEach(t=>{
+    const sts = t==='reviewer' ? ['รอผู้ตรวจสอบ'] : ['รอผู้อนุมัติ','รอผู้อนุมัติ2'];
+    count += state.documents.filter(d=>isViaPaymentDoc_(d) && sts.includes(d.status) && canActOnStage(d)).length;
   });
   return count;
 }
@@ -726,7 +737,7 @@ async function refreshData(){
       return m;
     });
     state.companies = (data.companies || []).map(c=>({ ...c, code:String(c.code) }));
-    state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true') }));
+    state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
     state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
@@ -742,6 +753,7 @@ async function refreshData(){
       if(d.docPayment===undefined) d.docPayment='';
       if(d.skipApprover===undefined) d.skipApprover='';
       if(d.skipFinance===undefined) d.skipFinance='';
+      if(isViaPaymentType_(d.docType)) d.skipFinance='TRUE'; // via-Payment types always Complete after approval, never go to finance
       if(d.payType===undefined || d.payType===null) d.payType=''; else d.payType=String(d.payType);
       if(d.cancelledBy===undefined) d.cancelledBy='';
       if(d.cancelledDate===undefined) d.cancelledDate='';
@@ -1716,13 +1728,14 @@ function defaultApprovalGroup(){
   return groups[0] || 'accounting';
 }
 function allowedPvTabs(){
-  if(isAdmin()) return ['pvReviewer','pvApprover'];
+  const withVia = arr => (viaApprovalTabs_().length ? arr.concat(['pvDocs']) : arr);
+  if(isAdmin()) return withVia(['pvReviewer','pvApprover']);
   const tabs = [];
   const isReviewerAnywhere = state.user.role==='หัวหน้าแผนกการเงิน' || state.paymentMappings.some(mp=>pvIds_(mp.reviewerId).includes(state.user.id));
   const isApproverAnywhere = state.user.role==='ผู้อนุมัติการเงิน' || state.paymentMappings.some(mp=>pvIds_(mp.approverId).includes(state.user.id));
   if(isReviewerAnywhere) tabs.push('pvReviewer');
   if(isApproverAnywhere) tabs.push('pvApprover');
-  return tabs;
+  return withVia(tabs);
 }
 function defaultPvTab(){
   const tabs = allowedPvTabs();
@@ -1765,7 +1778,8 @@ function openDocFromLink(docId){
   const canOpenTab = tab && (isAdmin() || allowedApprovalTabs().includes(tab));
   if(canOpenTab){
     state.view = 'approval';
-    state.approvalGroup = 'accounting';
+    state.approvalGroup = (tab!=='accountant' && isViaPaymentDoc_(doc)) ? 'payment' : 'accounting';
+    if(state.approvalGroup==='payment') state.pvTab = 'pvDocs';
     state.approvalTab = tab;
     state.approvalCompany = 'all';
     state.approvalSearch = { type:'', name:'', due:'', createdBy:'' };
@@ -1833,7 +1847,7 @@ function sidebarHTML(){
         subs += `<div class="nav-item ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>`;
       }
       if(state.approvalGroup==='payment' && groups.includes('payment')){
-        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)'};
+        const pvLabels = {pvReviewer:'ผู้ตรวจสอบ (Payment)', pvApprover:'ผู้อนุมัติ (Payment)', pvDocs:'เอกสารประเภท Payment'};
         subs += allowedPvTabs().map(t=>`<div class="nav-item ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')" style="padding-left:28px;">${pvLabels[t]}</div>`).join('');
       } else {
         const labels = {accountant:'นักบัญชี', reviewer:'ผู้ตรวจสอบ', approver:'ผู้อนุมัติ'};
@@ -2008,6 +2022,66 @@ function normalizeDateOnly(str){
     return `${y}-${m}-${d}`;
   }catch(e){ return str; }
 }
+// ---- shared helpers for the approval screens: queue time + GROUP bar (ทั้งหมด / รอบชำระเงิน / ประเภท) ----
+// ms timestamp of a stored date-time string ("D/M/BE, HH:MM:SS" from nowStr(), or an ISO string Sheets may return);
+// unknown values sort last
+function dtMs_(str){
+  if(!str) return 9e15;
+  const m = String(str).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[, ]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if(m){
+    let y = parseInt(m[3],10); if(y>2400) y-=543;
+    return new Date(y, parseInt(m[2],10)-1, parseInt(m[1],10), parseInt(m[4]||0,10), parseInt(m[5]||0,10), parseInt(m[6]||0,10)).getTime();
+  }
+  const t = Date.parse(String(str));
+  if(isNaN(t)) return 9e15;
+  const dt = new Date(t);
+  return dt.getFullYear()>2400 ? new Date(dt.getFullYear()-543, dt.getMonth(), dt.getDate(), dt.getHours(), dt.getMinutes(), dt.getSeconds()).getTime() : t;
+}
+// when the PREVIOUS step handed this document over (so approvers can work the queue in order)
+function docPrevStepDate_(d){
+  const st = String(d.status||'');
+  if(st.startsWith('ตีกลับ')) return d.modifiedDate || d.createdDate;
+  if(st==='รอนักบัญชี') return d.createdDate;
+  if(st==='รอผู้ตรวจสอบ') return d.accountantDate || d.createdDate;
+  if(st==='รอผู้อนุมัติ') return d.reviewerDate || d.accountantDate || d.createdDate;
+  if(st==='รอผู้อนุมัติ2') return d.approverDate || d.reviewerDate || d.accountantDate || d.createdDate;
+  return d.modifiedDate || d.createdDate;
+}
+function pvPrevStepDate_(v){
+  try{
+    const log = JSON.parse(v.historyLog||'[]');
+    if(Array.isArray(log) && log.length && log[log.length-1].date) return log[log.length-1].date;
+  }catch(e){}
+  if(v.status==='รอผู้อนุมัติPayment') return v.reviewerDate || v.createdDate;
+  return v.createdDate;
+}
+function groupBarHTML_(current, fn){
+  const b = (key,label)=>`<button class="btn btn-sm ${current===key?'btn-approve':'btn-outline'}" onclick="${fn}('${key}')">${label}</button>`;
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
+    <span style="font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Group:</span>
+    ${b('none','ทั้งหมด')}${b('due','รอบชำระเงิน')}${b('type','ประเภท')}
+  </div>`;
+}
+// items sorted by queue time (oldest first), then bucketed by the chosen GROUP; returns [{label,items}]
+function groupForApproval_(items, mode, msOf, dueOf, typeOf){
+  const sorted = items.slice().sort((a,b)=>msOf(a)-msOf(b));
+  if(mode==='none') return [{label:null, items:sorted}];
+  const map = {}, order = [];
+  sorted.forEach(it=>{
+    const raw = mode==='type' ? (typeOf(it)||'ไม่ระบุ') : (normalizeDateOnly(dueOf(it))||'ไม่ระบุ');
+    if(!map[raw]){ map[raw] = []; order.push(raw); }
+    map[raw].push(it);
+  });
+  if(mode!=='type') order.sort();
+  return order.map(k=>({ label: mode==='type' ? docTypeInfo(k).label : 'รอบชำระเงิน '+(k==='ไม่ระบุ'?'ไม่ระบุ':fmtDate(k)), items: map[k] }));
+}
+function setApprovalGroupBy(k){ state.approvalGroupBy=k; state.expandedRow=null; render(); }
+function setPvGroupBy(k){ state.pvGroupBy=k; state.expandedRow=null; render(); }
+// document types whose documents are approved on the "อนุมัติ Payment" side (same mapped chain, Complete at the end, no finance step)
+function isViaPaymentType_(key){ const t = state.docTypes.find(x=>x.key===key); return !!(t && t.viaPayment); }
+function isViaPaymentDoc_(d){ return isViaPaymentType_(d.docType); }
+function viaTypesExist_(){ return state.docTypes.some(t=>t.viaPayment); }
+function viaApprovalTabs_(){ return viaTypesExist_() ? allowedApprovalTabs().filter(t=>t!=='accountant') : []; }
 function groupByDue(list){
   const map = {};
   list.forEach(d=>{
@@ -3231,7 +3305,7 @@ async function submitApproveOwn(e){
   const newId = res1.id;
   const note = (f.get('note')||'').trim();
   const skipApprover = !!document.getElementById('saown-skipApprover').checked;
-  const skipFinance = !!e.target.querySelector('input[name="skipFinance"]').checked;
+  const skipFinance = !!e.target.querySelector('input[name="skipFinance"]').checked || isViaPaymentType_(f.get('docType'));
   let accountantNoteVal = note ? appendNoteText('', note) : '';
   const historyEntries = [{ stage:'นักบัญชี', actor: createdBy, date: nowStr(), note: note||'', action:'approve' }];
   if(skipReviewerReason){
@@ -3627,13 +3701,15 @@ function approvalHTML(){
   const body = (state.approvalGroup==='payment' && groups.includes('payment')) ? paymentApprovalHTML() : accountingApprovalHTML();
   return groupTabsHtml + body;
 }
-function accountingApprovalHTML(){
+function accountingApprovalHTML(mode){
+  const via = mode==='via';
   const tabMeta = {
     accountant:{status:'รอนักบัญชี', label:'นักบัญชี'},
     reviewer:{status:'รอผู้ตรวจสอบ', label:'ผู้ตรวจสอบ'},
     approver:{status:'รอผู้อนุมัติ', extraStatus:'รอผู้อนุมัติ2', label:'ผู้อนุมัติ'},
   };
-  const allowed = allowedApprovalTabs();
+  const allowed = via ? viaApprovalTabs_() : allowedApprovalTabs();
+  if(via && !allowed.includes(state.approvalTab)) state.approvalTab = allowed[0];
   const tabs = allowed.map(t=>`<div class="tab ${state.approvalTab===t?'active':''}" onclick="setApprovalTab('${t}')">${tabMeta[t].label}</div>`).join('');
   const meta = tabMeta[state.approvalTab];
   const rejectBackStatus = REJECT_HANDLED_BY_TAB[state.approvalTab];
@@ -3654,6 +3730,8 @@ function accountingApprovalHTML(){
     list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
   }
   if(state.approvalCompany!=='all') list = list.filter(d=>d.companyCode===state.approvalCompany);
+  // via-Payment types: accountant stage stays here, the later stages move to อนุมัติ Payment → เอกสารประเภท Payment
+  if(state.approvalTab!=='accountant') list = list.filter(d=> via ? isViaPaymentDoc_(d) : !isViaPaymentDoc_(d));
 
   const s = state.approvalSearch;
   if(s.type) list = list.filter(d=>d.docType===s.type);
@@ -3670,9 +3748,10 @@ function accountingApprovalHTML(){
     <button class="filter-clear" onclick="clearApprovalSearch()">ล้างตัวกรอง</button>
   </div>`;
 
-  const groups = groupByDue(list);
-  const bodyRows = groups.length ? groups.map(g=>{
-    const header = `<tr class="group-header"><td colspan="14">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>`;
+  const groupBar = groupBarHTML_(state.approvalGroupBy, 'setApprovalGroupBy');
+  const groups = groupForApproval_(list, state.approvalGroupBy, d=>dtMs_(docPrevStepDate_(d)), d=>d.dueDate, d=>d.docType);
+  const bodyRows = list.length ? groups.map(g=>{
+    const header = g.label ? `<tr class="group-header"><td colspan="15">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '';
     const rows = g.items.map(d=>{
       const isRejectedItem = d.status !== meta.status && !(meta.extraStatus && d.status===meta.extraStatus);
       const expanded = state.expandedRow===d.id;
@@ -3680,7 +3759,7 @@ function accountingApprovalHTML(){
       if(state.approvalDocEditId === d.id){
         return `
         <tr class="action-row">
-          <td colspan="14">
+          <td colspan="15">
             <form onsubmit="saveApprovalDocEdit(event,'${d.id}')">
               <div class="form-grid">
                 <div class="field"><label>ประเภทเอกสาร</label><select name="docType">${state.docTypes.map(t=>`<option value="${t.key}" ${d.docType===t.key?'selected':''}>${t.label}</option>`).join('')}</select></div>
@@ -3723,6 +3802,7 @@ function accountingApprovalHTML(){
           <td></td>
           <td>${l.vendor||'-'}</td>
           <td></td>
+          <td></td>
           <td style="text-align:right;">${money(l.vat)}</td>
           <td style="text-align:right;">${money(l.wht)}</td>
           <td style="text-align:right;">${money(l.base)}</td>
@@ -3734,7 +3814,7 @@ function accountingApprovalHTML(){
           const editKey = d.id+'-'+i;
           const detailRow = `
         <tr style="background:#fff;display:none;" id="sapline-detail-${d.id}-${i}" data-sapline-detail="1">
-          <td colspan="14" style="padding:10px 14px;">
+          <td colspan="15" style="padding:10px 14px;">
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
               <div class="sap-wrap"><label>FI Doc Number</label><input class="sap-input" id="sapline-fidoc-${d.id}-${i}" type="text" value="${l.fiDoc||''}" style="width:140px;"></div>
               <div class="sap-wrap"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="sapline-webdocno-${d.id}-${i}" type="text" value="${l.webDocNo||''}" style="width:150px;"></div>
@@ -3759,6 +3839,7 @@ function accountingApprovalHTML(){
           <td></td>
           <td>${l.vendor||'-'}</td>
           <td></td>
+          <td></td>
           <td>${sapLineAmtInput(d.id,i,'vat',l.vat)}</td>
           <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}<div id="sapline-wht-hint-${d.id}-${i}">${whtPercentHTML(l.base,l.wht)}</div></td>
           <td>${sapLineAmtInput(d.id,i,'base',l.base)}</td>
@@ -3779,7 +3860,7 @@ function accountingApprovalHTML(){
         if(canEditLines){
           rows += `
         <tr style="background:#fff;">
-          <td colspan="14" style="text-align:center;padding:8px;">
+          <td colspan="15" style="text-align:center;padding:8px;">
             <button class="btn btn-sm btn-outline" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
             ${showBreakdown ? `<button class="btn btn-sm btn-outline" id="sapline-save-btn-${d.id}" onclick="saveSapLineRowsNow('${d.id}')" style="margin-left:8px;">💾 บันทึกรายการ SAP</button>` : ''}
           </td>
@@ -3797,6 +3878,7 @@ function accountingApprovalHTML(){
           <td>${fmtDate(d.dueDate)}</td>
           <td>${d.createdBy}</td>
           <td>${trailHTML(d)}</td>
+          <td style="white-space:nowrap;font-size:12px;" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">${fmtDateTime(docPrevStepDate_(d))}</td>
           <td>${amtInput(d,'vatAmount','0.00')}</td>
           <td>${amtInput(d,'whtAmount','0.00')}<div id="amt-wht-hint-${d.id}">${whtPercentHTML(d.baseAmount,d.whtAmount)}</div></td>
           <td>${amtInput(d,'baseAmount','0.00')}</td>
@@ -3836,7 +3918,7 @@ function accountingApprovalHTML(){
                 <input type="checkbox" id="skipApprover-${d.id}" ${(d.skipApprover==='TRUE'||d.skipApprover===true)?'checked':''}> เลือกผู้อนุมัติ = หัวหน้าแผนกบัญชี (ข้ามขั้นผู้อนุมัติ)
               </label>
               <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
-                <input type="checkbox" id="skipFinance-${d.id}" ${(d.skipFinance==='TRUE'||d.skipFinance===true)?'checked':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)
+                <input type="checkbox" id="skipFinance-${d.id}" ${(d.skipFinance==='TRUE'||d.skipFinance===true||isViaPaymentDoc_(d))?'checked':''} ${isViaPaymentDoc_(d)?'disabled title="ประเภทนี้อนุมัติผ่านแท็บ Payment — Complete ทันที ไม่ส่งการเงิน"':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)
               </label>
             </div>
           </div>` : '';
@@ -3857,7 +3939,7 @@ function accountingApprovalHTML(){
           </div>` : '';
         actionRow = `
         <tr class="action-row">
-          <td colspan="14">
+          <td colspan="15">
             <div class="note-box">
               ${getSkipReviewerReason(d) ? `<div style="width:100%;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:8px;padding:10px 12px;margin-bottom:12px;">
                 <b style="color:var(--stamp-red);">⚠ เอกสารชุดนี้ยังไม่ได้ผ่านหัวหน้าแผนกตรวจสอบ</b><br>
@@ -3918,7 +4000,7 @@ function accountingApprovalHTML(){
           </div>` : '';
         actionRow = `
         <tr class="action-row">
-          <td colspan="14">
+          <td colspan="15">
             ${getSkipReviewerReason(d) ? `<div style="margin-bottom:10px;padding:10px 12px;background:#FDEDEC;border:1px solid var(--stamp-red);border-radius:7px;">
               <b style="color:var(--stamp-red);">⚠ เอกสารชุดนี้ยังไม่ได้ผ่านหัวหน้าแผนกตรวจสอบ</b><br>
               <span style="font-size:12.5px;color:var(--ink);">เนื่องจาก: ${getSkipReviewerReason(d)}</span>
@@ -3945,13 +4027,13 @@ function accountingApprovalHTML(){
       return mainRow + sapSubRows + actionRow;
     }).join('');
     return header + rows;
-  }).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  }).join('') : `<tr class="empty-row"><td colspan="15">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   return `
   <div class="tabs">${tabs}</div>
   ${companyHeader}
   <div class="card">
-    <div class="eyebrow">Stage · ${meta.label}</div>
+    <div class="eyebrow">${via ? 'เอกสารประเภท Payment · ' : 'Stage · '}${meta.label}</div>
     <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
     <div style="display:${state.showHelp?'block':'none'};">
     ${rejectBackStatus ? '<div class="helper">รายการที่มีสถานะ "ตีกลับแก้ไข" ในตารางนี้คือเอกสารที่ถูกตีกลับโดยขั้นตอนถัดไป ให้แก้ไขแล้วกด Resubmit เพื่อส่งต่ออนุมัติใหม่ได้ทันที ไม่ต้องวางบิลใหม่</div>' : ''}
@@ -3959,9 +4041,10 @@ function accountingApprovalHTML(){
     </div>
     <hr class="div">
     ${filterBar}
+    ${groupBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>Due</th><th>สร้างโดย</th><th>สถานะ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>Tax Code</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>ไฟล์</th><th>Due</th><th>สร้างโดย</th><th>สถานะ</th><th>ส่งมาเมื่อ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>Tax Code</th><th></th></tr></thead>
       <tbody>${bodyRows}</tbody>
     </table>
     </div>
@@ -4151,10 +4234,12 @@ function paymentApprovalHTML(){
   const tabMeta = {
     pvReviewer: {status:'รอผู้ตรวจสอบPayment', label:'ผู้ตรวจสอบ (Payment)'},
     pvApprover: {status:'รอผู้อนุมัติPayment', label:'ผู้อนุมัติ (Payment)'},
+    pvDocs: {status:'', label:'เอกสารประเภท Payment'},
   };
   const allowed = allowedPvTabs();
   if(!allowed.length) return `<div class="card"><div class="helper">คุณไม่มีสิทธิ์เข้าถึงขั้นตอนนี้</div></div>`;
   const tabs = allowed.map(t=>`<div class="tab ${state.pvTab===t?'active':''}" onclick="setPvTab('${t}')">${tabMeta[t].label}</div>`).join('');
+  if(state.pvTab==='pvDocs' && allowed.includes('pvDocs')) return `<div class="tabs">${tabs}</div>` + accountingApprovalHTML('via');
   const meta = tabMeta[state.pvTab] || tabMeta[allowed[0]];
   const rejectBackStatus = PV_REJECT_HANDLED_BY_TAB[state.pvTab];
 
@@ -4219,13 +4304,14 @@ function paymentApprovalHTML(){
       <td class="mono" style="white-space:nowrap;">${v.id||'-'}</td>
       <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
       <td>${pvItemCellHTML_(v)}</td>
-      <td>${docIds.length} รายการ</td>
+      <td>${docIds.length} รายการ${(function(){ const ts=[...new Set(infoOf[v.id].docs.map(d=>d.docType).filter(Boolean))]; return ts.length ? '<div style="margin-top:3px;">'+ts.map(k=>`<span class="badge badge-${docTypeInfo(k).color}" style="font-size:10px;">${docTypeInfo(k).label}</span>`).join(' ')+'</div>' : ''; })()}</td>
       <td>${agg.payTypeLabel}</td>
       <td>${money(agg.vat)}</td>
       <td>${money(agg.wht)}</td>
       <td>${money(agg.base)}</td>
       <td><b>${money(agg.net)}</b></td>
       <td>${agg.paymentBy||v.createdBy||'-'}</td>
+      <td style="white-space:nowrap;font-size:12px;" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">${fmtDateTime(pvPrevStepDate_(v))}</td>
       <td>${pvDueLabel_(infoOf[v.id])}</td>
       <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}</td>
       <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : ''}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
@@ -4234,7 +4320,7 @@ function paymentApprovalHTML(){
     if(expanded && canAct && !isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="13">
+        <td colspan="14">
           <div class="note-box">
             <div style="width:100%;margin-top:4px;">
               <textarea id="pv-note-${v.id}" placeholder="บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)" style="width:100%;"></textarea>
@@ -4249,7 +4335,7 @@ function paymentApprovalHTML(){
     } else if(expanded && canAct && isRejectedItem){
       actionRow = `
       <tr class="action-row">
-        <td colspan="13">
+        <td colspan="14">
           <div style="margin-bottom:10px;padding:10px 12px;background:#fff;border:1px solid var(--stamp-red);border-radius:7px;font-size:12.5px;white-space:pre-line;">
             <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจากผู้อนุมัติ Payment:</strong> ${v.approverNote||'ไม่ได้ระบุเหตุผล'}
           </div>
@@ -4261,10 +4347,11 @@ function paymentApprovalHTML(){
     }
     return mainRow + actionRow;
   };
-  const pvGroups = groupByDue(list.map(v=>({ v, dueDate: infoOf[v.id].due })));
-  const rows = pvGroups.length ? pvGroups.map(g=>
-    `<tr class="group-header"><td colspan="13">รอบชำระเงิน ${g.due==='ไม่ระบุ' ? 'ไม่ระบุ' : fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` + g.items.map(w=>renderPvRow(w.v)).join('')
-  ).join('') : `<tr class="empty-row"><td colspan="13">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
+  const pvGroups = groupForApproval_(list.map(v=>({ v, dueDate: infoOf[v.id].due })), state.pvGroupBy, w=>dtMs_(pvPrevStepDate_(w.v)), w=>w.dueDate, w=>{ const dd = infoOf[w.v.id].docs; return dd.length ? dd[0].docType : ''; });
+  const pvGroupBar = groupBarHTML_(state.pvGroupBy, 'setPvGroupBy');
+  const rows = list.length ? pvGroups.map(g=>
+    (g.label ? `<tr class="group-header"><td colspan="14">${g.label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>` : '') + g.items.map(w=>renderPvRow(w.v)).join('')
+  ).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีรายการรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
@@ -4305,9 +4392,10 @@ function paymentApprovalHTML(){
     </div>
     <hr class="div">
     ${pvFilterBar}
+    ${pvGroupBar}
     <div class="table-scroll">
     <div class="table-scroll"><table>
-      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Doc Payment</th><th>รายการ</th><th>จำนวนเอกสาร</th><th>ประเภทจ่าย</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดจ่ายสุทธิ</th><th>ผู้ทำรายการ</th><th>ส่งมาเมื่อ</th><th>Due</th><th>สถานะ</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div>
     </div>
@@ -4420,7 +4508,7 @@ async function processStage(id, decision){
   const skipApproverEl = document.getElementById('skipApprover-'+id);
   const skipFinanceEl = document.getElementById('skipFinance-'+id);
   const skipApprover = skipApproverEl ? skipApproverEl.checked : (doc.skipApprover==='TRUE'||doc.skipApprover===true);
-  const skipFinance = skipFinanceEl ? skipFinanceEl.checked : (doc.skipFinance==='TRUE'||doc.skipFinance===true);
+  const skipFinance = isViaPaymentDoc_(doc) || (skipFinanceEl ? skipFinanceEl.checked : (doc.skipFinance==='TRUE'||doc.skipFinance===true));
   const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
 
   // mandatory fields before the accountant can forward a document on to the reviewer
@@ -6047,8 +6135,9 @@ function adminSettingsHTML(){
       <td><span class="badge badge-${t.color}">${t.label}</span></td>
       <td class="mono">${t.key}</td>
       <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.autoComplete?'checked':''} onchange="toggleDocTypeAutoComplete('${t.key}', this.checked)"></label></td>
+      <td style="text-align:center;"><label class="chip-check" style="font-weight:400;justify-content:center;"><input type="checkbox" ${t.viaPayment?'checked':''} onchange="toggleDocTypeViaPayment('${t.key}', this.checked)"></label></td>
       <td><button class="btn btn-sm btn-reject" onclick="deleteDocType('${t.key}')">ลบ</button></td>
-    </tr>`).join('') || `<tr class="empty-row"><td colspan="4">ยังไม่มีประเภทเอกสาร</td></tr>`;
+    </tr>`).join('') || `<tr class="empty-row"><td colspan="5">ยังไม่มีประเภทเอกสาร</td></tr>`;
 
   const reviewerOptions = state.members.filter(m=>m.role==='ผู้ตรวจสอบ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
   const approverOptions = state.members.filter(m=>m.role==='ผู้อนุมัติ').map(m=>`<option value="${m.id}">${fullName(m)}</option>`).join('');
@@ -6118,11 +6207,17 @@ function adminSettingsHTML(){
           <input type="checkbox" name="autoComplete"> วางบิลแล้วเป็น Complete ทันที
         </label>
       </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>อนุมัติผ่านแท็บ Payment</label>
+        <label class="chip-check" style="display:flex;align-items:center;gap:6px;font-weight:400;height:38px;">
+          <input type="checkbox" name="viaPayment"> อนุมัติในแท็บ Payment แล้ว Complete (ไม่ส่งการเงิน)
+        </label>
+      </div>
       <button class="btn btn-primary" type="submit">เพิ่มประเภทเอกสาร</button>
     </form>
     <div class="helper" style="margin:-8px 0 12px;">ติ๊ก "ข้ามขั้นตอนอนุมัติ" สำหรับเอกสารที่ไม่ต้องผ่านนักบัญชี/ผู้ตรวจสอบ/ผู้อนุมัติเลย เช่น ใบเสร็จรับเงิน, ใบกำกับภาษี — User วางบิลเข้ามาแล้วระบบจะบันทึกเป็นสถานะ Complete ให้ทันที ติ๊ก/ยกเลิกได้ทีหลังจากคอลัมน์ในตารางด้านล่าง (มีผลกับเอกสารที่วางบิลหลังจากเปลี่ยนค่าเท่านั้น ไม่ย้อนหลัง)</div>
     <table>
-      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th>ข้ามขั้นตอนอนุมัติ</th><th></th></tr></thead>
+      <thead><tr><th>ตัวอย่าง</th><th>Key</th><th>ข้ามขั้นตอนอนุมัติ</th><th>อนุมัติผ่านแท็บ Payment</th><th></th></tr></thead>
       <tbody>${typeRows}</tbody>
     </table>
   </div>
@@ -6709,8 +6804,9 @@ async function addDocType(e){
   const key = label.replace(/\s+/g,'_');
   const color = f.get('color');
   const autoComplete = f.get('autoComplete') === 'on';
+  const viaPayment = f.get('viaPayment') === 'on';
   if(state.docTypes.some(t=>t.key===key)){ showToast('มีประเภทเอกสารนี้อยู่แล้ว'); return; }
-  const res = await apiCall('addDocType', { key, label, color, autoComplete });
+  const res = await apiCall('addDocType', { key, label, color, autoComplete, viaPayment });
   if(!res.success){ showToast('เพิ่มประเภทเอกสารไม่สำเร็จ'); return; }
   showToast('เพิ่มประเภทเอกสาร '+label+' เรียบร้อย');
   e.target.reset();
@@ -6730,6 +6826,13 @@ async function toggleDocTypeAutoComplete(key, checked){
   const t = state.docTypes.find(x=>x.key===key);
   if(t) t.autoComplete = checked;
   showToast(checked ? 'ตั้งให้ "'+(t?t.label:key)+'" ข้ามขั้นตอนอนุมัติแล้ว (Complete ทันทีที่วางบิล)' : 'ยกเลิกการข้ามขั้นตอนอนุมัติแล้ว');
+  render();
+}
+async function toggleDocTypeViaPayment(key, checked){
+  const res = await apiCall('updateDocType', { key, viaPayment: checked });
+  if(!res.success){ showToast('อัปเดตไม่สำเร็จ ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+  showToast(checked ? 'ประเภทนี้จะอนุมัติผ่านแท็บ Payment และ Complete ทันทีหลังอนุมัติครบสาย' : 'ยกเลิกแล้ว ประเภทนี้กลับไปอนุมัติในแท็บบันทึกบัญชีตามเดิม');
+  await refreshData();
   render();
 }
 async function saveApprovalMapping(e){
