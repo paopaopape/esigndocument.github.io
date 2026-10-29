@@ -4375,7 +4375,7 @@ function paymentApprovalHTML(){
             </div>
             <div style="width:100%;display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
               <button class="btn btn-sm btn-approve" onclick="processPaymentStage('${v.id}','approve')">✓ อนุมัติ / ส่งต่อ</button>
-              ${meta.status==='รอผู้อนุมัติPayment' ? `<button class="btn btn-sm btn-reject" onclick="processPaymentStage('${v.id}','reject')">↺ ตีกลับแก้ไข</button>` : ''}
+              <button class="btn btn-sm btn-reject" onclick="processPaymentStage('${v.id}','reject')" title="${meta.status==='รอผู้ตรวจสอบPayment' ? 'ส่งกลับให้การเงินแก้ไข เช่น ลิงก์เอกสารแนบผิด' : 'ส่งกลับให้ผู้ตรวจสอบ Payment'}">↺ ตีกลับแก้ไข${meta.status==='รอผู้ตรวจสอบPayment' ? ' (ส่งการเงิน)' : ''}</button>
             </div>
           </div>
         </td>
@@ -4474,7 +4474,7 @@ async function processPaymentStage(id, decision){
     'รอผู้อนุมัติPayment': {actor:'approverBy', date:'approverDate', note:'approverNote', reject:'ตีกลับแก้ไข(ผู้อนุมัติPayment)', next:null, stageLabel:'ผู้อนุมัติ Payment'},
   }[v.status];
   if(!cfg) return;
-  if(decision==='reject' && v.status==='รอผู้ตรวจสอบPayment'){ showToast('ผู้ตรวจสอบ Payment ไม่สามารถตีกลับได้ — หากพบปัญหาให้ติดต่อผู้ทำรายการ/Admin'); return; }
+  if(decision==='reject' && !note.trim()){ showToast('กรุณาระบุเหตุผลที่ตีกลับในช่องบันทึกความเห็น เพื่อให้ผู้แก้ไขทราบว่าต้องแก้อะไร'); return; }
   const patch = { id };
   if(decision==='approve'){
     patch[cfg.actor] = fullName(state.user);
@@ -4504,6 +4504,29 @@ async function processPaymentStage(id, decision){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast(decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว');
+  await refreshData();
+  render();
+}
+// finance fixes the attachment link of a batch the Payment reviewer sent back, then resubmits to the reviewer
+async function resubmitRejectedPv(id){
+  const v = state.paymentVouchers.find(x=>x.id===id);
+  if(!v) return;
+  const el = document.getElementById('pv-relink-'+id);
+  const link = el ? el.value.trim() : '';
+  if(!link){ showToast('กรุณาใส่ลิงก์ไฟล์ Doc Payment ที่ถูกต้อง'); return; }
+  showBusyOverlay('กำลังบันทึกลิงก์และส่งตรวจสอบใหม่ กรุณารอสักครู่...');
+  const docs = pvDocIds(v).map(i=>state.documents.find(x=>x.id===i)).filter(Boolean);
+  for(const d of docs){
+    const r = await apiCall('updateDocument', { id:d.id, docPaymentLink: link, modifiedBy: fullName(state.user), modifiedDate: nowStr() });
+    if(!r.success){ hideBusyOverlay(); showToast('บันทึกลิงก์ไม่สำเร็จที่เอกสาร '+displayId(d.id)+' ลองใหม่อีกครั้ง'); return; }
+  }
+  let history = [];
+  try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage:'การเงิน แก้ไขลิงก์', actor: fullName(state.user), date: nowStr(), note:'แก้ไขลิงก์ไฟล์ Doc Payment แล้วส่งตรวจสอบใหม่', action:'resubmit' });
+  const res = await apiCall('updatePaymentVoucher', { id, status:'รอผู้ตรวจสอบPayment', reviewerBy:'', reviewerDate:'', historyLog: JSON.stringify(history) });
+  hideBusyOverlay();
+  if(!res.success){ showToast('ส่งตรวจสอบใหม่ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  showToast('แก้ไขลิงก์และส่งผู้ตรวจสอบ Payment ใหม่เรียบร้อย');
   await refreshData();
   render();
 }
@@ -5009,8 +5032,37 @@ function paymentHTML(){
     </tr>`;
   }).join('') : `<tr class="empty-row"><td colspan="5">ยังไม่มีประวัติการรวบจ่าย</td></tr>`;
 
+  // batches the Payment reviewer sent back to finance (e.g. wrong attachment link) — fix the link and resubmit
+  let rejectedPvs = state.paymentVouchers.filter(v=>v.status==='ตีกลับแก้ไข(ผู้ตรวจสอบPayment)');
+  if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length) rejectedPvs = rejectedPvs.filter(v=>state.user.companyCodes.includes(v.companyCode));
+  if(state.paymentCompany!=='all') rejectedPvs = rejectedPvs.filter(v=>v.companyCode===state.paymentCompany);
+  const rejectedPvCard = rejectedPvs.length ? `
+  <div class="card" style="border-color:var(--stamp-red);">
+    <div class="eyebrow" style="color:var(--stamp-red);">ถูกตีกลับจากผู้ตรวจสอบ Payment</div>
+    <h3 style="margin-top:4px;">ชุดรวบจ่ายที่ต้องแก้ไข (${rejectedPvs.length})</h3>
+    <div class="helper" style="display:block;">แก้ลิงก์ไฟล์ Doc Payment (สลิป/หลักฐานการโอน) ให้ถูกต้อง แล้วกด "บันทึกลิงก์ + ส่งตรวจสอบใหม่"</div>
+    <hr class="div">
+    ${rejectedPvs.map(v=>{
+      const docs = pvDocIds(v).map(id=>state.documents.find(x=>x.id===id)).filter(Boolean);
+      const curLink = (docs.find(d=>d.docPaymentLink)||{}).docPaymentLink || '';
+      return `<div style="border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin-bottom:10px;">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;">
+          <b class="mono">${v.docPayment||'-'}</b><span>${companyName(v.companyCode)}</span><span>${docs.length} รายการ</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--ink-soft);">ตีกลับโดย ${v.reviewerBy || ((function(){ try{ const h=(JSON.parse(v.historyLog||'[]')||[]).filter(x=>x.action==='reject').pop(); return h?h.actor:''; }catch(e){ return ''; } })()) || '-'}</span>
+        </div>
+        <div style="margin:8px 0;padding:8px 10px;background:var(--paper);border-radius:7px;font-size:12.5px;white-space:pre-line;"><b style="color:var(--stamp-red);">เหตุผล:</b> ${v.reviewerNote||'ไม่ได้ระบุเหตุผล'}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="field" style="margin:0;flex:1;min-width:260px;"><label>ลิงก์ไฟล์ Doc Payment</label><input type="url" id="pv-relink-${v.id}" value="${curLink}" placeholder="https://drive.google.com/..."></div>
+          ${curLink ? `<a class="icon-btn ql-payment" href="${curLink}" target="_blank" rel="noopener" title="เปิดลิงก์ปัจจุบัน">${PAYMENT_SLIP_SVG}</a>` : ''}
+          <button class="btn btn-sm btn-approve" onclick="resubmitRejectedPv('${v.id}')">↻ บันทึกลิงก์ + ส่งตรวจสอบใหม่</button>
+        </div>
+      </div>`;
+    }).join('')}
+  </div>` : '';
+
   return `
   ${companyHeader}
+  ${rejectedPvCard}
   <div class="card">
     <div class="eyebrow">Payment Stage</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
