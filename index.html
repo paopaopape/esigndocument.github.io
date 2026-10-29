@@ -2459,8 +2459,9 @@ async function submitNewDoc(e){
     if(!proceedAuto) return;
   }
 
+  if(!confirm('ยืนยันส่งเอกสารเข้าสู่กระบวนการอนุมัติใช่หรือไม่?\n\nกรุณาตรวจสอบข้อมูลให้ครบถ้วนก่อนกด "ตกลง"')) return;
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังส่ง...'; }
-  showBusyOverlay('กำลังบันทึกวางบิล กรุณารอสักครู่...');
+  showBusyOverlay('กำลังส่งเอกสารเข้าสู่การอนุมัติ กรุณารอสักครู่...');
   const payload = {
     docType: f.get('docType'), docName, comment: f.get('comment')||'',
     dueDate: f.get('dueDate'), linkFile: f.get('linkFile'), companyCode,
@@ -2569,7 +2570,7 @@ function submitApproveOwnHTML(){
         </div>
       </div>
 
-      <button class="btn btn-primary" type="submit" style="margin-top:14px;">✓ ส่งเข้าสู่กระบวนการ + อนุมัติขั้นนักบัญชีเลย</button>
+      <button class="btn btn-primary" type="submit" style="margin-top:14px;">✓ ส่งเข้าสู่กระบวนการอนุมัติ</button>
     </form>
   </div>`;
 }
@@ -3204,8 +3205,9 @@ async function submitApproveOwn(e){
     if(!confirm('ยืนยันข้ามขั้นตอนผู้ตรวจสอบ และส่งเอกสารนี้ตรงไปที่ผู้อนุมัติเลยใช่หรือไม่?\n\nเหตุผล: '+skipReviewerReason)) return;
   }
 
+  if(!confirm('ยืนยันส่งเอกสารเข้าสู่กระบวนการอนุมัติใช่หรือไม่?\n\nกรุณาตรวจสอบข้อมูลให้ครบถ้วนก่อนกด "ตกลง"')) return;
   if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังส่ง...'; }
-  showBusyOverlay('กำลังบันทึกวางบิลและอนุมัติ กรุณารอสักครู่...');
+  showBusyOverlay('กำลังส่งเอกสารเข้าสู่การอนุมัติ กรุณารอสักครู่...');
 
   const netAmount = unformatMoney(f.get('netAmount')||'');
   const basicPayload = {
@@ -3217,7 +3219,7 @@ async function submitApproveOwn(e){
   const res1 = await apiCall('addDocument', basicPayload);
   if(!res1.success){
     hideBusyOverlay();
-    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการ + อนุมัติขั้นนักบัญชีเลย'; }
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
     if(res1.error === 'duplicate_submission'){
       const idText = res1.duplicateId ? ' อ้างอิง ID เลขที่ '+displayId(res1.duplicateId) : '';
       showToast('มีการบันทึกวางบิลเอกสารนี้ไปแล้ว'+idText+' — ระบบป้องกันไม่ให้วางบิลซ้ำ ถ้าตั้งใจส่งจริงๆ กรุณารอสักครู่แล้วลองใหม่', 5000);
@@ -3281,7 +3283,7 @@ async function submitApproveOwn(e){
   }
   const res2 = await apiCall('updateDocument', patch);
   hideBusyOverlay();
-  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการ + อนุมัติขั้นนักบัญชีเลย'; }
+  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
   if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData(); render(); return; }
   showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
   e.target.reset();
