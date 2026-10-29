@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ระบบอนุมัติเอกสาร | Document Flow</title>
+<script>try{var t=localStorage.getItem('dfTheme'); if(t) document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
@@ -27,11 +28,31 @@
   --pink:#AE4270;
   --radius:9px;
   --shadow: 0 2px 10px rgba(21,34,56,0.10);
+  --surface:#fff;
+  --heading:var(--navy);
+  --pill:#EDE6D2;
 }
+/* ---------- COLOUR THEMES (status colours, doc-type badges and icons keep their own colours in every theme) ---------- */
+html[data-theme="green"]{--navy:#16382B;--navy-light:#21503D;--navy-lighter:#21503D;--paper:#EEF2E8;--paper-white:#F8FAF4;--ink:#1F2A22;--ink-soft:#64705F;--line:#D5DEC8;--gold:#C9A227;--pill:#E3EAD6;--shadow:0 2px 10px rgba(22,56,43,0.10);}
+html[data-theme="ocean"]{--navy:#0F3B57;--navy-light:#18506F;--navy-lighter:#18506F;--paper:#EAF2F7;--paper-white:#F7FBFD;--ink:#1B2A33;--ink-soft:#5F7380;--line:#CFDFE9;--gold:#1F8FB8;--pill:#DCEAF2;--shadow:0 2px 10px rgba(15,59,87,0.10);}
+html[data-theme="purple"]{--navy:#2E1F4D;--navy-light:#41306A;--navy-lighter:#41306A;--paper:#F1EDF6;--paper-white:#FAF8FD;--ink:#261F33;--ink-soft:#6F6683;--line:#DDD4EA;--gold:#B07AD0;--pill:#E6DEF1;--shadow:0 2px 10px rgba(46,31,77,0.10);}
+html[data-theme="white"]{--navy:#1E293B;--navy-light:#334155;--navy-lighter:#334155;--paper:#FFFFFF;--paper-white:#FFFFFF;--ink:#1F2937;--ink-soft:#6B7280;--line:#E5E7EB;--gold:#2563EB;--pill:#F1F5F9;--shadow:0 1px 6px rgba(15,23,42,0.08);}
+html[data-theme="dark"]{--navy:#0B1220;--navy-light:#141E33;--navy-lighter:#22304F;--paper:#1B2436;--paper-white:#232F46;--ink:#E8ECF4;--ink-soft:#9BA7BD;--line:#334058;--gold:#E0B34A;--pill:#2C3A55;--surface:#2C3A55;--heading:#E8ECF4;--shadow:0 2px 10px rgba(0,0,0,0.35);color-scheme:dark;}
+html[data-theme="dark"] [style*="background:var(--surface)"],
+html[data-theme="dark"] [style*="background:#FFF8E8"],
+html[data-theme="dark"] [style*="background:#FDEDEC"],
+html[data-theme="dark"] [style*="background:#FBE9E7"],
+html[data-theme="dark"] [style*="background:#FFF8E1"],
+html[data-theme="dark"] [style*="background:#FFF3E0"],
+html[data-theme="dark"] [style*="background:#E8F5E9"],
+html[data-theme="dark"] [style*="background:#E6F4EA"]{background:var(--surface) !important;color:var(--ink);}
+html[data-theme="dark"] .calc-window{background:#2C3A55;}
+html[data-theme="dark"] .link-cell a, html[data-theme="dark"] a{color:#8FB6F0;}
+.theme-select{padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:12px;}
 *{box-sizing:border-box;}
 @keyframes busy-spin{ to{ transform:rotate(360deg); } }
 body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans Thai',sans-serif;font-size:14px;}
-h1,h2,h3,h4{font-family:'Noto Serif Thai',serif;margin:0;color:var(--navy);}
+h1,h2,h3,h4{font-family:'Noto Serif Thai',serif;margin:0;color:var(--heading);}
 button{font-family:inherit;cursor:pointer;}
 input,select,textarea{font-family:inherit;font-size:13.5px;}
 ::selection{background:var(--gold);color:#fff;}
@@ -49,7 +70,7 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 .login-body{padding:26px 30px 30px;}
 .field{margin-bottom:16px;}
 .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:6px;}
-.field select, .field input, .field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--ink);}
+.field select, .field input, .field textarea{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);}
 .field textarea{resize:vertical;min-height:60px;}
 .field .hint{font-size:11px;color:var(--ink-soft);margin-top:4px;}
 .btn{border:none;border-radius:7px;padding:10px 18px;font-weight:600;font-size:13.5px;display:inline-flex;align-items:center;gap:6px;}
@@ -114,7 +135,7 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 .stat-card{background:var(--paper-white);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .15s,border-color .15s;}
 .stat-card:hover{border-color:var(--ink-soft);}
 .stat-card.active{border-color:var(--navy);box-shadow:0 0 0 2px var(--navy) inset,var(--shadow);}
-.stat-card .num{font-family:'Noto Serif Thai',serif;font-size:30px;color:var(--navy);font-weight:700;}
+.stat-card .num{font-family:'Noto Serif Thai',serif;font-size:30px;color:var(--heading);font-weight:700;}
 .stat-card .lbl{font-size:12px;color:var(--ink-soft);margin-top:2px;}
 .stat-card::before{content:'';position:absolute;top:0;left:0;bottom:0;width:4px;}
 .stat-card.s-accountant::before{background:var(--blue);}
@@ -129,8 +150,8 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 .filter-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:10px;}
 .filter-bar .f-field{min-width:150px;}
 .filter-bar .f-field label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin-bottom:4px;font-weight:600;}
-.filter-bar input, .filter-bar select{padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12.5px;width:100%;}
-.filter-clear{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;font-size:12px;color:var(--ink-soft);height:33px;}
+.filter-bar input, .filter-bar select{padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:12.5px;width:100%;}
+.filter-clear{padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);font-size:12px;color:var(--ink-soft);height:33px;}
 .filter-clear:hover{border-color:var(--stamp-red);color:var(--stamp-red);}
 
 .company-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:14px 18px;background:var(--navy);border-radius:10px;color:#fff;flex-wrap:wrap;}
@@ -161,7 +182,7 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 .badge-pink{background:var(--pink);}
 .badge-gold{background:var(--gold);}
 .badge-forest{background:var(--forest);}
-.status-pill{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:#EDE6D2;color:var(--ink);}
+.status-pill{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11.5px;font-weight:600;background:var(--pill);color:var(--ink);}
 .status-pill.complete{background:var(--forest);color:#fff;transform:rotate(-2deg);box-shadow:0 1px 4px rgba(46,107,78,0.4);}
 .status-pill.reject{background:var(--stamp-red);color:#fff;}
 .status-pill.cancel{background:#726C5E;color:#fff;}
@@ -180,13 +201,13 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 .btn-sm{padding:6px 12px;font-size:12px;border-radius:6px;}
 .btn-approve{background:var(--forest);color:#fff;border:none;}
 .btn-approve:hover{opacity:.9;}
-.btn-reject{background:#fff;color:var(--stamp-red);border:1px solid var(--stamp-red);}
+.btn-reject{background:var(--surface);color:var(--stamp-red);border:1px solid var(--stamp-red);}
 .btn-reject:hover{background:rgba(168,58,44,0.08);}
-.btn-outline{background:#fff;color:var(--navy);border:1px solid var(--line);}
+.btn-outline{background:var(--surface);color:var(--heading);border:1px solid var(--line);}
 .btn-outline:hover{border-color:var(--navy);}
 .btn-action{background:var(--navy);color:#fff;border:1px solid var(--navy);}
 .btn-action:hover{background:var(--navy-light);}
-.btn-cancel{background:#fff;color:var(--ink-soft);border:1px solid var(--ink-soft);}
+.btn-cancel{background:var(--surface);color:var(--ink-soft);border:1px solid var(--ink-soft);}
 .btn-cancel:hover{background:rgba(114,108,94,0.1);color:var(--ink);border-color:var(--ink);}
 .action-row td{background:var(--paper);padding:14px 16px;}
 .note-box{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;}
@@ -194,8 +215,8 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 .note-box .sap-input{width:190px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;}
 .note-box .sap-wrap label{display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:3px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
 
-.icon-btn{background:#fff;border:1px solid var(--line);border-radius:6px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-soft);}
-.icon-btn:hover{border-color:var(--navy);color:var(--navy);background:var(--paper);}
+.icon-btn{background:var(--surface);border:1px solid var(--line);border-radius:6px;width:28px;height:28px;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-soft);}
+.icon-btn:hover{border-color:var(--heading);color:var(--heading);background:var(--paper);}
 .icon-btn.edit-icon{color:var(--gold);border-color:rgba(184,144,42,0.45);}
 .icon-btn.edit-icon:hover{background:rgba(184,144,42,0.1);border-color:var(--gold);color:var(--gold);}
 .icon-btn.dl-icon{color:var(--purple);border-color:rgba(123,79,160,0.4);}
@@ -213,13 +234,13 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 
 .tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line);}
 .tab{padding:9px 16px;font-size:13px;font-weight:600;color:var(--ink-soft);border-bottom:2px solid transparent;}
-.tab:hover{color:var(--navy);cursor:pointer;}
+.tab:hover{color:var(--heading);cursor:pointer;}
 .tab-row{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--line);}
-.help-toggle{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:8px;border:1px solid var(--line);border-radius:50%;background:#fff;color:var(--ink-soft);font-size:12px;font-weight:700;cursor:pointer;vertical-align:2px;}
-.help-toggle:hover{color:var(--navy);border-color:var(--gold);}
-.tab.active{color:var(--navy);border-color:var(--gold);}
+.help-toggle{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:8px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink-soft);font-size:12px;font-weight:700;cursor:pointer;vertical-align:2px;}
+.help-toggle:hover{color:var(--heading);border-color:var(--gold);}
+.tab.active{color:var(--heading);border-color:var(--gold);}
 
-.chip-check{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;font-size:12px;margin:3px 4px 3px 0;background:#fff;}
+.chip-check{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--line);border-radius:20px;font-size:12px;margin:3px 4px 3px 0;background:var(--surface);}
 .chip-check input{margin:0;}
 
 .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.12em;color:var(--gold);text-transform:uppercase;}
@@ -654,6 +675,16 @@ function signBlock(positionLabel, personName, roleTag){
 function blankSignBlock(positionLabel, roleTag){
   // always renders an empty live-signature line — no name from the system, ever
   return `<div>${positionLabel}<div class="sign-line"></div>&nbsp;<br><span style="color:#666;">${roleTag}</span></div>`;
+}
+const THEMES = [['','คลาสสิก'],['green','เขียวมิตรผล'],['ocean','ฟ้าทะเล'],['purple','ม่วงอเมทิสต์'],['white','ขาวสะอาด'],['dark','โหมดมืด']];
+function currentTheme_(){ try{ return localStorage.getItem('dfTheme')||''; }catch(e){ return ''; } }
+function setTheme(name){
+  try{ if(name) localStorage.setItem('dfTheme', name); else localStorage.removeItem('dfTheme'); }catch(e){}
+  if(name) document.documentElement.setAttribute('data-theme', name); else document.documentElement.removeAttribute('data-theme');
+}
+function themeSelectHTML_(){
+  const cur = currentTheme_();
+  return `<select class="theme-select" title="เลือกธีมสี" onchange="setTheme(this.value)">${THEMES.map(t=>`<option value="${t[0]}" ${cur===t[0]?'selected':''}>🎨 ${t[1]}</option>`).join('')}</select>`;
 }
 function nowStr(){ return new Date().toLocaleString('th-TH'); }
 function appendNoteText(existing, newText){
@@ -1940,6 +1971,7 @@ function topbarHTML(){
     <div class="user-chip">
       <div class="who"><div class="name">${fullName(state.user)}</div><div class="role">${ROLE_LABELS[state.user.role]}</div></div>
       <div class="avatar">${initials}</div>
+ ${themeSelectHTML_()}
       <button class="logout-btn" id="refresh-btn" onclick="manualRefresh()" title="โหลดข้อมูลล่าสุดจากระบบโดยไม่ต้องรีเฟรชหน้าเว็บ">↻ รีเฟรช</button>
       <button class="logout-btn" onclick="doLogout()">ออกจากระบบ</button>
     </div>
@@ -3878,7 +3910,7 @@ function accountingApprovalHTML(mode){
       })();
       const mainRow = `
         <tr id="doclink-${d.id}">
-          <td class="mono" style="font-weight:700;color:var(--navy);font-size:13.5px;">${displayId(d.id)}</td>
+          <td class="mono" style="font-weight:700;color:var(--heading);font-size:13.5px;">${displayId(d.id)}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span>${(d.skipApprover==='TRUE'||d.skipApprover===true)?'<span title="ข้ามขั้นผู้อนุมัติ" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">⤳หัวหน้าแผนก</span>':''}${(d.skipFinance==='TRUE'||d.skipFinance===true)?'<span title="ไม่ส่งการเงิน" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">🚫การเงิน</span>':''}${getSkipReviewerReason(d)?`<span title="ยังไม่ได้ผ่านผู้ตรวจสอบ — ${getSkipReviewerReason(d)}" style="margin-left:4px;font-size:10px;color:var(--stamp-red);font-weight:600;">⚠ ข้ามผู้ตรวจสอบ</span>`:''}</td>
           <td>${d.docName}${d.comment?`<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px;">${d.comment}</div>`:''}</td>
           <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
@@ -4317,7 +4349,7 @@ function paymentApprovalHTML(){
     const mainRow = `
     <tr>
       <td class="mono" style="white-space:nowrap;">${v.id||'-'}</td>
-      <td class="mono" style="font-weight:700;color:var(--navy);">${v.docPayment||'-'}</td>
+      <td class="mono" style="font-weight:700;color:var(--heading);">${v.docPayment||'-'}</td>
       <td>${pvItemCellHTML_(v)}</td>
       <td>${docIds.length} รายการ${(function(){ const ts=[...new Set(infoOf[v.id].docs.map(d=>d.docType).filter(Boolean))]; return ts.length ? '<div style="margin-top:3px;">'+ts.map(k=>`<span class="badge badge-${docTypeInfo(k).color}" style="font-size:10px;">${docTypeInfo(k).label}</span>`).join(' ')+'</div>' : ''; })()}</td>
       <td>${agg.payTypeLabel}</td>
@@ -6591,7 +6623,7 @@ function adminNotificationsHTML(){
     <div class="helper">ปรับข้อความหัวเรื่องและเนื้อหาอีเมลที่จะส่งได้เอง — ใช้ตัวแปรด้านล่างแทรกลงในข้อความ ระบบจะแทนที่ด้วยข้อมูลจริงของเอกสารตอนส่งจริง</div>
     <hr class="div">
     <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
-      ${['{{id}}','{{docName}}','{{docType}}','{{companyCode}}','{{createdBy}}','{{netAmount}}','{{stageLabel}}'].map(v=>`<code style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:3px 7px;font-size:11.5px;color:var(--navy);">${v}</code>`).join('')}
+      ${['{{id}}','{{docName}}','{{docType}}','{{companyCode}}','{{createdBy}}','{{netAmount}}','{{stageLabel}}'].map(v=>`<code style="background:var(--paper);border:1px solid var(--line);border-radius:5px;padding:3px 7px;font-size:11.5px;color:var(--heading);">${v}</code>`).join('')}
     </div>
     <form onsubmit="saveEmailTemplate(event)">
       <div class="field">
