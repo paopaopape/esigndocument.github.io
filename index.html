@@ -7008,8 +7008,7 @@ function adminNotificationsHTML(){
       ${toggle('emailNotifyReviewer', 'มีเอกสารรอผู้ตรวจสอบดำเนินการ', on('emailNotifyReviewer'))}
       ${toggle('emailNotifyApprover', 'มีเอกสารรอผู้อนุมัติดำเนินการ', on('emailNotifyApprover'))}
       ${toggle('emailNotifyReject', 'เอกสารถูกตีกลับ — แจ้งผู้ที่ต้องแก้ไข (ขั้นก่อนหน้า) พร้อมเหตุผล ทั้ง flow บัญชีและ Payment', on('emailNotifyReject'))}
-      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">การคัดกรองผู้รับ</div>
-      ${toggle('emailStrictMapping', 'เข้มงวดตาม Approval Mapping — ประเภทเอกสาร+บริษัทที่ยังไม่ได้ map ผู้ตรวจสอบ/ผู้อนุมัติ จะไม่ส่งเมลหาใครเลย (ทั้งเมลทันทีและสรุปเช้า/บ่าย) แทนการส่งหาทุกคนในบริษัท', on('emailStrictMapping'))}
+      <div class="helper" style="margin-top:14px;">ผู้ตรวจสอบ/ผู้อนุมัติที่ยังไม่ได้ Map ในประเภทเอกสาร+บริษัท ระบบจะไม่ส่งเมลและไม่บันทึก Log (ส่งเฉพาะคนที่ Map ไว้)</div>
       <button class="btn btn-primary" type="submit" style="margin-top:16px;">บันทึกการตั้งค่า</button>
     </form>
   </div>
@@ -7223,7 +7222,7 @@ function toggleNotifPreview(el){
 }
 async function saveNotificationSettings(e){
   e.preventDefault();
-  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover','emailNotifyReject','emailStrictMapping'];
+  const keys = ['emailNotifyEnabled','emailNotifyAccountant','emailNotifyReviewer','emailNotifyApprover','emailNotifyReject'];
   showBusyOverlay('กำลังบันทึกการตั้งค่า กรุณารอสักครู่...');
   for(const key of keys){
     const el = document.getElementById('notif-'+key);
