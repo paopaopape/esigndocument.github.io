@@ -4346,17 +4346,26 @@ function openApprovalReport(id){
   const penInit_ = JSON.stringify({ docId:d.id, can:canMarkReport_(d), sig:reportSig_(d), marks:reportMarksOf_(d),
     me:{ uid:(state.user&&state.user.id)||'', name:state.user?fullName(state.user):'', role:state.user?state.user.role:'' } }).replace(/</g,'\\u003c');
   const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=900">
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;600;700&display=swap" rel="stylesheet">
     <title>ใบสรุปการอนุมัติเอกสาร · ${displayId(d.id)}</title>
     <style>
-      @page{ size:A4 landscape; margin:8mm; }
+      @page{ size:A4 landscape; margin:0; }
       *{ box-sizing:border-box; }
-      body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;background:#e9e9ee;}
-      .sheet{ width:297mm; min-height:210mm; background:#fff; margin:14px auto; padding:8mm; box-shadow:0 2px 14px rgba(0,0,0,.25); }
-      @media screen{ body{ zoom:.7; } }
+      body{font-family:'IBM Plex Sans Thai','Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;background:#e9e9ee;-webkit-text-size-adjust:100%;}
+      #wrap{margin:14px auto;width:842px;}
+      #pages{width:1123px;transform:scale(.75);transform-origin:0 0;}
+      .page{position:relative;width:1123px;height:794px;background:#fff;margin:0 0 16px;padding:30px;box-shadow:0 2px 14px rgba(0,0,0,.25);overflow:hidden;}
+      .pc{height:732px;overflow:hidden;}
+      .pno{position:absolute;right:30px;bottom:8px;font-size:10px;color:#777;}
+      .cont{font-size:12px;font-weight:700;margin:0 0 8px;color:#555;}
+      #src{display:none;}
       h1{font-size:18px;text-align:center;margin:0 0 10px;}
       .meta{font-size:11px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px 24px;}
       .meta span.label{color:#555;}
       table.data,table.trail{width:100%;border-collapse:collapse;font-size:10.5px;margin-bottom:16px;}
+      table.data{table-layout:fixed;}
+      table.data td,table.data th{word-break:break-word;overflow-wrap:anywhere;}
       table.data th,table.data td,table.trail th,table.trail td{border-bottom:1px solid #333;padding:4px 5px;text-align:left;vertical-align:top;}
       table.data thead th,table.trail thead th{border-bottom:2px solid #000;}
       table.data .n{text-align:right;white-space:nowrap;}
@@ -4369,9 +4378,8 @@ function openApprovalReport(id){
       .sign-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:30px;text-align:center;font-size:11px;}
       .sign-line{border-top:1px solid #333;margin:30px 12px 6px;}
       .no-print{margin:16px 0;text-align:center;}
-      .sheet{position:relative;}
-      #penCanvas{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;}
-      #penCanvas.on{pointer-events:auto;cursor:crosshair;touch-action:none;}
+      .pcv{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;}
+      .pcv.on{pointer-events:auto;cursor:crosshair;touch-action:none;}
       #penBar{position:fixed;top:12px;right:14px;z-index:50;background:#fff;border:1px solid #ccc;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.2);padding:6px 8px;display:flex;align-items:center;gap:6px;font-size:13px;zoom:1.3;}
       #penBar button{border:1px solid #ccc;background:#fff;border-radius:8px;padding:4px 9px;cursor:pointer;font-size:13px;}
       #penBar button.act{background:#fff3b0;border-color:#c9a400;}
@@ -4381,9 +4389,9 @@ function openApprovalReport(id){
       #penBar.open #penTools{display:flex;}
       #penNote{font-size:12px;margin:0 0 8px;padding:6px 10px;border-radius:8px;background:#f4f4f6;color:#444;}
       #penNote.warn{background:#fff3cd;color:#7a5b00;}
-      @media print{ #penBar,#penNote{display:none;} #penCanvas{pointer-events:none;} }
-      @media print{ body{background:#fff;zoom:1;} .sheet{margin:0;box-shadow:none;width:auto;min-height:0;padding:0;} .no-print{display:none;} table.data tr.subtot td,table.data tr.grand td{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
-    </style></head><body><div class="sheet">
+      @media print{ #penBar,#penNote{display:none !important;} .pcv{pointer-events:none;} }
+      @media print{ body{background:#fff;} #wrap{width:auto;margin:0;} #pages{transform:none;width:auto;} .page{margin:0;box-shadow:none;width:297mm;height:209.5mm;page-break-after:always;break-after:page;} #wrap{height:auto !important;} .page:last-child{page-break-after:auto;break-after:auto;} .no-print{display:none;} table.data tr.subtot td,table.data tr.grand td{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
+    </style></head><body><div id="wrap"><div id="pages"></div></div><div id="src">
     <h1>ใบสรุปการอนุมัติเอกสาร</h1>
     <div class="meta">
       <div><span class="label">บริษัท:</span> <b>${companyName(d.companyCode)}</b></div>
@@ -4392,6 +4400,7 @@ function openApprovalReport(id){
       <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
     </div>
     <table class="data">
+      <colgroup><col style="width:5.5%"><col style="width:5.5%"><col style="width:10%"><col style="width:7%"><col style="width:5.5%"><col style="width:5%"><col style="width:9.5%"><col style="width:6%"><col style="width:7.5%"><col style="width:8.5%"><col style="width:5.5%"><col style="width:5.5%"><col style="width:5.5%"><col style="width:6.5%"><col style="width:7%"></colgroup>
       <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         ${(function(){
@@ -4454,9 +4463,8 @@ function openApprovalReport(id){
       ${(d.approver2By||slotName_(2)) ? chainSign_('ผู้อนุมัติ (ลำดับ 2)', d.approver2By, 'ผู้อนุมัติ', slotName_(2)) : ''}
       ${(d.approver3By||slotName_(3)) ? chainSign_('ผู้อนุมัติ (ลำดับ 3)', d.approver3By, 'ผู้อนุมัติ', slotName_(3)) : ''}
     </div>
-    <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
-    <canvas id="penCanvas"></canvas>
   </div>
+  <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
   <div id="penBar" class="no-print"></div>
   <script>window.__PEN = ${penInit_};<\/script>
   <script>${PEN_POPUP_JS_}<\/script>
@@ -4502,59 +4510,96 @@ async function saveReportMarks_(docId, layer){
   return { ok:true };
 }
 const PEN_POPUP_JS_ = `(function(){
-  var P = window.__PEN, bar = document.getElementById('penBar'), cv = document.getElementById('penCanvas'), sheet = document.querySelector('.sheet');
-  var ctx = cv.getContext('2d');
+  var P = window.__PEN, bar = document.getElementById('penBar');
+  var src = document.getElementById('src'), host = document.getElementById('pages'), wrap = document.getElementById('wrap');
   var COLORS = {black:'#111111', blue:'#1d4ed8', red:'#dc2626'};
-  var mine = null, others = [];
-  P.marks.forEach(function(l){ if(l.uid===P.me.uid) mine = l; else others.push(l); });
-  var strokes = mine ? mine.strokes.map(function(s){ return {c:s.c, p:s.p.slice()}; }) : [];
-  var saved = JSON.stringify(strokes), color = 'red', tool = 'pen', drawing = null, open = false;
-  function sz(){ var r = sheet.getBoundingClientRect(); var dpr = window.devicePixelRatio||1; cv.width = Math.round(sheet.offsetWidth*dpr); cv.height = Math.round(sheet.offsetHeight*dpr); redraw(); }
-  function paint(list, alpha){
+  var pages = [], mine = null, others = [], strokes = [], saved = '', color = 'red', tool = 'pen', drawing = null, open = false;
+  function newPage(){
+    var pg = document.createElement('div'); pg.className = 'page';
+    var pc = document.createElement('div'); pc.className = 'pc'; pg.appendChild(pc);
+    var cv = document.createElement('canvas'); cv.className = 'pcv'; pg.appendChild(cv);
+    var no = document.createElement('div'); no.className = 'pno'; pg.appendChild(no);
+    host.appendChild(pg);
+    var o = {pg:pg, pc:pc, cv:cv, no:no, tb:null}; pages.push(o); return o;
+  }
+  function over(o){ return o.pc.scrollHeight > o.pc.clientHeight + 0.5; }
+  function build(){
+    var h1 = src.querySelector('h1'), meta = src.querySelector('.meta');
+    var table = src.querySelector('table.data'), colg = table.querySelector('colgroup').outerHTML, thead = table.querySelector('thead').outerHTML;
+    var rows = [].slice.call(table.querySelectorAll('tbody > tr'));
+    var trail = src.querySelector('table.trail'), sign = src.querySelector('.sign-grid');
+    var cur = newPage(); cur.pc.appendChild(h1.cloneNode(true)); cur.pc.appendChild(meta.cloneNode(true));
+    function addTable(o){ var t = document.createElement('table'); t.className = 'data'; t.innerHTML = colg + thead + '<tbody></tbody>'; o.pc.appendChild(t); o.tb = t.querySelector('tbody'); }
+    function nextPage(withTable){ cur = newPage(); var c = document.createElement('div'); c.className = 'cont'; c.textContent = 'ใบสรุปการอนุมัติเอกสาร (ต่อ)'; cur.pc.appendChild(c); if(withTable) addTable(cur); }
+    addTable(cur);
+    rows.forEach(function(r){
+      var c = r.cloneNode(true); cur.tb.appendChild(c);
+      if(over(cur) && cur.tb.children.length > 1){ cur.tb.removeChild(c); nextPage(true); cur.tb.appendChild(c); }
+    });
+    var t2 = trail.cloneNode(true); cur.pc.appendChild(t2);
+    if(over(cur)){ cur.pc.removeChild(t2); nextPage(false); cur.pc.appendChild(t2); }
+    var sg = sign.cloneNode(true); cur.pc.appendChild(sg);
+    if(over(cur)){ cur.pc.removeChild(sg); nextPage(false); cur.pc.appendChild(sg); }
+    pages.forEach(function(o,i){ o.no.textContent = 'หน้า '+(i+1)+'/'+pages.length; });
+    wrap.style.height = Math.ceil(pages.length*(794+16)*0.75)+'px';
+  }
+  function ctxOf(o){ return o.cv.getContext('2d'); }
+  function sz(){ var dpr = Math.min(2, window.devicePixelRatio||1); pages.forEach(function(o){ o.cv.width = Math.round(1123*dpr); o.cv.height = Math.round(794*dpr); }); redraw(); }
+  function paint(o, i, list){
+    var ctx = ctxOf(o), W = o.cv.width, H = o.cv.height;
     list.forEach(function(s){
-      var p = s.p; if(p.length<2) return;
-      ctx.globalAlpha = alpha; ctx.strokeStyle = COLORS[s.c]||s.c; ctx.lineWidth = Math.max(2, cv.width/380); ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.beginPath(); ctx.moveTo(p[0]/1000*cv.width, p[1]/1000*cv.height);
-      if(p.length===2){ ctx.lineTo(p[0]/1000*cv.width+0.1, p[1]/1000*cv.height); }
-      for(var i=2;i<p.length;i+=2) ctx.lineTo(p[i]/1000*cv.width, p[i+1]/1000*cv.height);
+      if((s.g||0)!==i) return; var p = s.p; if(p.length<2) return;
+      ctx.strokeStyle = COLORS[s.c]||s.c; ctx.lineWidth = Math.max(2, W/420); ctx.lineCap='round'; ctx.lineJoin='round';
+      ctx.beginPath(); ctx.moveTo(p[0]/1000*W, p[1]/1000*H);
+      if(p.length===2) ctx.lineTo(p[0]/1000*W+0.1, p[1]/1000*H);
+      for(var k=2;k<p.length;k+=2) ctx.lineTo(p[k]/1000*W, p[k+1]/1000*H);
       ctx.stroke();
     });
-    ctx.globalAlpha = 1;
   }
-  function redraw(){ ctx.clearRect(0,0,cv.width,cv.height); others.forEach(function(l){ paint(l.strokes, 1); }); paint(strokes, 1); if(drawing) paint([drawing],1); }
-  function pt(e){ var r = cv.getBoundingClientRect(); return [Math.round((e.clientX-r.left)/r.width*1000), Math.round((e.clientY-r.top)/r.height*1000)]; }
+  function redraw(){
+    pages.forEach(function(o,i){
+      ctxOf(o).clearRect(0,0,o.cv.width,o.cv.height);
+      others.forEach(function(l){ paint(o,i,l.strokes); });
+      paint(o,i,strokes); if(drawing && !drawing.erase) paint(o,i,[drawing]);
+    });
+  }
+  function pt(o,e){ var r = o.cv.getBoundingClientRect(); return [Math.round((e.clientX-r.left)/r.width*1000), Math.round((e.clientY-r.top)/r.height*1000)]; }
   function dirty(){ return JSON.stringify(strokes)!==saved; }
-  function eraseAt(x,y){
+  function eraseAt(g,x,y){
     var before = strokes.length;
-    strokes = strokes.filter(function(s){ for(var i=0;i<s.p.length;i+=2){ if(Math.abs(s.p[i]-x)<14 && Math.abs(s.p[i+1]-y)<14) return false; } return true; });
+    strokes = strokes.filter(function(s){ if((s.g||0)!==g) return true; for(var i=0;i<s.p.length;i+=2){ if(Math.abs(s.p[i]-x)<14 && Math.abs(s.p[i+1]-y)<18) return false; } return true; });
     if(strokes.length!==before) redraw();
   }
-  cv.addEventListener('pointerdown', function(e){
-    if(!open) return; e.preventDefault(); cv.setPointerCapture(e.pointerId);
-    var q = pt(e);
-    if(tool==='erase'){ drawing = {erase:true}; eraseAt(q[0],q[1]); return; }
-    drawing = {c:color, p:[q[0],q[1]]};
-  });
-  cv.addEventListener('pointermove', function(e){
-    if(!drawing) return; var q = pt(e);
-    if(drawing.erase){ eraseAt(q[0],q[1]); return; }
-    var n = drawing.p.length, dx = q[0]-drawing.p[n-2], dy = q[1]-drawing.p[n-1];
-    if(dx*dx+dy*dy < 4) return; drawing.p.push(q[0],q[1]); redraw();
-  });
-  function end(){ if(drawing && !drawing.erase){ strokes.push({c:drawing.c, p:drawing.p}); } drawing = null; redraw(); render(); }
-  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
-  window.addEventListener('resize', sz);
+  function wire(){
+    pages.forEach(function(o,gi){
+      var cv = o.cv;
+      cv.addEventListener('pointerdown', function(e){
+        if(!open) return; e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(x){}
+        var q = pt(o,e);
+        if(tool==='erase'){ drawing = {erase:true, g:gi}; eraseAt(gi,q[0],q[1]); return; }
+        drawing = {c:color, g:gi, p:[q[0],q[1]]};
+      });
+      cv.addEventListener('pointermove', function(e){
+        if(!drawing || drawing.g!==gi) return; var q = pt(o,e);
+        if(drawing.erase){ eraseAt(gi,q[0],q[1]); return; }
+        var n = drawing.p.length, dx = q[0]-drawing.p[n-2], dy = q[1]-drawing.p[n-1];
+        if(dx*dx+dy*dy < 4) return; drawing.p.push(q[0],q[1]); redraw();
+      });
+      var end = function(){ if(drawing && !drawing.erase){ strokes.push({c:drawing.c, g:drawing.g, p:drawing.p}); } drawing = null; redraw(); render(); };
+      cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+    });
+  }
   window.addEventListener('beforeunload', function(e){ if(P.can && dirty()){ e.preventDefault(); e.returnValue=''; } });
-
   function note(){
     var n = document.getElementById('penNote');
-    if(!n){ n = document.createElement('div'); n.id='penNote'; n.className='no-print'; sheet.insertBefore(n, sheet.querySelector('.meta')); }
+    if(!n){ n = document.createElement('div'); n.id='penNote'; n.className='no-print'; document.body.insertBefore(n, wrap); }
     var all = others.concat(mine?[mine]:[]).filter(function(l){ return l.strokes && l.strokes.length; });
     if(!all.length){ n.style.display='none'; return; }
-    n.style.display='block';
+    n.style.display='block'; n.style.cssText += ';max-width:842px;margin:10px auto 0;';
     var warn = all.some(function(l){ return l.sig && l.sig!==P.sig; });
-    n.className = 'no-print'+(warn?' warn':'');
-    n.innerHTML = '✎ รอยปากกาโดย: '+all.map(function(l){ return '<b>'+l.by+'</b> ('+l.role+(l.date?' · '+l.date:'')+')'; }).join(' , ')+(warn?'<br>⚠ ข้อมูลในเอกสารมีการเปลี่ยนแปลงหลังจากมีการขีด ตำแหน่งรอยปากกาอาจไม่ตรงกับบรรทัดเดิม':'');
+    if(!warn){ n.style.display='none'; return; }
+    n.className = 'no-print warn';
+    n.innerHTML = '⚠ ข้อมูลในเอกสารมีการเปลี่ยนแปลงหลังจากมีการขีด ตำแหน่งรอยปากกาอาจไม่ตรงกับบรรทัดเดิม';
   }
   function render(){
     if(!P.can){ bar.style.display='none'; note(); return; }
@@ -4562,7 +4607,7 @@ const PEN_POPUP_JS_ = `(function(){
     ['black','blue','red'].forEach(function(k){ h += '<button class="clr '+(color===k&&tool==='pen'?'act':'')+'" data-c="'+k+'" style="background:'+COLORS[k]+'" title="'+k+'"></button>'; });
     h += '<button id="pbErase" class="'+(tool==='erase'?'act':'')+'">ยางลบ</button><button id="pbUndo">↶ ย้อน</button><button id="pbClear">ล้าง</button><button id="pbSave" style="background:#e8f5e9;border-color:#2e7d32;">💾 Save'+(dirty()?' •':'')+'</button></span>';
     bar.innerHTML = h; bar.className = open?'open':'';
-    cv.className = open?'on':'';
+    pages.forEach(function(o){ o.cv.className = 'pcv'+(open?' on':''); });
     document.getElementById('pbOpen').onclick = function(){ open = !open; render(); };
     Array.prototype.forEach.call(bar.querySelectorAll('.clr'), function(b){ b.onclick = function(){ color = b.getAttribute('data-c'); tool='pen'; render(); }; });
     document.getElementById('pbErase').onclick = function(){ tool = tool==='erase'?'pen':'erase'; render(); };
@@ -4588,7 +4633,13 @@ const PEN_POPUP_JS_ = `(function(){
     };
     note();
   }
-  setTimeout(function(){ sz(); render(); }, 50);
+  function start(){
+    P.marks.forEach(function(l){ if(l.uid===P.me.uid) mine = l; else others.push(l); });
+    strokes = mine ? mine.strokes.map(function(s){ return {c:s.c, g:s.g||0, p:s.p.slice()}; }) : []; saved = JSON.stringify(strokes);
+    build(); wire(); sz(); render();
+  }
+  var fr = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  Promise.race([fr, new Promise(function(r){ setTimeout(r, 2500); })]).then(start);
 })();`;
 function getPvSkipReason_(v){
   try{
