@@ -312,7 +312,7 @@ let state = {
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
   paymentCompany:'all',
-  vendorAdminCo:'all', paymentAccounts:[], paymentAccountNo:'', paymentSelected:[], receiveSelected:[], reportReceiveCompany:'all', reportReceiveSearch:{rv:'',by:'',from:'',to:''}, paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
+  vendorAdminCo:'all', paymentAccounts:[], paymentAccountNo:'', paymentSelected:[], receiveSelected:[], receiveDocSap:'', reportReceiveCompany:'all', reportReceiveSearch:{rv:'',by:'',from:'',to:''}, paymentDocNumber:'', paymentDocLink:'', paymentHistoryEditId:null,
   voucherReportCompany:'all', voucherReportSelected:[], voucherReportTitle:'', voucherEditRow:null,
   voucherReportSearch:{type:'', name:'', due:'', createdBy:''},
   pendingSapImport:null,
@@ -5099,7 +5099,8 @@ function receiveHTML(){
     ${noCompanyPicked && list.length && canAct ? '<div class="helper" style="color:var(--stamp-red);">กรุณาเลือกบริษัทก่อน แล้วจึงติ๊กเลือกเพื่อยืนยันรับเงิน (1 RV ต่อ 1 บริษัท)</div>' : ''}
     ${canAct ? `<div class="batch-bar" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 12px;padding:10px 12px;background:var(--paper);border-radius:8px;">
       <span style="font-size:13px;">เลือกแล้ว <b>${selUnits.length}</b> รายการ · ยอดรวม <b>${money(selSum)}</b> บาท</span>
-      <button class="btn btn-sm btn-approve" ${selUnits.length?'':'disabled'} onclick="confirmReceiveBatch()">✓ ยืนยันรับเงิน</button>
+      <div class="f-field" style="margin:0;"><label style="font-size:10.5px;">Doc SAP (เลขที่เอกสารรับเงิน)</label><input id="receive-docsap" type="text" placeholder="เช่น 1500001234" value="${(state.receiveDocSap||'').replace(/"/g,'&quot;')}" oninput="setReceiveDocSap(this.value)" style="width:200px;"></div>
+      <button id="receive-confirm-btn" class="btn btn-sm btn-approve" ${(selUnits.length && (state.receiveDocSap||'').trim())?'':'disabled'} onclick="confirmReceiveBatch()">✓ ยืนยันรับเงิน</button>
     </div>` : '<div class="helper">เฉพาะเจ้าหน้าที่การเงินที่ยืนยันรับเงินได้</div>'}
     <div class="table-scroll">
     <table>
@@ -5108,6 +5109,11 @@ function receiveHTML(){
     </table>
     </div>
   </div>`;
+}
+function setReceiveDocSap(v){
+  state.receiveDocSap = v;
+  const b = document.getElementById('receive-confirm-btn');
+  if(b) b.disabled = !(state.receiveSelected.length && String(v||'').trim());
 }
 function toggleReceiveSelect(key){
   const i = state.receiveSelected.indexOf(key);
@@ -5138,16 +5144,19 @@ async function confirmReceiveBatch(){
     const multi = parseSapLines(d).length>1;
     items.push({ id:d.id, subIds: multi ? picked.map(u=>u.key) : [] });
     n += picked.length; sum += picked.reduce((t,u)=>t+u.net,0);
-    logs[d.id] = appendHistoryLog(d, { stage:'การเงิน (รับเงิน)', actor: me, date: now, note: multi ? 'รับเงิน: '+picked.map(u=>u.key).join(', ') : '', action:'receive' });
+    logs[d.id] = appendHistoryLog(d, { stage:'การเงิน (รับเงิน)', actor: me, date: now, note: (multi ? 'รับเงิน: '+picked.map(u=>u.key).join(', ')+' · ' : '') + 'Doc SAP: '+String(state.receiveDocSap||'').trim(), action:'receive' });
   });
   if(!items.length){ showToast('กรุณาติ๊กเลือกรายการที่ได้รับเงินแล้ว'); return; }
+  const docSap = String(state.receiveDocSap||'').trim();
+  if(!docSap){ showToast('กรุณากรอก Doc SAP ก่อนยืนยันรับเงิน'); const i=document.getElementById('receive-docsap'); if(i) i.focus(); return; }
   const sumTxt = sum.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if(!confirm('ยืนยันว่าได้รับเงินแล้ว '+n+' รายการ ยอดรวม '+sumTxt+' บาท ใช่หรือไม่?\n\nระบบจะออกเลข RV (Receive Voucher) 1 เลข ให้ทุกรายการที่เลือก (เอกสารที่รับครบทุก Sub ID จะเป็น Complete)')) return;
+  if(!confirm('ยืนยันว่าได้รับเงินแล้ว '+n+' รายการ ยอดรวม '+sumTxt+' บาท\nDoc SAP: '+docSap+'\nใช่หรือไม่?\n\nระบบจะออกเลข RV (Receive Voucher) 1 เลข ให้ทุกรายการที่เลือก (เอกสารที่รับครบทุก Sub ID จะเป็น Complete)')) return;
   showBusyOverlay('กำลังบันทึกการรับเงิน กรุณารอสักครู่...');
-  const res = await apiCall('confirmReceive', { items, companyCode: docs.find(d=>d.id===items[0].id).companyCode, receivedBy: me, receivedDate: now, modifiedBy: me, modifiedDate: now, historyLogs: logs });
+  const res = await apiCall('confirmReceive', { items, companyCode: docs.find(d=>d.id===items[0].id).companyCode, receivedBy: me, receivedDate: now, modifiedBy: me, modifiedDate: now, historyLogs: logs, receiveDocSap: docSap });
   hideBusyOverlay();
   if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'+(res.error?' ('+res.error+')':'')); return; }
   state.receiveSelected = [];
+  state.receiveDocSap = '';
   showToast('ยืนยันรับเงิน '+n+' รายการเรียบร้อย'+(res.receiveVoucherId?' — เลขที่ '+res.receiveVoucherId:''));
   await refreshData();
   render();
@@ -5163,9 +5172,9 @@ function receiveReportEntries_(){
   docs.forEach(d=>{
     const lines = parseSapLines(d);
     if(lines.length>1){
-      lines.forEach(l=>{ if(l.rvId) out.push({rv:l.rvId, d, id:String(l.subId), sap:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net), by:l.receivedBy||d.receivedBy, date:l.receivedDate||d.receivedDate}); });
+      lines.forEach(l=>{ if(l.rvId) out.push({rv:l.rvId, d, id:String(l.subId), sap:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net), by:l.receivedBy||d.receivedBy, date:l.receivedDate||d.receivedDate, rcvSap:l.receiveDocSap||d.receiveDocSap||''}); });
     } else if(d.receiveVoucherId){
-      out.push({rv:String(d.receiveVoucherId).split(',').pop().trim(), d, id:displayId(d.id), sap:d.docSAP, vendor:d.vendor, vendorName:d.vendorName, vat:num(d.vatAmount), wht:num(d.whtAmount), base:num(d.baseAmount), net:num(d.netAmount), by:d.receivedBy, date:d.receivedDate});
+      out.push({rv:String(d.receiveVoucherId).split(',').pop().trim(), d, id:displayId(d.id), sap:d.docSAP, vendor:d.vendor, vendorName:d.vendorName, vat:num(d.vatAmount), wht:num(d.whtAmount), base:num(d.baseAmount), net:num(d.netAmount), by:d.receivedBy, date:d.receivedDate, rcvSap:d.receiveDocSap||''});
     }
   });
   const s = state.reportReceiveSearch;
@@ -5179,9 +5188,10 @@ function receiveReportEntries_(){
 function receiveBatches_(entries){
   const b = {};
   entries.forEach(e=>{
-    if(!b[e.rv]) b[e.rv] = { rv:e.rv, items:[], vat:0, wht:0, base:0, net:0, by:e.by, date:e.date, company:e.d.companyCode, dues:new Set() };
+    if(!b[e.rv]) b[e.rv] = { rv:e.rv, items:[], vat:0, wht:0, base:0, net:0, by:e.by, date:e.date, company:e.d.companyCode, dues:new Set(), saps:new Set() };
     const x = b[e.rv]; x.items.push(e); x.vat+=e.vat; x.wht+=e.wht; x.base+=e.base; x.net+=e.net;
     if(e.d.dueDate) x.dues.add(e.d.dueDate);
+    if(e.rcvSap) x.saps.add(e.rcvSap);
   });
   return Object.values(b).sort((a,c)=>(dtMs_(c.date)>=9e15?-1:dtMs_(c.date))-(dtMs_(a.date)>=9e15?-1:dtMs_(a.date)) || String(c.rv).localeCompare(String(a.rv)));
 }
@@ -5205,10 +5215,11 @@ function reportReceiveHTML(){
       <td>${b.items.length} รายการ<div style="font-size:11px;color:var(--ink-soft);">${b.items.slice(0,4).map(e=>e.id).join(', ')}${b.items.length>4?' …':''}</div></td>
       <td>${money(b.vat)}</td><td>${money(b.wht)}</td><td>${money(b.base)}</td><td><b>${money(b.net)}</b></td>
       <td>${b.by||'-'}</td>
+      <td class="mono">${[...b.saps].join(', ')||'-'}</td>
       <td style="white-space:nowrap;">${b.date||'-'}</td>
       <td style="white-space:nowrap;">${dueLabel(b)}</td>
       <td><button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบรับเงิน (Receive Voucher)" onclick="openReceiveVoucher('${b.rv}')">${DOWNLOAD_SVG}</button></td>
-    </tr>`).join('') : `<tr class="empty-row"><td colspan="10">ยังไม่มีประวัติการรับเงิน</td></tr>`;
+    </tr>`).join('') : `<tr class="empty-row"><td colspan="11">ยังไม่มีประวัติการรับเงิน</td></tr>`;
   return `
   <div class="company-header">
     <label>บริษัท</label>
@@ -5238,7 +5249,7 @@ function reportReceiveHTML(){
     </div>
     <div class="table-scroll">
     <table>
-      <thead><tr><th>RV</th><th>รายการ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดรับสุทธิ</th><th>ผู้ทำรายการ</th><th>วันที่รับเงิน</th><th>Due</th><th></th></tr></thead>
+      <thead><tr><th>RV</th><th>รายการ</th><th>VAT Amt</th><th>WHT Amt</th><th>Base Amt</th><th>ยอดรับสุทธิ</th><th>ผู้ทำรายการ</th><th>Doc SAP รับเงิน</th><th>วันที่รับเงิน</th><th>Due</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -5247,8 +5258,8 @@ function reportReceiveHTML(){
 function exportReportReceiveToExcel(){
   const entries = receiveReportEntries_();
   if(!entries.length){ showToast('ไม่มีข้อมูลให้ Export'); return; }
-  const header = ['RV','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Vendor','Vendor Name','VAT Amt','WHT Amt','Base Amt','ยอดรับสุทธิ','Due','ผู้ทำรายการ','วันที่รับเงิน'];
-  const rows = entries.sort((a,b)=>String(b.rv).localeCompare(String(a.rv))).map(e=>[e.rv, e.id, docTypeInfo(e.d.docType).label, e.d.docName, companyName(e.d.companyCode), e.sap||'', e.vendor||'', e.vendorName||'', e.vat, e.wht, e.base, e.net, e.d.dueDate||'', e.by||'', e.date||'']);
+  const header = ['RV','ID','ประเภทเอกสาร','ชื่อเอกสาร','บริษัท','SAP','Vendor','Vendor Name','VAT Amt','WHT Amt','Base Amt','ยอดรับสุทธิ','Due','Doc SAP รับเงิน','ผู้ทำรายการ','วันที่รับเงิน'];
+  const rows = entries.sort((a,b)=>String(b.rv).localeCompare(String(a.rv))).map(e=>[e.rv, e.id, docTypeInfo(e.d.docType).label, e.d.docName, companyName(e.d.companyCode), e.sap||'', e.vendor||'', e.vendorName||'', e.vat, e.wht, e.base, e.net, e.d.dueDate||'', e.rcvSap||'', e.by||'', e.date||'']);
   exportAoaToExcel([header, ...rows], 'ReportReceive_'+new Date().toISOString().slice(0,10)+'.xlsx', 'Report Receive');
 }
 function openReceiveVoucher(rv){
@@ -5278,7 +5289,7 @@ function openReceiveVoucher(rv){
     @media print{ body{background:#fff;zoom:1;} .sheet{margin:0;box-shadow:none;width:auto;min-height:0;padding:0;} .no-print{display:none;} tr.grand td{-webkit-print-color-adjust:exact;print-color-adjust:exact;} }
   </style></head><body><div class="sheet">
     <h1>ใบรับเงิน (Receive Voucher)</h1>
-    <div class="meta"><div>เลขที่: <b>${rv}</b></div><div>บริษัท: <b>${companyName(first.d.companyCode)}</b></div><div>ผู้ยืนยันรับเงิน: <b>${first.by||'-'}</b></div><div>วันที่รับเงิน: <b>${first.date||'-'}</b></div></div>
+    <div class="meta"><div>เลขที่: <b>${rv}</b></div><div>บริษัท: <b>${companyName(first.d.companyCode)}</b></div><div>Doc SAP: <b>${[...new Set(items.map(e=>e.rcvSap).filter(Boolean))].join(', ')||'-'}</b></div><div>ผู้ยืนยันรับเงิน: <b>${first.by||'-'}</b></div><div>วันที่รับเงิน: <b>${first.date||'-'}</b></div></div>
     <table><thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Vendor</th><th>Vendor Name</th><th>Due</th><th class="n">VAT Amt</th><th class="n">WHT Amt</th><th class="n">Base Amt</th><th class="n">ยอดรับสุทธิ</th></tr></thead>
     <tbody>${rowsH}<tr class="grand"><td colspan="7" style="text-align:center;">Total (${items.length} รายการ)</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.base)}</td><td class="n">${money(t.net)}</td></tr></tbody></table>
     <div class="sign"><div>ผู้รับเงิน (การเงิน)<div class="line"></div>${first.by||'-'}</div></div>
