@@ -36,6 +36,24 @@
 html[data-theme="green"]{--navy:#16382B;--navy-light:#21503D;--navy-lighter:#21503D;--paper:#EEF2E8;--paper-white:#F8FAF4;--ink:#1F2A22;--ink-soft:#64705F;--line:#D5DEC8;--gold:#C9A227;--pill:#E3EAD6;--shadow:0 2px 10px rgba(22,56,43,0.10);}
 html[data-theme="ocean"]{--navy:#0F3B57;--navy-light:#18506F;--navy-lighter:#18506F;--paper:#EAF2F7;--paper-white:#F7FBFD;--ink:#1B2A33;--ink-soft:#5F7380;--line:#CFDFE9;--gold:#1F8FB8;--pill:#DCEAF2;--shadow:0 2px 10px rgba(15,59,87,0.10);}
 html[data-theme="purple"]{--navy:#2E1F4D;--navy-light:#41306A;--navy-lighter:#41306A;--paper:#F1EDF6;--paper-white:#FAF8FD;--ink:#261F33;--ink-soft:#6F6683;--line:#DDD4EA;--gold:#B07AD0;--pill:#E6DEF1;--shadow:0 2px 10px rgba(46,31,77,0.10);}
+html[data-theme="pink"]{--navy:#F0457D;--navy-light:#F7739B;--navy-lighter:#F0457D;--heading:#2A2330;--paper:#FDF1F3;--paper-white:#FFFFFF;--ink:#2F2830;--ink-soft:#8E8590;--line:#F6E3E9;--gold:#F58BA9;--pill:#FDE8EE;--surface:#fff;--radius:14px;--shadow:0 4px 18px rgba(240,69,125,0.10);}
+html[data-theme="pink"] body{background:linear-gradient(135deg,#FFF1F4 0%,#FDE6EC 55%,#FFE9DC 100%);background-attachment:fixed;}
+html[data-theme="pink"] .sidebar{background:#fff;color:#4A424C;box-shadow:2px 0 18px rgba(240,69,125,0.08);}
+html[data-theme="pink"] .sidebar-brand{border-bottom:1px solid #F6E3E9;}
+html[data-theme="pink"] .sidebar-brand h2{color:#2A2330;}
+html[data-theme="pink"] .sidebar-brand .mark{color:#F0457D;}
+html[data-theme="pink"] .sidebar-toggle{border-color:#F6E3E9;color:#8E8590;}
+html[data-theme="pink"] .sidebar-toggle:hover{background:#FDE8EE;}
+html[data-theme="pink"] .nav-item{color:#5A525C;border-radius:12px;}
+html[data-theme="pink"] .nav-item:hover{background:#FDE8EE;}
+html[data-theme="pink"] .nav-item.active{background:linear-gradient(135deg,#F0457D,#F7739B);color:#fff;box-shadow:0 4px 12px rgba(240,69,125,0.28);}
+html[data-theme="pink"] .sidebar-foot{border-top:1px solid #F6E3E9;color:#9A8F9C;}
+html[data-theme="pink"] .topbar{background:rgba(255,255,255,0.7);border-bottom:1px solid #F6E3E9;}
+html[data-theme="pink"] .card{border-radius:16px;border-color:#F9E9EE;}
+html[data-theme="pink"] .company-header{background:#FDE3EB;color:#7A2A48;border:1px solid #F8D3DF;border-radius:14px;}
+html[data-theme="pink"] .company-header *{color:inherit;}
+html[data-theme="pink"] .group-header td{background:#FDE3EB;color:#7A2A48;border-radius:10px;}
+html[data-theme="pink"] .group-header td *{color:inherit;}
 html[data-theme="white"]{--navy:#1E293B;--navy-light:#334155;--navy-lighter:#334155;--paper:#FFFFFF;--paper-white:#FFFFFF;--ink:#1F2937;--ink-soft:#6B7280;--line:#E5E7EB;--gold:#2563EB;--pill:#F1F5F9;--shadow:0 1px 6px rgba(15,23,42,0.08);}
 html[data-theme="dark"]{--navy:#0B1220;--navy-light:#141E33;--navy-lighter:#22304F;--paper:#1B2436;--paper-white:#232F46;--ink:#E8ECF4;--ink-soft:#9BA7BD;--line:#334058;--gold:#E0B34A;--pill:#2C3A55;--surface:#2C3A55;--heading:#E8ECF4;--shadow:0 2px 10px rgba(0,0,0,0.35);color-scheme:dark;}
 html[data-theme="dark"] [style*="background:var(--surface)"],
@@ -725,7 +743,7 @@ function blankSignBlock(positionLabel, roleTag){
   // always renders an empty live-signature line — no name from the system, ever
   return `<div>${positionLabel}<div class="sign-line"></div>&nbsp;<br><span style="color:#666;">${roleTag}</span></div>`;
 }
-const THEMES = [['','คลาสสิก'],['green','เขียวมิตรผล'],['ocean','ฟ้าทะเล'],['purple','ม่วงอเมทิสต์'],['white','ขาวสะอาด'],['dark','โหมดมืด']];
+const THEMES = [['','คลาสสิก'],['green','เขียวมิตรผล'],['ocean','ฟ้าทะเล'],['purple','ม่วงอเมทิสต์'],['pink','ชมพูหวาน'],['white','ขาวสะอาด'],['dark','โหมดมืด']];
 function currentTheme_(){ try{ return localStorage.getItem('dfTheme')||''; }catch(e){ return ''; } }
 function setTheme(name){
   try{ if(name) localStorage.setItem('dfTheme', name); else localStorage.removeItem('dfTheme'); }catch(e){}
@@ -2860,7 +2878,25 @@ function saOwnSapLineRowHTML(l, i){
 function saOwnSapLinesContainerHTML(){
   const lines = state.saOwnSapLines||[];
   if(!lines.length) return '';
-  const rows = lines.map((l,i)=>saOwnSapLineRowHTML(l,i)).join('');
+  // display-only "Total" row after each run of the same Vendor (like the approval summary) — nothing is stored
+  const totRow = (id, label, from, to, grand) => `<tr class="saown-subtotal" data-from="${from}" data-to="${to}" style="background:var(--pill);border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-weight:700;color:var(--navy);">
+      <td colspan="5" style="padding:5px 8px;text-align:right;">${label}</td>
+      <td style="text-align:right;padding:5px 4px;" data-f="vat">0.00</td>
+      <td style="text-align:right;padding:5px 4px;" data-f="wht">0.00</td>
+      <td style="text-align:right;padding:5px 4px;" data-f="base">0.00</td>
+      <td style="text-align:right;padding:5px 4px;" data-f="net">0.00</td>
+      <td colspan="2"></td></tr>`;
+  let rows = ''; let gStart = 0; let groups = 0;
+  const vkey = l => String(l.vendor||'').trim() || ('N:'+String(l.vendorName||'').trim());
+  lines.forEach((l,i)=>{
+    rows += saOwnSapLineRowHTML(l,i);
+    const last = i===lines.length-1 || vkey(lines[i+1])!==vkey(l);
+    if(last){
+      groups++;
+      rows += totRow('', 'Total · '+(l.vendorName||l.vendor||'')+' ('+(i-gStart+1)+' รายการ)', gStart, i, false);
+      gStart = i+1;
+    }
+  });
   return `<div class="table-scroll" style="overflow:auto;margin-top:6px;">
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr>
@@ -2881,9 +2917,19 @@ function saOwnSapLinesContainerHTML(){
   </div>
   <div style="font-size:11px;color:var(--ink-soft);margin-top:4px;">ยอดรวมจากทุกรายการด้านบนจะถูกคำนวณไปเติมในช่อง "ยอดเงิน" ด้านบนให้อัตโนมัติ — Sub ID จะถูกตั้งเป็น D001-1, D001-2 ... หลังบันทึก</div>`;
 }
+function updateSaOwnSubtotals(){
+  const num = id => { const e = document.getElementById(id); return e ? (parseFloat(unformatMoney(e.value))||0) : 0; };
+  document.querySelectorAll('#saown-sapline-container tr.saown-subtotal').forEach(tr=>{
+    const from = +tr.dataset.from, to = +tr.dataset.to;
+    ['vat','wht','base','net'].forEach(f=>{
+      let t = 0; for(let i=from;i<=to;i++) t += num('saownsap-'+f+'-'+i);
+      const td = tr.querySelector('[data-f="'+f+'"]'); if(td) td.textContent = formatMoney(Math.round(t*100)/100);
+    });
+  });
+}
 function refreshSaOwnSapLineContainer(){
   const el = document.getElementById('saown-sapline-container');
-  if(el) el.innerHTML = saOwnSapLinesContainerHTML();
+  if(el){ el.innerHTML = saOwnSapLinesContainerHTML(); updateSaOwnSubtotals(); }
 }
 function gatherSaOwnSapLinesFromDOM(){
   return (state.saOwnSapLines||[]).map((l,i)=>{
@@ -2987,6 +3033,7 @@ function onSaOwnSapLineVendorInput(idx){
 function recomputeSaOwnSapTotalsLive(){
   const lines = gatherSaOwnSapLinesFromDOM();
   if(!lines.length) return;
+  updateSaOwnSubtotals();
   const sums = lines.reduce((t,l)=>({vat:t.vat+(parseFloat(l.vat)||0), wht:t.wht+(parseFloat(l.wht)||0), base:t.base+(parseFloat(l.base)||0), net:t.net+(parseFloat(l.net)||0)}), {vat:0,wht:0,base:0,net:0});
   const vatEl = document.getElementById('saown-vatAmount');
   const whtEl = document.getElementById('saown-whtAmount');
@@ -3069,15 +3116,21 @@ function parseSapSummarySheet_(aoa){
     }
     const doc = String(row[iDoc]==null?'':row[iDoc]).trim();
     const acc = String(row[iAcc]==null?'':row[iAcc]).trim();
-    if(doc && acc){
-      let v = byCode[acc];
+    const nm = iName!==-1 ? String(row[iName]==null?'':row[iName]).trim() : '';
+    if(doc && (acc || nm)){
+      const key = acc || ('N:'+nm);
+      let v = byCode[key];
       if(!v){
-        v = byCode[acc] = { code:acc, name:String(row[iName]||'').trim(), docs:[], base:0, amt:0, wht:0, net:0, sub:null, pm:new Set(), vats:0 };
+        v = byCode[key] = { code:acc, name:nm, docs:[], base:0, amt:0, wht:0, net:0, sub:null, pm:new Set(), vats:0, taxes:new Set(), items:[] };
         vendors.push(v);
       }
       v.docs.push(doc);
+      { const ib=xlsR2_(xlsNum_(row[iBase])||0), ia=xlsR2_(xlsNum_(row[iAmt])||0), iw=xlsR2_(xlsNum_(row[iWht])||0), inn=xlsR2_(xlsNum_(row[iNet])||0);
+        const iv=xlsR2_(ia-ib); const tc = iTax!==-1 ? String(row[iTax]==null?'':row[iTax]).trim().toUpperCase() : '';
+        v.items.push({ fiDoc:doc, base:ib, vat:iv, wht:iw, net:inn, taxCode: (['V7','D7','VX'].indexOf(tc)!==-1 ? tc : (iv>0?'V7':'VX')) }); }
       v.base += xlsNum_(row[iBase])||0; v.amt += xlsNum_(row[iAmt])||0;
       v.wht += xlsNum_(row[iWht])||0;   v.net += xlsNum_(row[iNet])||0;
+      if(iTax!==-1 && row[iTax]!=='' && row[iTax]!=null) v.taxes.add(String(row[iTax]).trim().toUpperCase());
       if(iPm!==-1 && row[iPm]!=='' && row[iPm]!=null) v.pm.add(String(row[iPm]).trim().toUpperCase());
       last = v;
     } else if(last){
@@ -3093,14 +3146,15 @@ function parseSapSummarySheet_(aoa){
     for(let r=totalRowIdx+1; r<aoa.length; r++){
       const doc = String(aoa[r][iDoc]==null?'':aoa[r][iDoc]).trim();
       const acc = String(aoa[r][iAcc]==null?'':aoa[r][iAcc]).trim();
-      if(doc && acc) trailing.push({ doc, acc, amt: xlsNum_(aoa[r][iAmt]) });
+      const nm2 = iName!==-1 ? String(aoa[r][iName]==null?'':aoa[r][iName]).trim() : '';
+      if(doc && (acc||nm2)) trailing.push({ doc, acc, amt: xlsNum_(aoa[r][iAmt]) });
     }
   }
   const lines = vendors.map(v=>{
     const base = xlsR2_(v.base), amt = xlsR2_(v.amt), wht = xlsR2_(v.wht), net = xlsR2_(v.net);
     const vat = xlsR2_(amt - base);
     return { code:v.code, name:v.name, docs:v.docs, fiDoc:xlsFiDocLabel_(v.docs), base, vat, wht, net,
-      taxCode: vat>0 ? 'V7' : 'VX', pm:[...v.pm], sub:v.sub, checked:true };
+      taxCode: vat>0 ? (v.taxes.has('D7') && !v.taxes.has('V7') ? 'D7' : 'V7') : 'VX', noCode: !v.code, items:v.items, pm:[...v.pm], sub:v.sub, checked:true };
   });
   return { comcode, lines, sheetTotal, trailing, hasTotalRow: totalRowIdx!==-1 };
 }
@@ -3125,7 +3179,12 @@ function saOwnExcelValidate_(parsed, formCompany){
     } else {
       l.issues.push({level:'warn', text:'ไม่พบแถวสรุปของ Vendor นี้ในไฟล์ — ใช้ผลรวมที่คำนวณจากรายการ'});
     }
-    if(!findVendor_(currentFormCompany_(), l.code)) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
+    if(!l.code){
+      const nmN = String(l.name||'').replace(/\s+/g,'').toLowerCase();
+      const hit = nmN ? vendorsFor_(currentFormCompany_()).find(v=>String(v.vendorName||'').replace(/\s+/g,'').toLowerCase()===nmN) : null;
+      if(hit){ l.code = String(hit.vendorCode); l.issues.push({level:'warn', text:'ไฟล์ไม่มีรหัส Account — ระบบจับคู่รหัส '+l.code+' จากชื่อใน Vendor Master กรุณาตรวจสอบ'}); }
+      else l.issues.push({level:'error', text:'ไฟล์ไม่มีรหัส Account และหาชื่อ "'+(l.name||'')+'" ใน Vendor Master ไม่พบ — กรุณาเติมรหัส Account ในไฟล์'});
+    } else if(!findVendor_(currentFormCompany_(), l.code)) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
     const dupDocs = l.docs.filter(d=>existing.indexOf(d)!==-1);
     if(dupDocs.length) l.issues.push({level:'warn', text:'FI Doc '+dupDocs.join(', ')+' มีอยู่ในเอกสารอื่นในระบบแล้ว อาจซ้ำ'});
     if(l.net < 0) l.issues.push({level:'warn', text:'ยอดสุทธิติดลบ (ใบลดหนี้/รายการกลับ)'});
@@ -3235,7 +3294,10 @@ function uploadSaOwnExcel(e){
       if(typeof XLSX === 'undefined'){ if(st) st.textContent = 'โหลดไลบรารีอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'; return; }
       const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array'});
       const sheets = {}; const problems = [];
-      wb.SheetNames.forEach(name=>{
+      const hiddenSheets = {};
+      ((wb.Workbook && wb.Workbook.Sheets) || []).forEach((sh,i)=>{ if(sh && sh.Hidden && wb.SheetNames[i]) hiddenSheets[wb.SheetNames[i]] = true; });
+      const visibleNames = wb.SheetNames.filter(n=>!hiddenSheets[n]);
+      (visibleNames.length ? visibleNames : wb.SheetNames).forEach(name=>{
         const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:'', raw:true});
         const parsed = parseSapSummarySheet_(aoa);
         if(!parsed) return;
@@ -3294,7 +3356,7 @@ function renderSaOwnExcelModal(){
       ${issues.some(i=>/^Vendor /.test(i.text)) ? `<div style="margin-top:4px;color:var(--ink-soft);">รายละเอียดรายเจ้าหนี้ดูในคอลัมน์ "ผลตรวจสอบ" ของตาราง</div>` : ''}
     </div>` : `<div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#E8F5E9;border:1px solid var(--forest);font-size:12.5px;"><b>✓ ผ่านการตรวจสอบทั้งหมด</b> — ผลรวมตรงกับแถวสรุปและแถว Total ของไฟล์</div>`;
   const body = `
-    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">ไฟล์ ${esc(pend.fileName)} · รหัสบริษัทในไฟล์ ${esc(parsed.comcode||'-')} · สรุป 1 บรรทัดต่อ Vendor จากรายการ FI Doc ทั้งหมดของ Vendor นั้น</div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">ไฟล์ ${esc(pend.fileName)} · รหัสบริษัทในไฟล์ ${esc(parsed.comcode||'-')} · ตรวจเทียบยอดรายเจ้าหนี้ · เมื่อนำเข้าจะแตกเป็น 1 FI Doc = 1 บรรทัด (1 Sub ID)</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
       <label style="font-size:12px;font-weight:600;">ชีท</label>
       <select onchange="setSaOwnExcelSheet(this.value)">${sheetOpts}</select>
@@ -3328,7 +3390,7 @@ function renderSaOwnExcelModal(){
     </div>
     <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn btn-sm btn-outline" onclick="cancelSaOwnExcel()">ยกเลิก</button>
-      <button class="btn btn-sm btn-approve" onclick="confirmSaOwnExcel()">✓ นำเข้าเข้าฟอร์ม (${sel.length} รายการ)</button>
+      <button class="btn btn-sm btn-approve" onclick="confirmSaOwnExcel()">✓ นำเข้าเข้าฟอร์ม (${sel.reduce((a,l)=>a+(l.items?l.items.length:1),0)} Sub ID · ตาม FI Doc)</button>
     </div>
     <div style="margin-top:6px;font-size:11.5px;color:var(--ink-soft);text-align:right;">นำเข้าแล้วยังแก้ไขในฟอร์มได้ และยังไม่บันทึกจนกว่าจะกดส่งเอกสาร</div>`;
   showInfoModal('ตรวจสอบข้อมูลจาก Excel ก่อนนำเข้า', body);
@@ -3358,10 +3420,14 @@ function confirmSaOwnExcel(){
   const issues = saOwnExcelValidate_(parsed, companyEl ? companyEl.value : '');
   const errCount = issues.filter(i=>i.level==='error').length;
   if(errCount && !confirm('ยังมีรายการที่ตรวจสอบไม่ผ่าน '+errCount+' จุด (แสดงเป็นสีแดง)\n\nต้องการนำเข้าต่อหรือไม่?')) return;
-  const lines = sel.map(l=>({
-    fiDoc:l.fiDoc, webDocNo:'', vendor:l.code, vendorName:l.name, taxCode:l.taxCode,
-    vat:l.vat, wht:l.wht, base:l.base, net:l.net,
-  }));
+  // one line (= one Sub ID) per FI Doc, not per vendor
+  const lines = [];
+  sel.forEach(l=>{
+    (l.items && l.items.length ? l.items : [{fiDoc:l.fiDoc, taxCode:l.taxCode, vat:l.vat, wht:l.wht, base:l.base, net:l.net}]).forEach(it=>{
+      lines.push({ fiDoc:it.fiDoc, webDocNo:'', vendor:l.code, vendorName:l.name, taxCode:it.taxCode,
+        vat:it.vat, wht:it.wht, base:it.base, net:it.net });
+    });
+  });
   const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
   if(lines.length === 1){
     const l = lines[0];
@@ -3389,7 +3455,7 @@ function confirmSaOwnExcel(){
   }
   state.pendingSaOwnExcel = null;
   hideBusyOverlay();
-  showToast('นำเข้าจาก Excel '+lines.length+' รายการเรียบร้อย — ตรวจสอบในฟอร์มอีกครั้งก่อนกดส่ง');
+  showToast('นำเข้าจาก Excel '+lines.length+' รายการ (1 FI Doc = 1 Sub ID) เรียบร้อย — ตรวจสอบในฟอร์มอีกครั้งก่อนกดส่ง');
 }
 
 async function submitApproveOwn(e){
