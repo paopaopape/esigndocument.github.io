@@ -4414,7 +4414,6 @@ function openApprovalReport(id){
           const totHTML = (cls,label,t) => `
         <tr class="${cls}"><td colspan="11" class="tl">${label}</td>
           <td class="n">${money(t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.base)}</td><td class="n">${money(t.net)}</td></tr>`;
-          if(rows.length<2) return rows.map(rowHTML).join('');
           // group rows by Vendor (first-appearance order), subtotal under each group, grand total at the end
           const order = [], groups = {};
           rows.forEach(r=>{ const k = r.vendor || r.vname || '-'; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(r); });
@@ -4422,7 +4421,7 @@ function openApprovalReport(id){
           order.forEach(k=>{
             const g = groups[k];
             out += g.map(rowHTML).join('');
-            out += totHTML('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)', sum(g));
+            if(order.length>1) out += totHTML('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)', sum(g));
           });
           out += totHTML('grand', 'Total ('+rows.length+' รายการ)', sum(rows));
           return out;
