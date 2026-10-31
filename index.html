@@ -4346,13 +4346,12 @@ function openApprovalReport(id){
   const penInit_ = JSON.stringify({ docId:d.id, can:canMarkReport_(d), sig:reportSig_(d), marks:reportMarksOf_(d),
     me:{ uid:(state.user&&state.user.id)||'', name:state.user?fullName(state.user):'', role:state.user?state.user.role:'' } }).replace(/</g,'\\u003c');
   const html = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8">
-    <meta name="viewport" content="width=900">
-    <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;600;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=900, minimum-scale=0.3, maximum-scale=4, user-scalable=yes">
     <title>ใบสรุปการอนุมัติเอกสาร · ${displayId(d.id)}</title>
     <style>
       @page{ size:A4 landscape; margin:0; }
       *{ box-sizing:border-box; }
-      body{font-family:'IBM Plex Sans Thai','Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;background:#e9e9ee;-webkit-text-size-adjust:100%;}
+      body{font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a;margin:0;background:#e9e9ee;-webkit-text-size-adjust:100%;}
       #wrap{margin:14px auto;width:842px;}
       #pages{width:1123px;transform:scale(.75);transform-origin:0 0;}
       .page{position:relative;width:1123px;height:794px;background:#fff;margin:0 0 16px;padding:30px;box-shadow:0 2px 14px rgba(0,0,0,.25);overflow:hidden;}
@@ -4380,6 +4379,7 @@ function openApprovalReport(id){
       .no-print{margin:16px 0;text-align:center;}
       .pcv{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;}
       .pcv.on{pointer-events:auto;cursor:crosshair;touch-action:none;}
+      .pcv.on.pan{touch-action:pan-x pan-y pinch-zoom;}
       #penBar{position:fixed;top:12px;right:14px;z-index:50;background:#fff;border:1px solid #ccc;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.2);padding:6px 8px;display:flex;align-items:center;gap:6px;font-size:13px;zoom:1.3;}
       #penBar button{border:1px solid #ccc;background:#fff;border-radius:8px;padding:4px 9px;cursor:pointer;font-size:13px;}
       #penBar button.act{background:#fff3b0;border-color:#c9a400;}
@@ -4400,7 +4400,7 @@ function openApprovalReport(id){
       <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
     </div>
     <table class="data">
-      <colgroup><col style="width:5.5%"><col style="width:5.5%"><col style="width:10%"><col style="width:7%"><col style="width:5.5%"><col style="width:5%"><col style="width:9.5%"><col style="width:6%"><col style="width:7.5%"><col style="width:8.5%"><col style="width:5.5%"><col style="width:5.5%"><col style="width:5.5%"><col style="width:6.5%"><col style="width:7%"></colgroup>
+      <colgroup><col style="width:5.5%"><col style="width:5%"><col style="width:9%"><col style="width:7%"><col style="width:4.5%"><col style="width:5%"><col style="width:9%"><col style="width:5.5%"><col style="width:7%"><col style="width:8%"><col style="width:5%"><col style="width:6.5%"><col style="width:6%"><col style="width:8.5%"><col style="width:9%"></colgroup>
       <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         ${(function(){
@@ -4513,6 +4513,7 @@ const PEN_POPUP_JS_ = `(function(){
   var P = window.__PEN, bar = document.getElementById('penBar');
   var src = document.getElementById('src'), host = document.getElementById('pages'), wrap = document.getElementById('wrap');
   var COLORS = {black:'#111111', blue:'#1d4ed8', red:'#dc2626'};
+  var s = 0.75, fingerDraw = (navigator.maxTouchPoints||0) > 0, touches = {}, pinching = false, pinchLast = null;
   var pages = [], mine = null, others = [], strokes = [], saved = '', color = 'red', tool = 'pen', drawing = null, open = false;
   function newPage(){
     var pg = document.createElement('div'); pg.className = 'page';
@@ -4522,6 +4523,7 @@ const PEN_POPUP_JS_ = `(function(){
     host.appendChild(pg);
     var o = {pg:pg, pc:pc, cv:cv, no:no, tb:null}; pages.push(o); return o;
   }
+  function fitNums(tr){ [].forEach.call(tr.querySelectorAll('td.n'), function(td){ var f = 10.5; td.style.overflow = 'hidden'; while(td.scrollWidth > td.clientWidth + 0.5 && f > 7){ f -= 0.5; td.style.fontSize = f + 'px'; td.querySelectorAll('b').forEach(function(b){ b.style.fontSize = f + 'px'; }); } }); }
   function over(o){ return o.pc.scrollHeight > o.pc.clientHeight + 0.5; }
   function build(){
     var h1 = src.querySelector('h1'), meta = src.querySelector('.meta');
@@ -4533,7 +4535,7 @@ const PEN_POPUP_JS_ = `(function(){
     function nextPage(withTable){ cur = newPage(); var c = document.createElement('div'); c.className = 'cont'; c.textContent = 'ใบสรุปการอนุมัติเอกสาร (ต่อ)'; cur.pc.appendChild(c); if(withTable) addTable(cur); }
     addTable(cur);
     rows.forEach(function(r){
-      var c = r.cloneNode(true); cur.tb.appendChild(c);
+      var c = r.cloneNode(true); cur.tb.appendChild(c); fitNums(c);
       if(over(cur) && cur.tb.children.length > 1){ cur.tb.removeChild(c); nextPage(true); cur.tb.appendChild(c); }
     });
     var t2 = trail.cloneNode(true); cur.pc.appendChild(t2);
@@ -4541,8 +4543,9 @@ const PEN_POPUP_JS_ = `(function(){
     var sg = sign.cloneNode(true); cur.pc.appendChild(sg);
     if(over(cur)){ cur.pc.removeChild(sg); nextPage(false); cur.pc.appendChild(sg); }
     pages.forEach(function(o,i){ o.no.textContent = 'หน้า '+(i+1)+'/'+pages.length; });
-    wrap.style.height = Math.ceil(pages.length*(794+16)*0.75)+'px';
+    applyScale();
   }
+  function applyScale(){ host.style.transform = 'scale('+s+')'; wrap.style.width = Math.round(1123*s)+'px'; wrap.style.height = Math.ceil(pages.length*(794+16)*s)+'px'; }
   function ctxOf(o){ return o.cv.getContext('2d'); }
   function sz(){ var dpr = Math.min(2, window.devicePixelRatio||1); pages.forEach(function(o){ o.cv.width = Math.round(1123*dpr); o.cv.height = Math.round(794*dpr); }); redraw(); }
   function paint(o, i, list){
@@ -4570,17 +4573,41 @@ const PEN_POPUP_JS_ = `(function(){
     strokes = strokes.filter(function(s){ if((s.g||0)!==g) return true; for(var i=0;i<s.p.length;i+=2){ if(Math.abs(s.p[i]-x)<14 && Math.abs(s.p[i+1]-y)<18) return false; } return true; });
     if(strokes.length!==before) redraw();
   }
+  function tcount(){ return Object.keys(touches).length; }
+  function pinchState(){ var k = Object.keys(touches), a = touches[k[0]], b = touches[k[1]]; return {d:Math.hypot(a.x-b.x,a.y-b.y)||1, mx:(a.x+b.x)/2, my:(a.y+b.y)/2}; }
+  function doPinch(){
+    var cur = pinchState(), last = pinchLast; if(!last) { pinchLast = cur; return; }
+    var r = host.getBoundingClientRect(), ux = (last.mx-r.left)/s, uy = (last.my-r.top)/s;
+    s = Math.max(0.4, Math.min(3, s*cur.d/last.d)); applyScale();
+    var r2 = host.getBoundingClientRect();
+    window.scrollBy(r2.left+ux*s-cur.mx, r2.top+uy*s-cur.my);
+    pinchLast = cur;
+  }
+  window.addEventListener('pointerdown', function(e){
+    if(e.pointerType!=='touch' || !open || !fingerDraw) return;
+    touches[e.pointerId] = {x:e.clientX, y:e.clientY};
+    if(tcount()>=2){ pinching = true; drawing = null; redraw(); pinchLast = pinchState(); }
+  }, true);
+  window.addEventListener('pointermove', function(e){
+    if(!touches[e.pointerId]) return; touches[e.pointerId] = {x:e.clientX, y:e.clientY};
+    if(pinching && tcount()>=2){ e.preventDefault(); doPinch(); }
+  }, true);
+  function tUp(e){ if(touches[e.pointerId]){ delete touches[e.pointerId]; if(tcount()<2){ pinching = false; pinchLast = null; } } }
+  window.addEventListener('pointerup', tUp, true); window.addEventListener('pointercancel', tUp, true);
   function wire(){
     pages.forEach(function(o,gi){
       var cv = o.cv;
       cv.addEventListener('pointerdown', function(e){
-        if(!open) return; e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(x){}
+        if(!open) return;
+        if(e.pointerType==='pen' && fingerDraw){ fingerDraw = false; render(); }   // Apple Pencil detected: fingers go back to scroll/zoom
+        if(e.pointerType==='touch' && (!fingerDraw || pinching || tcount()>=2)) return;
+        e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(x){}
         var q = pt(o,e);
         if(tool==='erase'){ drawing = {erase:true, g:gi}; eraseAt(gi,q[0],q[1]); return; }
         drawing = {c:color, g:gi, p:[q[0],q[1]]};
       });
       cv.addEventListener('pointermove', function(e){
-        if(!drawing || drawing.g!==gi) return; var q = pt(o,e);
+        if(!drawing || drawing.g!==gi || pinching) return; var q = pt(o,e);
         if(drawing.erase){ eraseAt(gi,q[0],q[1]); return; }
         var n = drawing.p.length, dx = q[0]-drawing.p[n-2], dy = q[1]-drawing.p[n-1];
         if(dx*dx+dy*dy < 4) return; drawing.p.push(q[0],q[1]); redraw();
@@ -4589,7 +4616,37 @@ const PEN_POPUP_JS_ = `(function(){
       cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
     });
   }
-  window.addEventListener('beforeunload', function(e){ if(P.can && dirty()){ e.preventDefault(); e.returnValue=''; } });
+  window.addEventListener('beforeunload', function(e){ if(P.can && dirty() && !leaving){ e.preventDefault(); e.returnValue=''; } });
+  function report(r){
+    if(r && r.ok) alert('บันทึกรอยปากกาเรียบร้อย');
+    else if(r && r.error==='too_large') alert('รอยปากกามากเกินไปจนบันทึกไม่ได้ กรุณาลบบางส่วนแล้วลองใหม่');
+    else if(r && r.error==='no_opener') alert('ไม่พบหน้าต่างระบบหลัก กรุณาเปิดใบสรุปจากระบบใหม่อีกครั้ง');
+    else alert('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง');
+  }
+  function saveNow(){
+    var layer = { uid:P.me.uid, by:P.me.name, role:P.me.role, date:new Date().toLocaleString('th-TH',{dateStyle:'short',timeStyle:'short'}), sig:P.sig, strokes:strokes };
+    return new Promise(function(resolve){
+      if(!window.opener){ resolve({ok:false,error:'no_opener'}); return; }
+      var rid = 'r'+Date.now(), done = false;
+      function onMsg(ev){ var m = ev.data; if(m && m.type==='penSaved' && m.rid===rid){ done = true; window.removeEventListener('message', onMsg); resolve(m); } }
+      window.addEventListener('message', onMsg);
+      window.opener.postMessage({type:'penSave', rid:rid, docId:P.docId, layer:layer}, '*');
+      setTimeout(function(){ if(!done){ window.removeEventListener('message', onMsg); resolve({ok:false,error:'timeout'}); } }, 20000);
+    }).then(function(r){ if(r && r.ok){ saved = JSON.stringify(strokes); mine = strokes.length ? layer : null; } return r; });
+  }
+  var leaving = false;
+  function closeFlow(){
+    if(!dirty()){ leaving = true; window.close(); return; }
+    if(confirm('คุณขีดรอยปากกาไว้แต่ยังไม่ได้บันทึกการตรวจสอบ\\n\\nกด OK = บันทึกการตรวจสอบแล้วปิด\\nกด ยกเลิก = ไม่บันทึก/กลับไปแก้')){
+      var b = document.getElementById('pbClose'); if(b){ b.disabled = true; b.textContent = 'กำลังบันทึก...'; }
+      saveNow().then(function(r){
+        if(r && r.ok){ leaving = true; window.close(); }
+        else { report(r); render(); }
+      });
+    } else if(confirm('ปิดใบสรุปโดยไม่บันทึกรอยปากกา ใช่หรือไม่?')){
+      leaving = true; window.close();
+    }
+  }
   function note(){
     var n = document.getElementById('penNote');
     if(!n){ n = document.createElement('div'); n.id='penNote'; n.className='no-print'; document.body.insertBefore(n, wrap); }
@@ -4605,32 +4662,21 @@ const PEN_POPUP_JS_ = `(function(){
     if(!P.can){ bar.style.display='none'; note(); return; }
     var h = '<button id="pbOpen" class="'+(open?'act':'')+'">✏️ ปากกา</button><span id="penTools">';
     ['black','blue','red'].forEach(function(k){ h += '<button class="clr '+(color===k&&tool==='pen'?'act':'')+'" data-c="'+k+'" style="background:'+COLORS[k]+'" title="'+k+'"></button>'; });
-    h += '<button id="pbErase" class="'+(tool==='erase'?'act':'')+'">ยางลบ</button><button id="pbUndo">↶ ย้อน</button><button id="pbClear">ล้าง</button><button id="pbSave" style="background:#e8f5e9;border-color:#2e7d32;">💾 Save'+(dirty()?' •':'')+'</button></span>';
+    h += ''+((navigator.maxTouchPoints||0)>0?'<button id="pbFinger" class="'+(fingerDraw?'act':'')+'" title="เปิด: นิ้วใช้วาด / ปิด: นิ้วใช้เลื่อนและซูม (ใช้ Apple Pencil วาด)">👆 นิ้ววาด</button>':'')+'<button id="pbFit">⤢ พอดี</button><button id="pbErase" class="'+(tool==='erase'?'act':'')+'">ยางลบ</button><button id="pbUndo">↶ ย้อน</button><button id="pbClear">ล้าง</button><button id="pbSave" style="background:#e8f5e9;border-color:#2e7d32;">💾 Save'+(dirty()?' •':'')+'</button></span><button id="pbClose" title="ปิดใบสรุป">✕ ปิด</button>';
     bar.innerHTML = h; bar.className = open?'open':'';
-    pages.forEach(function(o){ o.cv.className = 'pcv'+(open?' on':''); });
+    pages.forEach(function(o){ o.cv.className = 'pcv'+(open?' on':'')+(open&&!fingerDraw?' pan':''); });
     document.getElementById('pbOpen').onclick = function(){ open = !open; render(); };
     Array.prototype.forEach.call(bar.querySelectorAll('.clr'), function(b){ b.onclick = function(){ color = b.getAttribute('data-c'); tool='pen'; render(); }; });
+    var fb = document.getElementById('pbFinger'); if(fb) fb.onclick = function(){ fingerDraw = !fingerDraw; render(); };
+    document.getElementById('pbFit').onclick = function(){ s = 0.75; applyScale(); };
     document.getElementById('pbErase').onclick = function(){ tool = tool==='erase'?'pen':'erase'; render(); };
     document.getElementById('pbUndo').onclick = function(){ strokes.pop(); redraw(); render(); };
     document.getElementById('pbClear').onclick = function(){ if(strokes.length && confirm('ล้างรอยปากกาของคุณทั้งหมด?')){ strokes = []; redraw(); render(); } };
     document.getElementById('pbSave').onclick = function(){
       var btn = this; btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
-      var layer = { uid:P.me.uid, by:P.me.name, role:P.me.role, date:new Date().toLocaleString('th-TH',{dateStyle:'short',timeStyle:'short'}), sig:P.sig, strokes:strokes };
-      new Promise(function(resolve){
-        if(!window.opener){ resolve({ok:false,error:'no_opener'}); return; }
-        var rid = 'r'+Date.now(), done = false;
-        function onMsg(ev){ var m = ev.data; if(m && m.type==='penSaved' && m.rid===rid){ done = true; window.removeEventListener('message', onMsg); resolve(m); } }
-        window.addEventListener('message', onMsg);
-        window.opener.postMessage({type:'penSave', rid:rid, docId:P.docId, layer:layer}, '*');
-        setTimeout(function(){ if(!done){ window.removeEventListener('message', onMsg); resolve({ok:false,error:'timeout'}); } }, 20000);
-      }).then(function(r){
-        if(r && r.ok){ saved = JSON.stringify(strokes); mine = strokes.length ? layer : null; alert('บันทึกรอยปากกาเรียบร้อย'); }
-        else if(r && r.error==='too_large'){ alert('รอยปากกามากเกินไปจนบันทึกไม่ได้ กรุณาลบบางส่วนแล้วลองใหม่'); }
-        else if(r && r.error==='no_opener'){ alert('ไม่พบหน้าต่างระบบหลัก กรุณาเปิดใบสรุปจากระบบใหม่อีกครั้ง'); }
-        else { alert('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); }
-        render(); note();
-      });
+      saveNow().then(function(r){ report(r); render(); note(); });
     };
+    document.getElementById('pbClose').onclick = function(){ closeFlow(); };
     note();
   }
   function start(){
