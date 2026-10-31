@@ -2750,6 +2750,7 @@ function submitApproveOwnHTML(){
         <span>รายการ SAP แยกย่อย (Sub ID) <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">— ถ้าเอกสารนี้ถูกตัดเป็นหลาย FI Doc</span></span>
         <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์ Excel สรุปการจ่าย (แถวสีเหลือง = ยอดรวมรายเจ้าหนี้) ระบบสรุปเป็น 1 บรรทัดต่อ Vendor แล้วให้ตรวจสอบก่อนนำเข้า">⬆ อัปโหลด Excel สรุปรายเจ้าหนี้<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadSaOwnExcel(event)"></label>
+          <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์รายงาน Journal Voucher จาก EWF (มี Web Doc Number) — 1 FI Doc = 1 บรรทัด (1 Sub ID)">⬆ อัพโหลด EWF<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadSaOwnEwf(event)"></label>
           <button type="button" class="btn btn-sm btn-outline" onclick="addSaOwnSapLine()">+ เพิ่มรายการ SAP</button>
         </span>
       </div>
@@ -3458,6 +3459,213 @@ function confirmSaOwnExcel(){
   showToast('นำเข้าจาก Excel '+lines.length+' รายการ (1 FI Doc = 1 Sub ID) เรียบร้อย — ตรวจสอบในฟอร์มอีกครั้งก่อนกดส่ง');
 }
 
+/* ============ EWF upload (Journal Voucher Report, one row per FI Doc, has Web Doc Number) ============ */
+const EWF_COLS_ = {
+  sapDate:{ alias:['sapdate','วันที่sap'] }, advDate:{ alias:['advancedate'] , optional:true },
+  wType:{ alias:['webdoctype'], optional:true }, web:{ alias:['webdocnumber','webdocno','webdocnumber.'] },
+  vendor:{ alias:['vendornumber','vendor','vendorno','vendorcode'] }, name:{ alias:['requestername','vendorname','ชื่อ'], optional:true },
+  fi:{ alias:['fidocnumber','fidoc','fidocno'] }, co:{ alias:['companycode','comcode'], optional:true },
+  vat:{ alias:['vatamount','vat'], optional:true }, wht:{ alias:['whtamount','wht'], optional:true },
+  amt:{ alias:['amount'] }, net:{ alias:['netamount','net'], optional:true },
+};
+const EWF_LABELS_ = { sapDate:'SAP Date', web:'Web Doc Number', vendor:'Vendor Number', fi:'FI Doc Number', amt:'Amount' };
+function parseEwfSheet_(aoa){
+  const hIdx = aoa.findIndex(r=>r.some(c=>EWF_COLS_.web.alias.indexOf(xlsNorm_(c))!==-1) && r.some(c=>EWF_COLS_.fi.alias.indexOf(xlsNorm_(c))!==-1));
+  if(hIdx===-1) return null;
+  const head = aoa[hIdx].map(xlsNorm_);
+  const col = k => head.findIndex(h=>EWF_COLS_[k].alias.indexOf(h)!==-1);
+  const ix = {}; Object.keys(EWF_COLS_).forEach(k=>{ ix[k] = col(k); });
+  const missing = Object.keys(EWF_COLS_).filter(k=>!EWF_COLS_[k].optional && ix[k]===-1).map(k=>EWF_LABELS_[k]||k);
+  if(missing.length) return { missing };
+  const str = (row,k) => ix[k]===-1 ? '' : String(row[ix[k]]==null?'':row[ix[k]]).trim();
+  const num = (row,k) => ix[k]===-1 ? null : xlsNum_(row[ix[k]]);
+  const dstr = (row,k) => { if(ix[k]===-1) return ''; const v = row[ix[k]]; if(v instanceof Date) return v.toISOString().slice(0,10); return String(v==null?'':v).trim(); };
+  const lines = [];
+  for(let r=hIdx+1; r<aoa.length; r++){
+    const row = aoa[r];
+    const fi = str(row,'fi'), web = str(row,'web');
+    if(!fi && !web && !str(row,'vendor')) continue;
+    const base = xlsR2_(num(row,'amt')||0), vat = xlsR2_(num(row,'vat')||0), wht = xlsR2_(num(row,'wht')||0);
+    const netRaw = num(row,'net');
+    const calc = xlsR2_(base + vat - wht);
+    lines.push({ row:r+1, sapDate:dstr(row,'sapDate'), advDate:dstr(row,'advDate'), wType:str(row,'wType'), web, vendor:str(row,'vendor'), name:str(row,'name'),
+      fi, co:str(row,'co'), vat, wht, base, net: netRaw===null ? calc : xlsR2_(netRaw), netBlank: netRaw===null, calc,
+      taxCode: vat>0 ? 'V7' : 'VX', checked:true, issues:[] });
+  }
+  return { lines, count:lines.length };
+}
+function ewfValidate_(parsed, formCompany){
+  const issues = [];
+  const existing = {};
+  (state.documents||[]).forEach(d=>{
+    const ls = parseSapLines(d);
+    (ls.length ? ls : [{fiDoc:d.docSAP, webDocNo:d.webDocNo}]).forEach(l=>{ if(l.fiDoc) existing[String(l.fiDoc).trim()+'|'+String(l.webDocNo||'').trim()] = d.id; });
+  });
+  const seen = {};
+  const coms = new Set();
+  parsed.lines.forEach(l=>{
+    l.issues = [];
+    if(!l.fi) l.issues.push({level:'error', text:'ไม่มี FI Doc Number'});
+    if(!l.web) l.issues.push({level:'warn', text:'ไม่มี Web Doc Number'});
+    if(!l.vendor) l.issues.push({level:'error', text:'ไม่มี Vendor Number'});
+    else if(!findVendor_(formCompany || l.co, l.vendor)) l.issues.push({level:'warn', text:'ไม่พบ Vendor นี้ใน Vendor Master'});
+    if(Math.abs(l.calc - l.net) > 0.015 && !l.netBlank) l.issues.push({level:'error', text:'Amount + VAT − WHT = '+l.calc.toLocaleString('en-US',{minimumFractionDigits:2})+' ไม่เท่ากับ Net Amount ในไฟล์'});
+    if(l.netBlank) l.issues.push({level:'warn', text:'Net Amount ว่าง ('+(l.wType||'-')+') — ใช้ Amount เป็นยอดสุทธิ'+(l.advDate?' · Advance Date '+l.advDate:'')});
+    if(l.wType && l.wType!=='EXPENSE') l.issues.push({level:'warn', text:'ประเภท '+l.wType+' ไม่ใช่ EXPENSE'});
+    if(l.net < 0) l.issues.push({level:'warn', text:'ยอดสุทธิติดลบ'});
+    const key = l.fi+'|'+l.web;
+    if(existing[key]) l.issues.push({level:'warn', text:'FI Doc + Web Doc นี้มีอยู่ในเอกสาร '+displayId(existing[key])+' แล้ว อาจซ้ำ'});
+    const k2 = key+'|'+(l.sapDate||'').slice(0,4);
+    if(seen[k2]) l.issues.push({level:'warn', text:'ซ้ำกับแถว '+seen[k2]+' ในไฟล์เดียวกัน'}); else seen[k2] = l.row;
+    if(l.co) coms.add(l.co);
+  });
+  if(formCompany && coms.size && !(coms.size===1 && coms.has(String(formCompany)))) issues.push({level:'warn', text:'รหัสบริษัทในไฟล์ ('+[...coms].join(', ')+') ไม่ตรงกับบริษัทที่เลือกในฟอร์ม ('+formCompany+')'});
+  const dupFi = {}; parsed.lines.forEach(l=>{ dupFi[l.fi] = (dupFi[l.fi]||0)+1; });
+  const n = Object.keys(dupFi).filter(k=>dupFi[k]>1).length;
+  if(n) issues.push({level:'warn', text:'มี FI Doc Number เดียวกัน '+n+' เลข ในไฟล์ (คนละ Web Doc / คนละปี) — ตรวจสอบก่อนนำเข้า'});
+  return issues;
+}
+function uploadSaOwnEwf(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  const st = document.getElementById('saown-excel-status');
+  if(st) st.textContent = 'กำลังอ่านไฟล์ EWF...';
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    try{
+      if(typeof XLSX === 'undefined'){ if(st) st.textContent = 'โหลดไลบรารีอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'; return; }
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:true});
+      const hidden = {};
+      ((wb.Workbook && wb.Workbook.Sheets) || []).forEach((sh,i)=>{ if(sh && sh.Hidden && wb.SheetNames[i]) hidden[wb.SheetNames[i]] = true; });
+      const names = wb.SheetNames.filter(n=>!hidden[n]);
+      let parsed = null; const problems = [];
+      (names.length ? names : wb.SheetNames).forEach(name=>{
+        if(parsed && parsed.lines) return;
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:'', raw:true});
+        const r = parseEwfSheet_(aoa);
+        if(!r) return;
+        if(r.missing){ problems.push('ชีท "'+name+'" ขาดคอลัมน์: '+r.missing.join(', ')); return; }
+        if(r.lines.length) parsed = r; else problems.push('ชีท "'+name+'" ไม่พบแถวข้อมูล');
+      });
+      e.target.value = '';
+      if(!parsed){
+        if(st) st.textContent = 'อ่านไฟล์ EWF ไม่ได้';
+        showInfoModal('อ่านไฟล์ EWF ไม่ได้', '<div style="font-size:13px;margin-bottom:10px;">ไฟล์ <b>'+file.name.replace(/</g,'&lt;')+'</b> ไม่ใช่รูปแบบรายงาน EWF (Journal Voucher Report) ที่ระบบอ่านได้</div>'+(problems.length?'<div style="padding:10px 12px;border-radius:8px;background:#FBE9E7;border:1px solid var(--stamp-red);font-size:12.5px;margin-bottom:10px;">'+problems.map(x=>'<div>✕ '+x.replace(/</g,'&lt;')+'</div>').join('')+'</div>':'')+'<div style="font-size:12.5px;margin-bottom:12px;">คอลัมน์ที่ต้องมี: SAP Date · Web Doc Number · Vendor Number · FI Doc Number · Amount (และแนะนำ Requester Name, Vat Amount, WHT Amount, Net Amount, Company Code)</div><div style="text-align:right;"><button class="btn btn-sm btn-outline" onclick="hideBusyOverlay()">ปิด</button></div>');
+        return;
+      }
+      if(st) st.textContent = 'อ่านไฟล์ EWF แล้ว: '+file.name+' ('+parsed.count+' รายการ)';
+      state.pendingEwf = { fileName:file.name, parsed, type:'', q:'', append:false };
+      renderEwfModal();
+    }catch(err){ if(st) st.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function ewfVisible_(pend){
+  const q = (pend.q||'').trim().toLowerCase();
+  return pend.parsed.lines.filter(l=>(!pend.type || l.wType===pend.type) && (!q || (l.web+' '+l.fi+' '+l.vendor+' '+l.name).toLowerCase().indexOf(q)!==-1));
+}
+function renderEwfModal(){
+  const pend = state.pendingEwf; if(!pend) return;
+  const parsed = pend.parsed;
+  const companyEl = document.querySelector('form select[name="companyCode"]');
+  const fileIssues = ewfValidate_(parsed, companyEl ? companyEl.value : '');
+  const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const vis = ewfVisible_(pend);
+  const sel = parsed.lines.filter(l=>l.checked);
+  const tot = f => sel.reduce((a,l)=>a+f(l),0);
+  const errCount = parsed.lines.filter(l=>l.checked && l.issues.some(i=>i.level==='error')).length;
+  const warnCount = parsed.lines.filter(l=>l.checked && l.issues.some(i=>i.level==='warn')).length;
+  const types = [...new Set(parsed.lines.map(l=>l.wType).filter(Boolean))];
+  const hasExisting = (state.saOwnSapLines||[]).length > 0;
+  const rows = vis.map(l=>{
+    const i = parsed.lines.indexOf(l);
+    const hasErr = l.issues.some(x=>x.level==='error'), hasWarn = l.issues.some(x=>x.level==='warn');
+    return `<tr style="${hasErr?'background:#FBE9E7;':(hasWarn?'background:#FFF8E1;':'')}">
+      <td style="text-align:center;"><input type="checkbox" ${l.checked?'checked':''} onchange="setEwfChecked(${i},this.checked)"></td>
+      <td class="mono">${l.row}</td>
+      <td class="mono" style="font-size:11px;">${esc(l.web)}<div style="font-size:10.5px;color:var(--ink-soft);">${esc(l.wType)} · ${esc(l.sapDate)}</div></td>
+      <td class="mono">${esc(l.fi)}</td>
+      <td class="mono">${esc(l.vendor)}</td>
+      <td>${esc(l.name)}</td>
+      <td style="text-align:right;">${money(l.vat)}</td>
+      <td style="text-align:right;">${money(l.wht)}</td>
+      <td style="text-align:right;">${money(l.base)}</td>
+      <td style="text-align:right;"><b>${money(l.net)}</b></td>
+      <td style="font-size:11.5px;">${l.issues.length ? l.issues.map(x=>`<div style="color:${x.level==='error'?'var(--stamp-red)':'#8A6D00'};">${x.level==='error'?'✕':'⚠'} ${esc(x.text)}</div>`).join('') : '<span style="color:var(--forest);">✓</span>'}</td>
+    </tr>`;
+  }).join('');
+  const box = (fileIssues.length || errCount || warnCount) ? `<div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:${errCount?'#FBE9E7':'#FFF8E1'};border:1px solid ${errCount?'var(--stamp-red)':'var(--gold)'};font-size:12.5px;">
+      <b>ผลการตรวจสอบ (ที่ติ๊กเลือก): ผิดพลาด ${errCount} · ควรตรวจสอบ ${warnCount} บรรทัด</b>
+      ${fileIssues.map(i=>`<div style="margin-top:4px;color:${i.level==='error'?'var(--stamp-red)':'#8A6D00'};">${i.level==='error'?'✕':'⚠'} ${esc(i.text)}</div>`).join('')}</div>`
+    : `<div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#E8F5E9;border:1px solid var(--forest);font-size:12.5px;"><b>✓ ผ่านการตรวจสอบทั้งหมด</b></div>`;
+  const body = `
+    <div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">ไฟล์ ${esc(pend.fileName)} · ${parsed.count} รายการ · นำเข้าเป็น <b>1 FI Doc = 1 บรรทัด (1 Sub ID)</b> พร้อม Web Doc No. ของแต่ละบรรทัด</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;">
+      <input type="text" placeholder="ค้นหา Web Doc / FI Doc / Vendor / ชื่อ" value="${esc(pend.q)}" oninput="setEwfQuery(this.value)" style="padding:5px 8px;border:1px solid var(--line);border-radius:6px;font-size:12px;width:240px;">
+      ${types.length>1 ? `<select onchange="setEwfType(this.value)"><option value="">ทุกประเภท</option>${types.map(t=>`<option value="${esc(t)}" ${pend.type===t?'selected':''}>${esc(t)} (${parsed.lines.filter(l=>l.wType===t).length})</option>`).join('')}</select>` : ''}
+      <button type="button" class="btn btn-sm btn-outline" onclick="setEwfAllVisible(true)">ติ๊กที่เห็นทั้งหมด</button>
+      <button type="button" class="btn btn-sm btn-outline" onclick="setEwfAllVisible(false)">ไม่ติ๊กที่เห็น</button>
+      <span style="font-size:12px;color:var(--ink-soft);">เลือก ${sel.length}/${parsed.lines.length} รายการ · แสดง ${vis.length}</span>
+      ${hasExisting ? `<label style="font-size:12px;display:flex;gap:5px;align-items:center;"><input type="checkbox" ${pend.append?'checked':''} onchange="setEwfAppend(this.checked)"> ต่อท้ายรายการที่มีอยู่ในฟอร์ม (ไม่ติ๊ก = แทนที่ทั้งหมด)</label>` : ''}
+    </div>
+    ${box}
+    <div class="table-scroll" style="max-height:380px;overflow:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr>
+        <th style="padding:6px;"></th><th style="text-align:left;padding:6px;">แถว</th><th style="text-align:left;padding:6px;">Web Doc No.</th><th style="text-align:left;padding:6px;">FI Doc</th>
+        <th style="text-align:left;padding:6px;">Vendor</th><th style="text-align:left;padding:6px;">ชื่อ</th>
+        <th style="text-align:right;padding:6px;">VAT</th><th style="text-align:right;padding:6px;">WHT</th><th style="text-align:right;padding:6px;">Base</th><th style="text-align:right;padding:6px;">Net</th><th style="text-align:left;padding:6px;">ผลตรวจสอบ</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line);">
+        <td colspan="6" style="padding:6px;text-align:right;">รวมที่เลือก ${sel.length} รายการ</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.vat))}</td><td style="text-align:right;padding:6px;">${money(tot(l=>l.wht))}</td>
+        <td style="text-align:right;padding:6px;">${money(tot(l=>l.base))}</td><td style="text-align:right;padding:6px;">${money(tot(l=>l.net))}</td><td></td>
+      </tr></tfoot>
+    </table></div>
+    <div style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-sm btn-outline" onclick="cancelEwf()">ยกเลิก</button>
+      <button class="btn btn-sm btn-approve" onclick="confirmEwf()">✓ นำเข้าเข้าฟอร์ม (${sel.length} Sub ID)</button>
+    </div>
+    <div style="margin-top:6px;font-size:11.5px;color:var(--ink-soft);text-align:right;">นำเข้าแล้วยังแก้ไขในฟอร์มได้ และยังไม่บันทึกจนกว่าจะกดส่งเอกสาร</div>`;
+  showInfoModal('ตรวจสอบข้อมูลจาก EWF ก่อนนำเข้า', body);
+}
+function setEwfChecked(i,v){ const p = state.pendingEwf; if(!p) return; p.parsed.lines[i].checked = v; renderEwfModal(); }
+function setEwfType(v){ const p = state.pendingEwf; if(!p) return; p.type = v; renderEwfModal(); }
+function setEwfAppend(v){ const p = state.pendingEwf; if(!p) return; p.append = v; renderEwfModal(); }
+function setEwfQuery(v){ const p = state.pendingEwf; if(!p) return; p.q = v; renderEwfModal(); const el = document.querySelector('#modal-root input[placeholder^="ค้นหา Web Doc"], input[placeholder^="ค้นหา Web Doc"]'); if(el){ el.focus(); el.setSelectionRange(v.length, v.length); } }
+function setEwfAllVisible(v){ const p = state.pendingEwf; if(!p) return; ewfVisible_(p).forEach(l=>{ l.checked = v; }); renderEwfModal(); }
+function cancelEwf(){ state.pendingEwf = null; hideBusyOverlay(); }
+function confirmEwf(){
+  const p = state.pendingEwf; if(!p) return;
+  const sel = p.parsed.lines.filter(l=>l.checked);
+  if(!sel.length){ showToast('กรุณาติ๊กเลือกอย่างน้อย 1 รายการ'); return; }
+  const errCount = sel.filter(l=>l.issues.some(i=>i.level==='error')).length;
+  if(errCount && !confirm('ยังมี '+errCount+' บรรทัดที่ตรวจสอบไม่ผ่าน (แสดงสีแดง)\n\nต้องการนำเข้าต่อหรือไม่?')) return;
+  const newLines = sel.map(l=>({ fiDoc:l.fi, webDocNo:l.web, vendor:l.vendor, vendorName:l.name, taxCode:l.taxCode, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
+  const keep = p.append ? gatherSaOwnSapLinesFromDOM() : [];
+  const lines = keep.concat(newLines);
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
+  if(lines.length === 1){
+    const l = lines[0];
+    state.saOwnSapLines = []; refreshSaOwnSapLineContainer();
+    setVal('saown-docSAP', l.fiDoc); setVal('saown-webDocNo', l.webDocNo); setVal('saown-vendor', l.vendor); setVal('saown-vendorName', l.vendorName);
+    setVal('saown-vatAmount', formatMoney(l.vat)); setVal('saown-whtAmount', formatMoney(l.wht));
+    setVal('saown-baseAmount', formatMoney(l.base)); setVal('saown-netAmount', formatMoney(l.net));
+    const tx = document.getElementById('saown-taxCode'); if(tx) tx.value = l.taxCode;
+    updateSaOwnHints();
+  } else {
+    state.saOwnSapLines = lines;
+    refreshSaOwnSapLineContainer();
+    recomputeSaOwnSapTotalsLive();
+    const first = lines[0];
+    setVal('saown-docSAP', first.fiDoc); setVal('saown-webDocNo', first.webDocNo); setVal('saown-vendor', first.vendor); setVal('saown-vendorName', first.vendorName);
+  }
+  state.pendingEwf = null; hideBusyOverlay();
+  showToast('นำเข้าจาก EWF '+newLines.length+' รายการ (1 FI Doc = 1 Sub ID) เรียบร้อย — ตรวจสอบในฟอร์มอีกครั้งก่อนกดส่ง');
+}
+
 async function submitApproveOwn(e){
   e.preventDefault();
   const submitBtn = e.target.querySelector('button[type=submit]');
@@ -4127,7 +4335,7 @@ function accountingApprovalHTML(mode){
             <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="vendorName-${d.id}" type="text" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" value="${d.vendorName||''}" style="width:220px;"></div>
             <div id="vendor-bank-${d.id}" style="display:contents;">${vendorBankBlockHTML(d)}</div>
           </div>
-          ${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
+          <!--PAYSPLIT-->${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
           <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
             ${PAY_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="radio" name="payType-${d.id}" value="${t[0]}" ${d.payType===t[0]?'checked':''}> ${t[1]}</label>`).join('')}
           </div>
@@ -4165,8 +4373,7 @@ function accountingApprovalHTML(mode){
                 <b style="color:var(--stamp-red);">⚠ เอกสารชุดนี้ยังไม่ได้ผ่านหัวหน้าแผนกตรวจสอบ</b><br>
                 <span style="font-size:12.5px;color:var(--ink);">เนื่องจาก: ${getSkipReviewerReason(d)}</span>
               </div>` : ''}
-              ${sapField}
-              ${flagFields}
+              ${hdrBlock_(d, sapField, flagFields)}
               <div style="width:100%;margin-top:12px;">
                 ${(function(){
                   const noteFieldMap = {'รอนักบัญชี':'accountantNote','รอผู้ตรวจสอบ':'reviewerNote','รอผู้อนุมัติ':'approverNote'};
@@ -4229,8 +4436,7 @@ function accountingApprovalHTML(mode){
               <strong style="color:var(--stamp-red);">เหตุผลที่ถูกตีกลับจาก${reasonCfg?reasonCfg.label:''}:</strong> ${reasonText}
             </div>
             <div class="note-box">
-              ${sapField}
-              ${flagFields}
+              ${hdrBlock_(d, sapField, flagFields)}
               <div style="width:100%;margin-top:12px;">
                 <textarea id="note-${d.id}" placeholder="บันทึกการแก้ไข / หมายเหตุก่อนส่งกลับ (ไม่บังคับ)" style="width:100%;"></textarea>
               </div>
@@ -4307,6 +4513,23 @@ async function saveApprovalDocEdit(e, id){
 }
 
 /* ---- Document Approval Summary — printable/downloadable, same pattern as openPaymentReport ---- */
+/* multi-line documents: the header-level "SAP doc" and "payee" blocks are collapsed (a Show/Hide toggle); single-line documents show them as before */
+function hdrBlock_(d, sapField, flagFields){
+  const parts = String(flagFields||'').split('<!--PAYSPLIT-->');
+  const vendorPart = parts[0] || '', payPart = parts.length>1 ? parts.slice(1).join('') : '';
+  const multi = parseSapLines(d).length > 1 && (sapField || vendorPart.trim());
+  if(!multi) return sapField + vendorPart + payPart;
+  const open = !!(state.hdrOpen && state.hdrOpen[d.id]);
+  return `<div style="width:100%;margin-bottom:6px;"><button type="button" class="btn btn-sm btn-outline" id="hdr-toggle-${d.id}" onclick="toggleHdrBlock('${d.id}')" title="เอกสารนี้มีหลายรายการ SAP — แสดง/ซ่อน ข้อมูลเอกสาร SAP และผู้รับเงิน">${open?'🙈 ซ่อน':'👁 แสดง'} ข้อมูลเอกสาร SAP / ผู้รับเงิน <span style="font-weight:400;color:var(--ink-soft);">(${parseSapLines(d).length} รายการ)</span></button></div>
+    <div id="hdr-box-${d.id}" style="width:100%;${open?'':'display:none;'}">${sapField}${vendorPart}</div>${payPart}`;
+}
+function toggleHdrBlock(id){
+  state.hdrOpen = state.hdrOpen || {};
+  state.hdrOpen[id] = !state.hdrOpen[id];
+  const box = document.getElementById('hdr-box-'+id), btn = document.getElementById('hdr-toggle-'+id);
+  if(box) box.style.display = state.hdrOpen[id] ? '' : 'none';
+  if(btn){ const n = btn.querySelector('span') ? btn.querySelector('span').outerHTML : ''; btn.innerHTML = (state.hdrOpen[id]?'🙈 ซ่อน':'👁 แสดง')+' ข้อมูลเอกสาร SAP / ผู้รับเงิน '+n; }
+}
 function openApprovalReport(id){
   const d = state.documents.find(x=>x.id===id);
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
