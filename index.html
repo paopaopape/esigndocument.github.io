@@ -385,6 +385,29 @@ function amountMismatchHTML(base, vat, wht, net){
   }
   return '';
 }
+/* Tax Code: V7 and D7 both = VAT 7% (Base = Net x 100/107, VAT = Net - Base); VX = no VAT */
+function isVat7Code_(c){ return c==='V7' || c==='D7'; }
+function taxSplit_(taxCode, net){
+  if(isVat7Code_(taxCode)){
+    const base = Math.round(net*100/107*100)/100;
+    return { base, vat: Math.round((net-base)*100)/100 };
+  }
+  return { base: net, vat: 0 };
+}
+/* WHT Rate helper: pick 1% / 3% / 5% -> WHT Amt = Base Amt x rate */
+const WHT_RATES = [1,3,5];
+function netFrom_(base, vat, wht){ return Math.round(((parseFloat(unformatMoney(base))||0)+(parseFloat(unformatMoney(vat))||0)-(parseFloat(unformatMoney(wht))||0))*100)/100; }
+function whtFromRate_(base, rate){ return Math.round((parseFloat(base)||0)*rate)/100; }
+function whtRateSelectedFor_(base, wht){
+  const b = parseFloat(unformatMoney(base))||0, w = parseFloat(unformatMoney(wht))||0;
+  if(b<=0 || w<=0) return '';
+  const pct = Math.round(w/b*10000)/100;
+  return WHT_RATES.includes(pct) ? String(pct) : '';
+}
+function whtRateOptionsHTML_(base, wht){
+  const sel = whtRateSelectedFor_(base, wht);
+  return `<option value="">Rate WHT — กรอกเอง</option>` + WHT_RATES.map(r=>`<option value="${r}" ${sel===String(r)?'selected':''}>WHT ${r}%</option>`).join('');
+}
 function whtPercentHTML(base, wht){
   const b = parseFloat(unformatMoney(base))||0, w = parseFloat(unformatMoney(wht))||0;
   if(b<=0 || w<=0) return '';
@@ -400,6 +423,28 @@ async function amtInputBlur(el, id, field){
   const raw = unformatMoney(el.value);
   el.value = raw==='' ? '' : formatMoney(raw);
   await saveAmountField(id, field, raw);
+  if(field==='baseAmount'){ // a WHT rate is selected -> keep WHT Amt = Base x rate
+    const rs = document.getElementById('whtRate-'+id);
+    if(rs && rs.value){ await applyWhtRate(id, rs.value); return; }
+  }
+  updateAmountHints(id);
+}
+async function applyWhtRate(id, rate){
+  if(!rate) return;
+  const baseEl = document.getElementById('amt-baseAmount-'+id);
+  const whtEl = document.getElementById('amt-whtAmount-'+id);
+  if(!baseEl || !whtEl) return;
+  const wht = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  whtEl.value = formatMoney(wht);
+  // Net (ยอดจ่ายสุทธิ) follows: Base + VAT - WHT
+  const vatEl = document.getElementById('amt-vatAmount-'+id), netEl = document.getElementById('amt-netAmount-'+id);
+  const net = netFrom_(baseEl.value, vatEl?vatEl.value:0, wht);
+  if(netEl) netEl.value = formatMoney(net);
+  const doc = state.documents.find(d=>d.id===id);
+  const patch = { id, whtAmount: wht.toFixed(2), netAmount: net.toFixed(2), modifiedBy: fullName(state.user), modifiedDate: nowStr() };
+  const res = await apiCall('updateDocument', patch);
+  if(!res.success){ showToast('บันทึกจำนวนเงินไม่สำเร็จ ลองใหม่อีกครั้ง'); }
+  else if(doc){ doc.whtAmount = patch.whtAmount; doc.netAmount = patch.netAmount; }
   updateAmountHints(id);
 }
 function updateAmountHints(id){
@@ -409,6 +454,8 @@ function updateAmountHints(id){
   const netHint = document.getElementById('amt-net-hint-'+id);
   if(whtHint) whtHint.innerHTML = whtPercentHTML(base, wht);
   if(netHint) netHint.innerHTML = amountMismatchHTML(base, vat, wht, net);
+  const rs = document.getElementById('whtRate-'+id);
+  if(rs) rs.value = whtRateSelectedFor_(base, wht);
 }
 const PAY_TYPES = [
   ['1','1 = Direct'], ['2','2 = Media'], ['D','D = Demand Draft'],
@@ -494,19 +541,20 @@ async function applyTaxCalc(id){
   if(!doc) return;
   const patch = { id, taxCode };
   if(taxCode && netEl){
-    const net = parseFloat(unformatMoney(netEl.value))||0;
-    let base, vat;
-    if(taxCode==='V7'){
-      base = Math.round(net*100/107*100)/100;
-      vat = Math.round((net-base)*100)/100;
-    } else { // VX — no VAT
-      base = net;
-      vat = 0;
-    }
+    const rs = document.getElementById('whtRate-'+id), whtEl = document.getElementById('amt-whtAmount-'+id);
+    const rateOn = !!(rs && rs.value && whtEl);
+    // with a WHT rate selected the Net on screen is already "after WHT" — rebuild the gross first so Base/VAT stay right
+    const net = (parseFloat(unformatMoney(netEl.value))||0) + (rateOn ? (parseFloat(unformatMoney(whtEl.value))||0) : 0);
+    const { base, vat } = taxSplit_(taxCode, net);
     if(baseEl) baseEl.value = formatMoney(base);
     if(vatEl) vatEl.value = formatMoney(vat);
     patch.baseAmount = base.toFixed(2);
     patch.vatAmount = vat.toFixed(2);
+    if(rateOn){
+      const w = whtFromRate_(base, parseFloat(rs.value)), n2 = netFrom_(base, vat, w);
+      whtEl.value = formatMoney(w); netEl.value = formatMoney(n2);
+      patch.whtAmount = w.toFixed(2); patch.netAmount = n2.toFixed(2);
+    }
   }
   const res = await apiCall('updateDocument', patch);
   if(!res.success){ showToast('บันทึกการคำนวณไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
@@ -896,11 +944,33 @@ function sapLineAmtInput(docId, idx, field, value){
   const display = (value===''||value===undefined||value===null) ? '' : formatMoney(value);
   return `<input type="text" inputmode="decimal" id="sapline-${field}-${docId}-${idx}" class="sap-input" style="width:95px;text-align:right;" value="${display}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="sapLineAmtLocalUpdate(this,'${docId}',${idx},'${field}')">`;
 }
+function applySapLineWhtRate(docId, idx, rate){
+  if(!rate) return;
+  const baseEl = document.getElementById('sapline-base-'+docId+'-'+idx);
+  const whtEl = document.getElementById('sapline-wht-'+docId+'-'+idx);
+  if(!baseEl || !whtEl) return;
+  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  whtEl.value = formatMoney(w);
+  const vEl = document.getElementById('sapline-vat-'+docId+'-'+idx), nEl = document.getElementById('sapline-net-'+docId+'-'+idx);
+  if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
+  recomputeSapLineTotalsLive(docId);
+  updateSapLineHints(docId, idx);
+  markSapLinesUnsaved(docId);
+}
 function sapLineAmtLocalUpdate(el, docId, idx, field){
   // local-only: just reformat the display and recompute the aggregate totals shown up top —
   // nothing is sent to the server here, so typing across several fields never flickers/re-renders
   const raw = unformatMoney(el.value);
   el.value = raw==='' ? '' : formatMoney(raw);
+  if(field==='base'){ // a WHT rate is selected -> keep WHT Amt = Base x rate
+    const rs = document.getElementById('sapline-whtrate-'+docId+'-'+idx), wEl = document.getElementById('sapline-wht-'+docId+'-'+idx);
+    if(rs && rs.value && wEl){
+      const w = whtFromRate_(raw, parseFloat(rs.value));
+      wEl.value = formatMoney(w);
+      const vEl = document.getElementById('sapline-vat-'+docId+'-'+idx), nEl = document.getElementById('sapline-net-'+docId+'-'+idx);
+      if(nEl) nEl.value = formatMoney(netFrom_(raw, vEl?vEl.value:0, w));
+    }
+  }
   recomputeSapLineTotalsLive(docId);
   updateSapLineHints(docId, idx);
   markSapLinesUnsaved(docId);
@@ -912,6 +982,8 @@ function updateSapLineHints(docId, idx){
   const netHint = document.getElementById('sapline-net-hint-'+docId+'-'+idx);
   if(whtHint) whtHint.innerHTML = whtPercentHTML(base, wht);
   if(netHint) netHint.innerHTML = amountMismatchHTML(base, vat, wht, net);
+  const rs = document.getElementById('sapline-whtrate-'+docId+'-'+idx);
+  if(rs) rs.value = whtRateSelectedFor_(base, wht);
 }
 function recomputeSapLineTotalsLive(docId){
   const doc = state.documents.find(d=>d.id===docId);
@@ -1104,19 +1176,15 @@ function applySapLineTaxCalcLocal(docId, idx, taxCode){
   // browser and only marks the row unsaved; the actual save happens via the Save button
   if(!taxCode) return;
   const netEl = document.getElementById('sapline-net-'+docId+'-'+idx);
-  const net = netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0;
-  let base, vat;
-  if(taxCode==='V7'){
-    base = Math.round(net*100/107*100)/100;
-    vat = Math.round((net-base)*100)/100;
-  } else { // VX — no VAT
-    base = net;
-    vat = 0;
-  }
+  const rs = document.getElementById('sapline-whtrate-'+docId+'-'+idx), wEl = document.getElementById('sapline-wht-'+docId+'-'+idx);
+  const rateOn = !!(rs && rs.value && wEl);
+  const net = (netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0) + (rateOn ? (parseFloat(unformatMoney(wEl.value))||0) : 0);
+  const { base, vat } = taxSplit_(taxCode, net);
   const baseEl = document.getElementById('sapline-base-'+docId+'-'+idx);
   const vatEl = document.getElementById('sapline-vat-'+docId+'-'+idx);
   if(baseEl) baseEl.value = formatMoney(base);
   if(vatEl) vatEl.value = formatMoney(vat);
+  if(rateOn){ const w = whtFromRate_(base, parseFloat(rs.value)); wEl.value = formatMoney(w); if(netEl) netEl.value = formatMoney(netFrom_(base, vat, w)); }
   recomputeSapLineTotalsLive(docId);
   updateSapLineHints(docId, idx);
   markSapLinesUnsaved(docId);
@@ -2650,8 +2718,12 @@ function submitApproveOwnHTML(){
           <select id="saown-taxCode" name="taxCode" style="width:120px;" onchange="applySaOwnTaxCalc(this.value)">
             <option value="">— เลือก —</option>
             <option value="V7">V7 (VAT 7%)</option>
+            <option value="D7">D7 (VAT 7%)</option>
             <option value="VX">VX (ไม่มี VAT)</option>
           </select>
+        </div>
+        <div class="field"><label>Rate WHT</label>
+          <select id="saown-whtRate" style="width:140px;" onchange="applySaOwnWhtRate(this.value)">${whtRateOptionsHTML_('','')}</select>
         </div>
       </div>
       <div id="saown-net-hint" style="margin-top:2px;"></div>
@@ -2706,9 +2778,28 @@ function onSaOwnVendorInput(){
       : (el.value ? `<span style="font-size:11.5px;color:var(--stamp-red);">ไม่พบใน Vendor Master — สามารถกรอกเพิ่มเองได้ทีหลังจากหน้าอนุมัติเอกสาร</span>` : '');
   }
 }
+function applySaOwnWhtRate(rate){
+  if(!rate) return;
+  const baseEl = document.getElementById('saown-baseAmount'), whtEl = document.getElementById('saown-whtAmount');
+  if(!baseEl || !whtEl) return;
+  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  whtEl.value = formatMoney(w);
+  const vEl = document.getElementById('saown-vatAmount'), nEl = document.getElementById('saown-netAmount');
+  if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
+  updateSaOwnHints();
+}
 function saOwnAmtBlur(el){
   const raw = unformatMoney(el.value);
   el.value = raw==='' ? '' : formatMoney(raw);
+  if(el.id==='saown-baseAmount'){ // a WHT rate is selected -> keep WHT Amt = Base x rate
+    const rs = document.getElementById('saown-whtRate'), whtEl = document.getElementById('saown-whtAmount');
+    if(rs && rs.value && whtEl){
+      const w = whtFromRate_(raw, parseFloat(rs.value));
+      whtEl.value = formatMoney(w);
+      const vEl = document.getElementById('saown-vatAmount'), nEl = document.getElementById('saown-netAmount');
+      if(nEl) nEl.value = formatMoney(netFrom_(raw, vEl?vEl.value:0, w));
+    }
+  }
   updateSaOwnHints();
 }
 function updateSaOwnHints(){
@@ -2718,23 +2809,21 @@ function updateSaOwnHints(){
   const netHint = document.getElementById('saown-net-hint');
   if(whtHint) whtHint.innerHTML = whtPercentHTML(base, wht);
   if(netHint) netHint.innerHTML = amountMismatchHTML(base, vat, wht, net);
+  const rs = document.getElementById('saown-whtRate');
+  if(rs) rs.value = whtRateSelectedFor_(base, wht);
 }
 function applySaOwnTaxCalc(taxCode){
   if(!taxCode) return;
   const netEl = document.getElementById('saown-netAmount');
-  const net = netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0;
-  let base, vat;
-  if(taxCode==='V7'){
-    base = Math.round(net*100/107*100)/100;
-    vat = Math.round((net-base)*100)/100;
-  } else {
-    base = net;
-    vat = 0;
-  }
+  const rs = document.getElementById('saown-whtRate'), whtEl = document.getElementById('saown-whtAmount');
+  const rateOn = !!(rs && rs.value && whtEl);
+  const net = (netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0) + (rateOn ? (parseFloat(unformatMoney(whtEl.value))||0) : 0);
+  const { base, vat } = taxSplit_(taxCode, net);
   const baseEl = document.getElementById('saown-baseAmount');
   const vatEl = document.getElementById('saown-vatAmount');
   if(baseEl) baseEl.value = formatMoney(base);
   if(vatEl) vatEl.value = formatMoney(vat);
+  if(rateOn){ const w = whtFromRate_(base, parseFloat(rs.value)); whtEl.value = formatMoney(w); if(netEl) netEl.value = formatMoney(netFrom_(base, vat, w)); }
   updateSaOwnHints();
 }
 
@@ -2754,13 +2843,14 @@ function saOwnSapLineRowHTML(l, i){
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-vendor-${i}" list="saown-vendor-dl" value="${l.vendor||''}" oninput="onSaOwnSapLineVendorInput(${i})" placeholder="Vendor"></td>
     <td><input type="text" class="sap-input" style="width:150px;" id="saownsap-vendorname-${i}" value="${l.vendorName||''}" placeholder="Vendor Name"></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-vat-${i}" value="${money(l.vat)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-wht-${i}" value="${money(l.wht)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
-    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-base-${i}" value="${money(l.base)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-wht-${i}" value="${money(l.wht)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"><select class="sap-input" id="saownsap-whtrate-${i}" style="width:85px;font-size:11px;margin-top:3px;" title="เลือก Rate WHT" onchange="applySaOwnSapLineWhtRate(${i},this.value)">${whtRateOptionsHTML_(l.base,l.wht)}</select></td>
+    <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-base-${i}" value="${money(l.base)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i},'base')"></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-net-${i}" value="${money(l.net)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
     <td>
       <select class="sap-input" id="saownsap-tax-${i}" onchange="applySaOwnSapLineTaxCalc(${i},this.value)">
         <option value="" ${!l.taxCode?'selected':''}>—</option>
         <option value="V7" ${l.taxCode==='V7'?'selected':''}>V7</option>
+        <option value="D7" ${l.taxCode==='D7'?'selected':''}>D7</option>
         <option value="VX" ${l.taxCode==='VX'?'selected':''}>VX</option>
       </select>
     </td>
@@ -2842,24 +2932,46 @@ function removeSaOwnSapLine(idx){
   refreshSaOwnSapLineContainer();
   recomputeSaOwnSapTotalsLive();
 }
-function saOwnSapLineAmtBlur(idx){
+function applySaOwnSapLineWhtRate(idx, rate){
+  if(!rate) return;
+  const baseEl = document.getElementById('saownsap-base-'+idx), whtEl = document.getElementById('saownsap-wht-'+idx);
+  if(!baseEl || !whtEl) return;
+  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  whtEl.value = formatMoney(w);
+  const vEl = document.getElementById('saownsap-vat-'+idx), nEl = document.getElementById('saownsap-net-'+idx);
+  if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
+  recomputeSaOwnSapTotalsLive();
+}
+function saOwnSapLineAmtBlur(idx, field){
+  const rs = document.getElementById('saownsap-whtrate-'+idx);
+  if(field==='base' && rs && rs.value){ // a WHT rate is selected -> keep WHT = Base x rate
+    const bEl = document.getElementById('saownsap-base-'+idx), wEl = document.getElementById('saownsap-wht-'+idx);
+    if(bEl && wEl){
+      const w = whtFromRate_(unformatMoney(bEl.value), parseFloat(rs.value));
+      wEl.value = formatMoney(w);
+      const vEl = document.getElementById('saownsap-vat-'+idx), nEl = document.getElementById('saownsap-net-'+idx);
+      if(nEl) nEl.value = formatMoney(netFrom_(bEl.value, vEl?vEl.value:0, w));
+    }
+  }
   ['vat','wht','base','net'].forEach(f=>{
     const e = document.getElementById('saownsap-'+f+'-'+idx);
     if(e){ const raw = unformatMoney(e.value); e.value = raw==='' ? '' : formatMoney(raw); }
   });
+  if(rs){ const bE = document.getElementById('saownsap-base-'+idx), wE = document.getElementById('saownsap-wht-'+idx); rs.value = whtRateSelectedFor_(bE?bE.value:'', wE?wE.value:''); }
   recomputeSaOwnSapTotalsLive();
 }
 function applySaOwnSapLineTaxCalc(idx, taxCode){
   if(!taxCode) return;
   const netEl = document.getElementById('saownsap-net-'+idx);
-  const net = netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0;
-  let base, vat;
-  if(taxCode==='V7'){ base = Math.round(net*100/107*100)/100; vat = Math.round((net-base)*100)/100; }
-  else { base = net; vat = 0; }
+  const rs = document.getElementById('saownsap-whtrate-'+idx), wEl = document.getElementById('saownsap-wht-'+idx);
+  const rateOn = !!(rs && rs.value && wEl);
+  const net = (netEl ? parseFloat(unformatMoney(netEl.value))||0 : 0) + (rateOn ? (parseFloat(unformatMoney(wEl.value))||0) : 0);
+  const { base, vat } = taxSplit_(taxCode, net);
   const baseEl = document.getElementById('saownsap-base-'+idx);
   const vatEl = document.getElementById('saownsap-vat-'+idx);
   if(baseEl) baseEl.value = formatMoney(base);
   if(vatEl) vatEl.value = formatMoney(vat);
+  if(rateOn){ const w = whtFromRate_(base, parseFloat(rs.value)); wEl.value = formatMoney(w); if(netEl) netEl.value = formatMoney(netFrom_(base, vat, w)); }
   recomputeSaOwnSapTotalsLive();
 }
 function onSaOwnSapLineVendorInput(idx){
@@ -3882,13 +3994,14 @@ function accountingApprovalHTML(mode){
           <td>${l.vendor||'-'}</td>
           <td></td>
           <td>${sapLineAmtInput(d.id,i,'vat',l.vat)}</td>
-          <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}<div id="sapline-wht-hint-${d.id}-${i}">${whtPercentHTML(l.base,l.wht)}</div></td>
+          <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}<select id="sapline-whtrate-${d.id}-${i}" title="เลือก Rate WHT — ระบบคิด Base x Rate ใส่ WHT ให้" style="width:95px;font-size:11px;margin-top:4px;" onchange="applySapLineWhtRate('${d.id}',${i},this.value)">${whtRateOptionsHTML_(l.base,l.wht)}</select><div id="sapline-wht-hint-${d.id}-${i}">${whtPercentHTML(l.base,l.wht)}</div></td>
           <td>${sapLineAmtInput(d.id,i,'base',l.base)}</td>
           <td>${sapLineAmtInput(d.id,i,'net',l.net)}<div id="sapline-net-hint-${d.id}-${i}">${amountMismatchHTML(l.base,l.vat,l.wht,l.net)}</div></td>
           <td>
             <select id="sapline-tax-${d.id}-${i}" style="width:90px;" onchange="applySapLineTaxCalcLocal('${d.id}',${i},this.value)">
               <option value="">— เลือก —</option>
               <option value="V7" ${l.taxCode==='V7'?'selected':''}>V7</option>
+              <option value="D7" ${l.taxCode==='D7'?'selected':''}>D7</option>
               <option value="VX" ${l.taxCode==='VX'?'selected':''}>VX</option>
             </select>
           </td>
@@ -3918,15 +4031,16 @@ function accountingApprovalHTML(mode){
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${fmtDate(d.dueDate)}</td>
           <td>${d.createdBy}</td>
-          <td>${trailHTML(d)}<div class="sent-at" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">ส่งมาเมื่อ ${fmtDateTime(docPrevStepDate_(d))}</div></td>
+          <td>${trailHTML(d)}<div class="sent-at" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">ส่งมาเมื่อ ${fmtDateTime(docPrevStepDate_(d))}</div>${(isRejectedItem && canAct) ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn btn-sm btn-approve" onclick="toggleRow('${d.id}')">${expanded?'ปิด':'↻ แก้ไข / Resubmit'}</button>${canCancelRejectedDoc_(d) ? `<button class="btn btn-sm btn-cancel" onclick="cancelDoc('${d.id}')">✕ ยกเลิก</button>` : ''}</div>` : ''}</td>
           <td>${amtInput(d,'vatAmount','0.00')}</td>
-          <td>${amtInput(d,'whtAmount','0.00')}<div id="amt-wht-hint-${d.id}">${whtPercentHTML(d.baseAmount,d.whtAmount)}</div></td>
+          <td>${amtInput(d,'whtAmount','0.00')}<select id="whtRate-${d.id}" title="เลือก Rate WHT — ระบบคิด Base Amt x Rate ใส่ WHT Amt ให้" style="width:100px;font-size:11px;margin-top:4px;" onchange="applyWhtRate('${d.id}',this.value)">${whtRateOptionsHTML_(d.baseAmount,d.whtAmount)}</select><div id="amt-wht-hint-${d.id}">${whtPercentHTML(d.baseAmount,d.whtAmount)}</div></td>
           <td>${amtInput(d,'baseAmount','0.00')}</td>
           <td>${amtInput(d,'netAmount','0.00')}<div id="amt-net-hint-${d.id}">${amountMismatchHTML(d.baseAmount,d.vatAmount,d.whtAmount,d.netAmount)}</div></td>
           <td>
             <select id="taxCode-${d.id}" style="width:100px;" onchange="applyTaxCalc('${d.id}')">
               <option value="">— เลือก —</option>
               <option value="V7" ${d.taxCode==='V7'?'selected':''}>V7 (VAT 7%)</option>
+              <option value="D7" ${d.taxCode==='D7'?'selected':''}>D7 (VAT 7%)</option>
               <option value="VX" ${d.taxCode==='VX'?'selected':''}>VX (ไม่มี VAT)</option>
             </select>
           </td>
