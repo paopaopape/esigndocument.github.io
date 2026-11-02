@@ -2413,11 +2413,11 @@ function dashboardHTML(){
   let rows, shownCount, totalPages = 1;
   if(state.dashGroupBy==='due'){
     const groups = groupByDue(filtered);
-    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="11">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="12">รอบชำระเงิน ${fmtDate(g.due)}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
     shownCount = filtered.length;
   } else if(state.dashGroupBy==='type'){
     const groups = groupByType(filtered);
-    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="11">${docTypeInfo(g.type).label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    rows = groups.length ? groups.map(g=>`<tr class="group-header"><td colspan="12">${docTypeInfo(g.type).label}<span class="cnt">(${g.items.length} รายการ)</span></td></tr>${g.items.map(d=>dashDocRowHTML(d)).join('')}`).join('') : `<tr class="empty-row"><td colspan="12">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
     shownCount = filtered.length;
   } else {
     const pageSize = 20;
@@ -2425,7 +2425,7 @@ function dashboardHTML(){
     if(state.dashPage > totalPages) state.dashPage = totalPages;
     if(state.dashPage < 1) state.dashPage = 1;
     const shown = filtered.slice((state.dashPage-1)*pageSize, state.dashPage*pageSize);
-    rows = shown.map(d=>dashDocRowHTML(d)).join('') || `<tr class="empty-row"><td colspan="11">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
+    rows = shown.map(d=>dashDocRowHTML(d)).join('') || `<tr class="empty-row"><td colspan="12">ไม่พบเอกสารที่ตรงกับตัวกรอง</td></tr>`;
     shownCount = shown.length;
   }
 
@@ -2473,7 +2473,7 @@ function dashboardHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th style="text-align:right;">Net Amt</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -2508,7 +2508,7 @@ function dashDocRowHTML(d){
   if(state.dashDocEditId === d.id){
     return `
     <tr class="action-row">
-      <td colspan="11">
+      <td colspan="12">
         <form onsubmit="saveDashDocEdit(event,'${d.id}')">
           <div class="form-grid">
             <div class="field"><label>ประเภทเอกสาร</label><select name="docType">${state.docTypes.map(t=>`<option value="${t.key}" ${d.docType===t.key?'selected':''}>${t.label}</option>`).join('')}</select></div>
@@ -2536,6 +2536,7 @@ function dashDocRowHTML(d){
       <td>${d.docName}</td>
       <td>${fmtDate(d.dueDate)}</td>
       <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
+      <td class="net-cell" style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">${(function(){ let n = parseFloat(String(d.netAmount||'').replace(/,/g,'')); if(isNaN(n)){ const ls = parseSapLines(d); if(ls.length) n = ls.reduce((t,l)=>t+(parseFloat(l.net)||0),0); } return isNaN(n) ? '<span style="color:var(--ink-soft);">-</span>' : formatMoney(n); })()}</td>
       <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
       <td class="comment-cell">${d.comment || '-'}</td>
       <td>${trailHTML(d)}</td>
