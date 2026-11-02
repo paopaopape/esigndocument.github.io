@@ -4899,7 +4899,7 @@ function canMarkReport_(d){
   const r = state.user.role;
   if(!(isAdmin() || r==='ผู้ตรวจสอบ' || r==='ผู้อนุมัติ')) return false;
   const st = d.status||'';
-  if(/^(รอผู้ตรวจสอบ|รอผู้อนุมัติ)/.test(st)){ try{ return canActOnStage(d); }catch(e){ return true; } }
+  if(/^(รอผู้ตรวจสอบ|รอผู้อนุมัติ)/.test(st)){ let act = true; try{ act = canActOnStage(d); }catch(e){} if(act) return true; }   // not their stage now → fall through: they may still edit if they already signed an earlier stage
   // once they have signed off, a reviewer/approver may still correct their OWN pen layer until the document is Complete
   if(st==='Complete' || st==='ยกเลิก' || /^ตีกลับ/.test(st)) return false;
   const me = fullName(state.user);
