@@ -4743,10 +4743,11 @@ function openApprovalReport(id){
       <div><span class="label">สร้างโดย:</span> <b>${d.createdBy||'-'}</b></div>
       <div><span class="label">สถานะเอกสาร:</span> <b>${d.status}</b></div>
       <div><span class="label">วันที่สร้าง:</span> <b>${fmt(d.createdDate)}</b></div>
+      <div><span class="label">Due:</span> <b>${fmt(d.dueDate)}</b></div>
     </div>
     <table class="data">
-      <colgroup><col style="width:5.5%"><col style="width:5%"><col style="width:9%"><col style="width:7%"><col style="width:4.5%"><col style="width:5%"><col style="width:9%"><col style="width:5.5%"><col style="width:7%"><col style="width:8%"><col style="width:5%"><col style="width:6.5%"><col style="width:6%"><col style="width:8.5%"><col style="width:9%"></colgroup>
-      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Due</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <colgroup><col style="width:5%"><col style="width:5%"><col style="width:6.5%"><col style="width:8.5%"><col style="width:4.5%"><col style="width:5%"><col style="width:7.5%"><col style="width:5.5%"><col style="width:6.5%"><col style="width:7.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8.5%"></colgroup>
+      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">Total Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         ${(function(){
           const lines = parseSapLines(d);
@@ -4773,16 +4774,16 @@ function openApprovalReport(id){
           <td>${payTypeLabel(d.payType)}</td>
           <td>${r.acct||'-'}</td>
           <td>${r.bank||'-'}</td>
-          <td>${fmt(d.dueDate)}</td>
-          <td class="n">${money(r.vat)}</td>
-          <td class="n">${money(r.wht)}</td>
           <td class="n">${money(r.base)}</td>
+          <td class="n">${money(r.vat)}</td>
+          <td class="n">${money(r.base+r.vat)}</td>
+          <td class="n">${money(r.wht)}</td>
           <td class="n"><b>${money(r.net)}</b></td>
         </tr>`;
           const sum = rs => rs.reduce((t,r)=>({vat:t.vat+r.vat,wht:t.wht+r.wht,base:t.base+r.base,net:t.net+r.net}),{vat:0,wht:0,base:0,net:0});
           const totHTML = (cls,label,t) => `
-        <tr class="${cls}"><td colspan="11" class="tl">${label}</td>
-          <td class="n">${money(t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.base)}</td><td class="n">${money(t.net)}</td></tr>`;
+        <tr class="${cls}"><td colspan="10" class="tl">${label}</td>
+          <td class="n">${money(t.base)}</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.base+t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.net)}</td></tr>`;
           // group rows by Vendor (first-appearance order), subtotal under each group, grand total at the end
           const order = [], groups = {};
           rows.forEach(r=>{ const k = r.vendor || r.vname || '-'; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(r); });
@@ -6583,9 +6584,10 @@ function generateVoucherSummary(){
           <td>${payTypeLabel(d.payType)}</td>
           <td>${(vRec&&vRec.bankAccount)||'-'}</td>
           <td>${(vRec&&vRec.bankName)||'-'}</td>
-          <td style="text-align:right;">${money(num(l.vat))}</td>
-          <td style="text-align:right;">${money(num(l.wht))}</td>
           <td style="text-align:right;">${money(num(l.base))}</td>
+          <td style="text-align:right;">${money(num(l.vat))}</td>
+          <td style="text-align:right;">${money(num(l.base)+num(l.vat))}</td>
+          <td style="text-align:right;">${money(num(l.wht))}</td>
           <td style="text-align:right;">${money(num(l.net))}</td>
         </tr>`;
       }).join('');
@@ -6603,9 +6605,10 @@ function generateVoucherSummary(){
       <td>${payTypeLabel(d.payType)}</td>
       <td>${bankAcct||'-'}</td>
       <td>${bankName||'-'}</td>
-      <td style="text-align:right;">${money(num(d.vatAmount))}</td>
-      <td style="text-align:right;">${money(num(d.whtAmount))}</td>
       <td style="text-align:right;">${money(num(d.baseAmount))}</td>
+      <td style="text-align:right;">${money(num(d.vatAmount))}</td>
+      <td style="text-align:right;">${money(num(d.baseAmount)+num(d.vatAmount))}</td>
+      <td style="text-align:right;">${money(num(d.whtAmount))}</td>
       <td style="text-align:right;">${money(num(d.netAmount))}</td>
     </tr>`;
   }).join('');
@@ -6633,9 +6636,9 @@ function generateVoucherSummary(){
       <div>จำนวนเอกสาร: <b>${docs.length}</b> รายการ · ออกโดย: <b>${fullName(state.user)}</b> · วันที่ออกรายงาน: <b>${fmtDate(new Date())}</b></div>
     </div>
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>Bank</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>Bank</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">Total Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="10"></td><td>${money(totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.base)}</td><td>${money(totals.net)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="10"></td><td>${money(totals.base)}</td><td>${money(totals.vat)}</td><td>${money(totals.base+totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.net)}</td></tr></tfoot>
     </table>
     <div class="sign-grid">
       <div>ต้นฉบับอยู่ฝ่ายบัญชี<div class="sign-line"></div>${fmtDate(new Date())}</div>
@@ -7065,9 +7068,10 @@ function openPaymentReport(docPayment){
           <td>${(vRec&&vRec.bankAccount)||'-'}</td>
           <td>${(vRec&&vRec.bankName)||'-'}</td>
           <td>${d.createdBy||'-'}</td>
-          <td style="text-align:right;">${money(num(l.vat))}</td>
-          <td style="text-align:right;">${money(num(l.wht))}</td>
           <td style="text-align:right;">${money(num(l.base))}</td>
+          <td style="text-align:right;">${money(num(l.vat))}</td>
+          <td style="text-align:right;">${money(num(l.base)+num(l.vat))}</td>
+          <td style="text-align:right;">${money(num(l.wht))}</td>
           <td style="text-align:right;">${money(num(l.net))}</td>
         </tr>`;
       }).join('');
@@ -7084,9 +7088,10 @@ function openPaymentReport(docPayment){
       <td>${bankAcct||'-'}</td>
       <td>${bankName||'-'}</td>
       <td>${d.createdBy||'-'}</td>
-      <td style="text-align:right;">${money(num(d.vatAmount))}</td>
-      <td style="text-align:right;">${money(num(d.whtAmount))}</td>
       <td style="text-align:right;">${money(num(d.baseAmount))}</td>
+      <td style="text-align:right;">${money(num(d.vatAmount))}</td>
+      <td style="text-align:right;">${money(num(d.baseAmount)+num(d.vatAmount))}</td>
+      <td style="text-align:right;">${money(num(d.whtAmount))}</td>
       <td style="text-align:right;">${money(num(d.netAmount))}</td>
     </tr>`;
   }).join('');
@@ -7121,9 +7126,9 @@ function openPaymentReport(docPayment){
       <div>Doc Payment: <b>${docPayment}</b>${lastDoc.docPaymentLink?` &nbsp;·&nbsp; <a href="${lastDoc.docPaymentLink}" target="_blank" rel="noopener">ไฟล์สลิป/หลักฐานการโอน ↗</a>`:''}</div>
     </div>
     <table>
-      <thead><tr><th>Payment Date</th><th>Web Doc Number</th><th>ชื่อเอกสาร</th><th>FI Doc Number</th><th>Vendor</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Requester Name</th><th style="text-align:right;">Vat Amount</th><th style="text-align:right;">WHT Amount</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Net Amount</th></tr></thead>
+      <thead><tr><th>Payment Date</th><th>Web Doc Number</th><th>ชื่อเอกสาร</th><th>FI Doc Number</th><th>Vendor</th><th>Vendor Name</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th>Requester Name</th><th style="text-align:right;">Amount</th><th style="text-align:right;">Vat Amount</th><th style="text-align:right;">Total Amount</th><th style="text-align:right;">WHT Amount</th><th style="text-align:right;">Net Amount</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="9"></td><td>${money(totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.base)}</td><td>${money(totals.net)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="9"></td><td>${money(totals.base)}</td><td>${money(totals.vat)}</td><td>${money(totals.base+totals.vat)}</td><td>${money(totals.wht)}</td><td>${money(totals.net)}</td></tr></tfoot>
     </table>
     <div class="sign-grid">
       <div>ต้นฉบับอยู่ฝ่ายบัญชี<div class="sign-line"></div>${(()=>{const dt=parseThaiDateStr(lastDoc.paymentDate);return dt?fmtDate(dt):(lastDoc.paymentDate||'-');})()}</div>
