@@ -753,6 +753,21 @@ function themeSelectHTML_(){
   const cur = currentTheme_();
   return `<select class="theme-select" title="เลือกธีมสี" onchange="setTheme(this.value)">${THEMES.map(t=>`<option value="${t[0]}" ${cur===t[0]?'selected':''}>🎨 ${t[1]}</option>`).join('')}</select>`;
 }
+/* Google Sheets (US locale) turns Thai "D/M/BE" text with day<=12 into a real Date with day and month swapped (2 Nov 2569 -> Feb 11, 2569) and the API returns it as an ISO string
+   with a Buddhist year. The swap is exactly reversible, so rebuild the original "D/M/BE HH:MM:SS" text. (Code.gs also repairs this on the server and now stores such text as plain text.) */
+function fixFlippedDates_(obj){
+  Object.keys(obj).forEach(k=>{
+    const v = obj[k];
+    if(typeof v !== 'string') return;
+    const m = v.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/);
+    if(!m || +m[1] <= 2400) return;
+    const u = new Date(Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]) + 7*3600*1000);   // Bangkok time
+    const p2 = n => String(n).padStart(2,'0');
+    const base = (u.getUTCMonth()+1)+'/'+u.getUTCDate()+'/'+u.getUTCFullYear();
+    const t = p2(u.getUTCHours())+':'+p2(u.getUTCMinutes())+':'+p2(u.getUTCSeconds());
+    obj[k] = t==='00:00:00' ? base : base+' '+t;
+  });
+}
 function nowStr(){ return new Date().toLocaleString('th-TH'); }
 function appendNoteText(existing, newText){
   if(!newText || !newText.trim()) return existing || '';
@@ -847,8 +862,9 @@ async function refreshData(){
     state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
     state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
-    state.paymentVouchers = (data.paymentVouchers || []).map(v=>({ ...v, companyCode:String(v.companyCode) }));
+    state.paymentVouchers = (data.paymentVouchers || []).map(v=>{ const o = { ...v, companyCode:String(v.companyCode) }; fixFlippedDates_(o); return o; });
     state.documents = (data.documents || []).map(d=>{
+      fixFlippedDates_(d);
       if(d.docSAP===undefined) d.docSAP='';
       if(d.vatAmount===undefined) d.vatAmount='';
       if(d.whtAmount===undefined) d.whtAmount='';
