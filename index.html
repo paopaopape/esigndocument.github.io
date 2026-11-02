@@ -849,6 +849,7 @@ async function refreshData(opts){
   let data = await apiCall(light ? 'bootstrapLite' : 'bootstrap', {});
   if(light && !(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the light action
   const ms = Math.round(performance.now() - t0);
+  if(data && data.success && state.pendingOps>0) return true;   // a background save is in flight — don't overwrite its optimistic state
   if(data && data.success){
     applyBootstrap_(data);
     cacheSave_(data);
@@ -5353,6 +5354,32 @@ async function unlockPaymentVoucher(id){
   render();
 }
 
+/* Optimistic update: the document leaves the person's task list at once, the save + refresh run in the background.
+   If the save fails the document is put back and an error is shown. */
+state.pendingOps = 0;
+async function bgUpdateDoc_(doc, patch, okMsg){
+  const snapshot = Object.assign({}, doc);
+  Object.assign(doc, patch);
+  state.expandedRow = null;
+  state.pendingOps++;
+  showToast(okMsg);
+  render();
+  let res;
+  try{ res = await apiCall('updateDocument', patch); }catch(e){ res = {success:false}; }
+  state.pendingOps--;
+  if(!res || !res.success){
+    const cur = state.documents.find(d=>d.id===doc.id);
+    if(cur){ Object.keys(patch).forEach(k=>{ if(!(k in snapshot)) delete cur[k]; }); Object.assign(cur, snapshot); }
+    showToast('บันทึกไม่สำเร็จ ระบบนำเอกสาร '+displayId(doc.id)+' กลับมาให้แล้ว กรุณาลองใหม่');
+    render();
+    return;
+  }
+  if(state.pendingOps===0){
+    await refreshData({light:true});
+    const ae = document.activeElement;
+    if(!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) render();
+  }
+}
 async function processStage(id, decision){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
@@ -5460,14 +5487,7 @@ async function processStage(id, decision){
     action: decision==='approve' ? 'approve' : 'reject',
   });
 
-  showBusyOverlay(decision==='approve' ? 'กำลังบันทึกการอนุมัติ กรุณารอสักครู่...' : 'กำลังบันทึกการตีกลับ กรุณารอสักครู่...');
-  const res = await apiCall('updateDocument', patch);
-  hideBusyOverlay();
-  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
-  state.expandedRow = null;
-  showToast(decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
-  await refreshData({light:true});
-  render();
+  bgUpdateDoc_(doc, patch, decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
 }
 function toggleSkipReasonOther(id){
   const sel = document.getElementById('skip-reason-'+id);
@@ -5526,14 +5546,7 @@ async function skipReviewerStage(id){
   history.push({ stage:'ผู้ตรวจสอบ', actor: fullName(state.user), date: nowStr(), note: 'ข้ามโดยนักบัญชี เหตุผล: '+note, action:'skip_reviewer' });
   patch.historyLog = JSON.stringify(history);
 
-  showBusyOverlay('กำลังข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติ กรุณารอสักครู่...');
-  const res = await apiCall('updateDocument', patch);
-  hideBusyOverlay();
-  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
-  state.expandedRow = null;
-  showToast('ข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติเรียบร้อย');
-  await refreshData({light:true});
-  render();
+  bgUpdateDoc_(doc, patch, 'ข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติเรียบร้อย');
 }
 async function resubmitFromStage(id){
   const doc = state.documents.find(d=>d.id===id);
