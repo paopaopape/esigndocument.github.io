@@ -826,7 +826,7 @@ function companySelectOptions(selected){
 /* ============================= API (Google Apps Script backend) ============================= */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzVoY6kSxdJpaHZPf08BWSUvJG6zmysnA2Rn9S5jKslPJxuobJSdFzE4SWRbCbdqWL3/exec';
 
-async function apiCall(action, payload){
+async function apiCall(action, payload, quiet){
   try{
     const res = await fetch(API_URL, {
       method:'POST',
@@ -835,11 +835,11 @@ async function apiCall(action, payload){
     });
     const data = await res.json();
     if(!data.success && data.error) console.warn('API', action, 'returned error:', data.error);
-    if(data && data.error==='company_forbidden'){ showToast('คุณไม่มีสิทธิ์ทำรายการในบริษัทนี้'); }
+    if(data && data.error==='company_forbidden' && !quiet){ showToast('คุณไม่มีสิทธิ์ทำรายการในบริษัทนี้'); }
     return data;
   }catch(err){
     console.error('API call failed', action, err);
-    showToast('เชื่อมต่อ Server ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
+    if(!quiet) showToast('เชื่อมต่อ Server ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
     return { success:false, error:String(err) };
   }
 }
@@ -5262,16 +5262,8 @@ async function processPaymentStage(id, decision){
   history.push({ stage: cfg.stageLabel, actor: fullName(state.user), date: nowStr(), note: (note&&note.trim())?note.trim():'', action: decision==='approve'?'approve':'reject' });
   patch.historyLog = JSON.stringify(history);
 
-  showBusyOverlay(decision==='approve' ? 'กำลังบันทึกการอนุมัติ กรุณารอสักครู่...' : 'กำลังบันทึกการตีกลับ กรุณารอสักครู่...');
-  const res = await apiCall('updatePaymentVoucher', patch);
-  hideBusyOverlay();
-  if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
-  state.expandedRow = null;
-  showToast(decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว');
-  await refreshData({light:true});
-  render();
+  bgUpdateDoc_(v, patch, decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว', 'updatePaymentVoucher');
 }
-// finance fixes the attachment link of a batch the Payment reviewer sent back, then resubmits to the reviewer
 // finance withdraws a batch that was sent back to them: every document returns to รอชำระเงิน so they can be re-grouped
 async function cancelRejectedPv(id){
   const v = state.paymentVouchers.find(x=>x.id===id);
@@ -5357,20 +5349,29 @@ async function unlockPaymentVoucher(id){
 /* Optimistic update: the document leaves the person's task list at once, the save + refresh run in the background.
    If the save fails the document is put back and an error is shown. */
 state.pendingOps = 0;
-async function bgUpdateDoc_(doc, patch, okMsg){
+window.addEventListener('beforeunload', e=>{ if(state.pendingOps>0){ e.preventDefault(); e.returnValue = ''; } });
+async function bgUpdateDoc_(doc, patch, okMsg, apiAction){
+  apiAction = apiAction || 'updateDocument';
+  const listKey = apiAction==='updatePaymentVoucher' ? 'paymentVouchers' : 'documents';
   const snapshot = Object.assign({}, doc);
   Object.assign(doc, patch);
   state.expandedRow = null;
   state.pendingOps++;
   showToast(okMsg);
   render();
-  let res;
-  try{ res = await apiCall('updateDocument', patch); }catch(e){ res = {success:false}; }
+  // keep trying in the background: first attempt + up to 3 retries (patches are idempotent), only then report failure
+  let res = {success:false};
+  const waits = [0, 2000, 5000, 10000];
+  for(let i=0; i<waits.length; i++){
+    if(waits[i]) await new Promise(r=>setTimeout(r, waits[i]));
+    try{ res = await apiCall(apiAction, patch, true); }catch(e){ res = {success:false}; }
+    if(res && (res.success || res.error==='company_forbidden')) break;
+  }
   state.pendingOps--;
   if(!res || !res.success){
-    const cur = state.documents.find(d=>d.id===doc.id);
+    const cur = state[listKey].find(d=>d.id===doc.id);
     if(cur){ Object.keys(patch).forEach(k=>{ if(!(k in snapshot)) delete cur[k]; }); Object.assign(cur, snapshot); }
-    showToast('บันทึกไม่สำเร็จ ระบบนำเอกสาร '+displayId(doc.id)+' กลับมาให้แล้ว กรุณาลองใหม่');
+    showToast('บันทึกไม่สำเร็จหลังลองส่งซ้ำ 3 ครั้ง ระบบนำรายการ '+displayId(doc.id)+' กลับมาให้แล้ว กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
     render();
     return;
   }
