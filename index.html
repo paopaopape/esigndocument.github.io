@@ -851,17 +851,24 @@ async function refreshData(opts){
   const haveDocs = active ? state.documents.filter(isSettled) : [];
   const havePv = active ? state.paymentVouchers.filter(isSettled) : [];
   let data = null;
-  if(active){
+  const legacy = !!state.serverLegacy;   // the deployed Code.gs predates the fast actions: go straight to the full load
+  if(active && !legacy){
     data = await apiCall('bootstrapActive', { have: haveDocs.map(d=>d.id), havePv: havePv.map(v=>v.id) });
     if(data && data.success && data.partial){
       // merge: rows the server sent + the settled rows we already hold (server skipped those)
       const gotD = new Set(data.documents.map(d=>d.id)), gotP = new Set(data.paymentVouchers.map(v=>v.id));
       data.documents = data.documents.concat(haveDocs.filter(d=>!gotD.has(d.id)));
       data.paymentVouchers = data.paymentVouchers.concat(havePv.filter(v=>!gotP.has(v.id)));
-    } else data = null;
+    } else {
+      if(data && String(data.error||'').indexOf('unknown_action')===0) state.serverLegacy = true;
+      data = null;
+    }
   }
-  if(!data) data = await apiCall(light||active ? 'bootstrapLite' : 'bootstrap', {});
-  if((light||active) && !(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the light action
+  if(!data && light && !active && !state.serverLegacy){
+    data = await apiCall('bootstrapLite', {});
+    if(!(data && data.success) && data && String(data.error||'').indexOf('unknown_action')===0) state.serverLegacy = true;
+  }
+  if(!(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the fast actions (or a failed fast call)
   const ms = Math.round(performance.now() - t0);
   if(data && data.success && state.pendingOps>0) return true;   // a background save is in flight — don't overwrite its optimistic state
   if(data && data.success){
