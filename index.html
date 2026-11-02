@@ -843,14 +843,74 @@ async function apiCall(action, payload){
     return { success:false, error:String(err) };
   }
 }
-async function refreshData(){
-  const data = await apiCall('bootstrap', {});
+async function refreshData(opts){
+  const light = !!(opts && opts.light);
+  const t0 = performance.now();
+  let data = await apiCall(light ? 'bootstrapLite' : 'bootstrap', {});
+  if(light && !(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the light action
+  const ms = Math.round(performance.now() - t0);
   if(data && data.success){
+    applyBootstrap_(data);
+    cacheSave_(data);
+    window.__perf = { kind: data._perf && data._perf.lite ? 'lite' : 'full', clientMs: ms, server: data._perf || null, at: new Date().toISOString() };
+    try{ console.info('[perf] load', window.__perf.kind, ms+'ms', 'server:', JSON.stringify(data._perf||{})); }catch(e){}
+    if(data.members) setTimeout(loadSignatures_, 0);
+  }
+  state.lastLoadMs = ms;
+  return data && data.success;
+}
+/* ---- local cache of the last load (stale-while-revalidate): the page opens instantly from it, then refreshes in the background ---- */
+const CACHE_KEY = 'dfCache';
+const CACHE_MAX_HOURS = 12;
+let cacheRaw_ = null;
+function cacheSave_(data){
+  try{
+    if(!localStorage.getItem(SESSION_KEY)) return;
+    if(data.members){
+      cacheRaw_ = Object.assign({}, data, {
+        members: data.members.map(m=>{ const o = Object.assign({}, m); delete o.signatureImage; return o; }),
+        _perf: undefined, _cachedAt: Date.now() });
+    } else if(cacheRaw_){
+      cacheRaw_.documents = data.documents; cacheRaw_.paymentVouchers = data.paymentVouchers; cacheRaw_._cachedAt = Date.now();
+    } else { return; }
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheRaw_));
+  }catch(e){ try{ localStorage.removeItem(CACHE_KEY); }catch(_){} cacheRaw_ = null; }
+}
+function cacheLoad_(){
+  try{
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+    if(!c || !c.members || !c.documents) return null;
+    if((Date.now() - (c._cachedAt||0)) > CACHE_MAX_HOURS*3600000) return null;
+    cacheRaw_ = c;
+    return c;
+  }catch(e){ return null; }
+}
+/* ---- signature images are loaded separately (they are large) ---- */
+async function loadSignatures_(){
+  if(state.sigLoaded || state.sigLoading) return;
+  state.sigLoading = true;
+  const r = await apiCall('getSignatures', {});
+  state.sigLoading = false;
+  if(r && r.success){
+    state.sigCache = r.signatures || {};
+    (state.members||[]).forEach(m=>{ if(state.sigCache[m.id]) m.signatureImage = state.sigCache[m.id]; });
+  }
+  state.sigLoaded = true;   // (an older Code.gs has no getSignatures — its bootstrap still carries the images)
+}
+function sigReady_(){
+  if(state.sigLoaded || !state.user) return true;
+  showToast('กำลังโหลดลายเซ็น กรุณากดอีกครั้งในอีกสักครู่');
+  loadSignatures_();
+  return false;
+}
+function applyBootstrap_(data){
+  {
     // Google Sheets auto-types numeric-looking company codes (1010, 1160, 4040...) as Numbers.
     // <select> option values are always strings, so without this normalization every strict
     // === comparison against a company code silently fails and dropdowns snap back to "all".
+    if(data.members){
     state.members = (data.members || []).map(m=>{
-      if(m.signatureImage===undefined) m.signatureImage='';
+      m.signatureImage = m.signatureImage || ((state.sigCache||{})[m.id] || '');
       m.companyCodes = (m.companyCodes||[]).map(c=>String(c));
       m.canTrack = (m.canTrack===true || m.canTrack==='TRUE' || m.canTrack==='true');
       return m;
@@ -862,6 +922,7 @@ async function refreshData(){
     state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
     state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
+    }
     state.paymentVouchers = (data.paymentVouchers || []).map(v=>{ const o = { ...v, companyCode:String(v.companyCode) }; fixFlippedDates_(o); return o; });
     state.documents = (data.documents || []).map(d=>{
       fixFlippedDates_(d);
@@ -901,9 +962,35 @@ async function refreshData(){
       return d;
     });
   }
-  return data && data.success;
 }
 async function loadAll(){
+  // stale-while-revalidate: with a remembered session + a recent local copy, open instantly, then refresh in the background
+  let hasSession = false;
+  try{ hasSession = !!JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){}
+  const cached = (hasSession && !getLinkedDocIdFromUrl_() && !getLinkedPvIdFromUrl_()) ? cacheLoad_() : null;
+  if(cached){
+    try{
+      applyBootstrap_(cached);
+      restoreSession();
+      if(state.user){
+        state.loading = false;
+        state.sigLoaded = false;
+        render();
+        window.__perf = { kind:'cache-open', at:new Date().toISOString() };
+        (async()=>{
+          const ok2 = await refreshData();
+          if(ok2){
+            const u = state.members.find(m=>m.id===(state.user&&state.user.id));
+            if(u) state.user = u; else { clearSession(); state.user = null; }
+            const ae = document.activeElement;
+            const typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+            if(!typing) render();
+          }
+        })();
+        return;
+      }
+    }catch(e){ try{ console.warn('cache open failed', e); }catch(_){} state.user = null; }
+  }
   const ok = await refreshData();
   if(!ok){ showToast('โหลดข้อมูลจาก Server ไม่สำเร็จ ลองรีเฟรชหน้าเว็บอีกครั้ง'); }
   else { restoreSession(); }
@@ -927,6 +1014,7 @@ async function loadAll(){
 async function manualRefresh(){
   const btn = document.getElementById('refresh-btn');
   if(btn){ btn.disabled = true; btn.textContent = 'กำลังรีเฟรช...'; }
+  const tm0 = performance.now();
   const ok = await refreshData();
   if(ok && state.user){
     // re-point state.user at the refreshed record in case role/company changed
@@ -934,7 +1022,7 @@ async function manualRefresh(){
     if(refreshedUser) state.user = refreshedUser;
   }
   if(btn){ btn.disabled = false; btn.textContent = '↻ รีเฟรช'; }
-  showToast(ok ? 'รีเฟรชข้อมูลล่าสุดเรียบร้อย' : 'รีเฟรชไม่สำเร็จ ลองใหม่อีกครั้ง');
+  showToast(ok ? 'รีเฟรชข้อมูลล่าสุดเรียบร้อย ('+((performance.now()-tm0)/1000).toFixed(1)+' วินาที)' : 'รีเฟรชไม่สำเร็จ ลองใหม่อีกครั้ง');
   render();
 }
 
@@ -1595,7 +1683,7 @@ const SESSION_MAX_HOURS = 5; // un-"remembered" session auto-expires this many h
 function saveSession(user, remember){
   try{ localStorage.setItem(SESSION_KEY, JSON.stringify({ id:user.id, ts:Date.now(), remember: !!remember })); }catch(e){}
 }
-function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); localStorage.removeItem(CACHE_KEY); }catch(e){} cacheRaw_ = null; }
 function restoreSession(){
   let saved;
   try{ saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){ saved = null; }
@@ -2702,7 +2790,7 @@ async function submitNewDoc(e){
     ? 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id)+' — ประเภทนี้ข้ามขั้นตอนอนุมัติ บันทึกเป็น Complete ให้ทันทีแล้ว'
     : 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id), 5000);
   e.target.reset();
-  await refreshData();
+  await refreshData({light:true});
   state.view = 'tracking';
   render();
 }
@@ -3802,11 +3890,11 @@ async function submitApproveOwn(e){
   const res2 = await apiCall('updateDocument', patch);
   hideBusyOverlay();
   if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
-  if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData(); render(); return; }
+  if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData({light:true}); render(); return; }
   showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
   e.target.reset();
   state.saOwnSapLines = [];
-  await refreshData();
+  await refreshData({light:true});
   state.view = 'tracking';
   render();
 }
@@ -3815,7 +3903,7 @@ async function resubmitDoc(id){
   const res = await apiCall('updateDocument', patch);
   if(!res.success){ showToast('ส่งเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('ส่งเอกสารกลับเข้าสู่กระบวนการอนุมัติแล้ว');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 
@@ -4548,6 +4636,7 @@ function toggleHdrBlock(id){
   if(btn){ const n = btn.querySelector('span') ? btn.querySelector('span').outerHTML : ''; btn.innerHTML = (state.hdrOpen[id]?'🙈 ซ่อน':'👁 แสดง')+' ข้อมูลเอกสาร SAP / ผู้รับเงิน '+n; }
 }
 function openApprovalReport(id){
+  if(!sigReady_()) return;
   const d = state.documents.find(x=>x.id===id);
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
   const fmt = str => { if(!str) return '-'; const dt = parseThaiDateStr(str); return fmtDate(dt || str); };
@@ -5178,7 +5267,7 @@ async function processPaymentStage(id, decision){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast(decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 // finance fixes the attachment link of a batch the Payment reviewer sent back, then resubmits to the reviewer
@@ -5194,16 +5283,16 @@ async function cancelRejectedPv(id){
   const docs = pvDocIds(v).map(i=>state.documents.find(x=>x.id===i)).filter(Boolean);
   for(const d of docs){
     const r = await apiCall('updateDocument', { id:d.id, status:'รอชำระเงิน', docPayment:'', docPaymentLink:'', paymentBy:'', paymentDate:'', timeApprove:'', modifiedBy: fullName(state.user), modifiedDate: nowStr() });
-    if(!r.success){ hideBusyOverlay(); showToast('ยกเลิกไม่สำเร็จที่เอกสาร '+displayId(d.id)+' ลองใหม่อีกครั้ง (เอกสารที่ทำไปแล้วจะกลับไปรอชำระเงิน)'); await refreshData(); render(); return; }
+    if(!r.success){ hideBusyOverlay(); showToast('ยกเลิกไม่สำเร็จที่เอกสาร '+displayId(d.id)+' ลองใหม่อีกครั้ง (เอกสารที่ทำไปแล้วจะกลับไปรอชำระเงิน)'); await refreshData({light:true}); render(); return; }
   }
   let history = [];
   try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
   history.push({ stage:'การเงิน ยกเลิกชุดรวบจ่าย', actor: fullName(state.user), date: nowStr(), note: reason, action:'cancel' });
   const res = await apiCall('updatePaymentVoucher', { id, status:'ยกเลิก', historyLog: JSON.stringify(history) });
   hideBusyOverlay();
-  if(!res.success){ showToast('เอกสารกลับไปรอชำระเงินแล้ว แต่ปิดชุดไม่สำเร็จ กรุณาแจ้ง Admin'); await refreshData(); render(); return; }
+  if(!res.success){ showToast('เอกสารกลับไปรอชำระเงินแล้ว แต่ปิดชุดไม่สำเร็จ กรุณาแจ้ง Admin'); await refreshData({light:true}); render(); return; }
   showToast('ยกเลิกชุดรวบจ่ายแล้ว เอกสารกลับไปรอชำระเงิน — รวบจ่ายใหม่ได้เลย');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function resubmitRejectedPv(id){
@@ -5225,7 +5314,7 @@ async function resubmitRejectedPv(id){
   hideBusyOverlay();
   if(!res.success){ showToast('ส่งตรวจสอบใหม่ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('แก้ไขลิงก์และส่งผู้ตรวจสอบ Payment ใหม่เรียบร้อย');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function resubmitPaymentVoucher(id){
@@ -5241,7 +5330,7 @@ async function resubmitPaymentVoucher(id){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งต่อผู้อนุมัติ Payment ใหม่เรียบร้อย');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function unlockPaymentVoucher(id){
@@ -5260,7 +5349,7 @@ async function unlockPaymentVoucher(id){
   const res = await apiCall('updatePaymentVoucher', patch);
   if(!res.success){ showToast('ปลดล็อกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('ปลดล็อกชุดปิดรอบเรียบร้อย — ส่งกลับไปรอผู้อนุมัติ Payment เซ็นใหม่');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 
@@ -5377,7 +5466,7 @@ async function processStage(id, decision){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast(decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 function toggleSkipReasonOther(id){
@@ -5443,7 +5532,7 @@ async function skipReviewerStage(id){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติเรียบร้อย');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function resubmitFromStage(id){
@@ -5503,7 +5592,7 @@ async function resubmitFromStage(id){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งเอกสารกลับเข้าสู่การอนุมัติเรียบร้อย · '+id);
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function forwardToSubmitter(id){
@@ -5525,7 +5614,7 @@ async function forwardToSubmitter(id){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งกลับให้ผู้วางบิลแก้ไขแล้ว · '+id);
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function cancelDoc(id){
@@ -5548,7 +5637,7 @@ async function cancelDoc(id){
   if(!res.success){ showToast('ยกเลิกเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ยกเลิกเอกสาร '+displayId(id)+' เรียบร้อย');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 
@@ -5705,7 +5794,7 @@ async function confirmReceiveBatch(){
   state.receiveSelected = [];
   state.receiveDocSap = '';
   showToast('ยืนยันรับเงิน '+n+' รายการเรียบร้อย'+(res.receiveVoucherId?' — เลขที่ '+res.receiveVoucherId:''));
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 
@@ -6438,6 +6527,7 @@ async function exportVoucherReportToExcel(){
   URL.revokeObjectURL(url);
 }
 function generateVoucherSummary(){
+  if(!sigReady_()) return;
   const docs = state.documents.filter(d=>state.voucherReportSelected.includes(d.id));
   if(!docs.length){ showToast('กรุณาเลือกเอกสารก่อน'); return; }
   const num = v => parseFloat(v)||0;
@@ -6609,7 +6699,7 @@ async function saveDraftChanges(id){
   if(!res.success){ showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   Object.assign(doc, patch);
   showToast('บันทึกการแก้ไขเรียบร้อย — กดปุ่มดาวน์โหลด/ตรวจสอบตัวเลขได้เลย ยังไม่ส่งต่อจนกว่าจะกดปุ่มอนุมัติ');
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 async function saveAmountField(id, field, value){
@@ -6646,7 +6736,7 @@ async function confirmBatchPayment(){
       modifiedBy: fullName(state.user), modifiedDate: nowStr(),
     };
     const res = await apiCall('updateDocument', patch);
-    if(!res.success){ hideBusyOverlay(); showToast('บันทึกการจ่ายเงินไม่สำเร็จที่เอกสาร '+displayId(id)+' ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกการจ่ายเงินไม่สำเร็จที่เอกสาร '+displayId(id)+' ลองใหม่อีกครั้ง'); await refreshData({light:true}); render(); return; }
     done++;
     showBusyOverlay('กำลังดำเนินการรวบชุดจ่าย กรุณารอสักครู่... ('+done+'/'+ids.length+')');
   }
@@ -6682,7 +6772,7 @@ async function confirmBatchPayment(){
   state.paymentDocLink = '';
   state.paymentAccountNo = '';
   state.paymentSkipReason = ''; state.paymentSkipOther = '';
-  await refreshData();
+  await refreshData({light:true});
   render();
   openPaymentReport(docNum);
 }
@@ -6859,7 +6949,7 @@ async function saveBatchEdit(e, oldDocPayment){
       modifiedBy: fullName(state.user), modifiedDate: nowStr(),
     };
     const res = await apiCall('updateDocument', patch);
-    if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่เอกสาร '+displayId(doc.id)+' ลองใหม่อีกครั้ง'); await refreshData(); render(); return; }
+    if(!res.success){ hideBusyOverlay(); showToast('บันทึกไม่สำเร็จที่เอกสาร '+displayId(doc.id)+' ลองใหม่อีกครั้ง'); await refreshData({light:true}); render(); return; }
   }
   // keep the Payment close-out batch's own Doc Payment number in step with the documents
   if(newDocPayment !== String(oldDocPayment)){
@@ -6869,7 +6959,7 @@ async function saveBatchEdit(e, oldDocPayment){
   hideBusyOverlay();
   showToast('แก้ไข Doc Payment เรียบร้อย');
   state.paymentHistoryEditId = null;
-  await refreshData();
+  await refreshData({light:true});
   render();
 }
 function exportPaymentListToExcel(){
@@ -6920,6 +7010,7 @@ function exportReportPaymentToExcel(){
 }
 
 function openPaymentReport(docPayment){
+  if(!sigReady_()) return;
   const docs = state.documents.filter(d=>String(d.docPayment)===String(docPayment));
   if(!docs.length){ showToast('ไม่พบเอกสารของ Doc Payment นี้'); return; }
   const num = v => parseFloat(v)||0;
@@ -7229,6 +7320,7 @@ function uploadMemberSignature(e, id){
       if(!res.success){ showToast('บันทึกลายเซ็นไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
       const m = state.members.find(x=>x.id===id);
       if(m) m.signatureImage = dataUrl;
+      (state.sigCache = state.sigCache||{})[id] = dataUrl;
       showToast('บันทึกลายเซ็นเรียบร้อย');
       render();
     };
@@ -7241,6 +7333,7 @@ async function removeMemberSignature(id){
   if(!res.success){ showToast('ลบลายเซ็นไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   const m = state.members.find(x=>x.id===id);
   if(m) m.signatureImage = '';
+  if(state.sigCache) delete state.sigCache[id];
   showToast('ลบลายเซ็นแล้ว');
   render();
 }
