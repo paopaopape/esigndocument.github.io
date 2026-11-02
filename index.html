@@ -70,6 +70,8 @@ html[data-theme="dark"] .link-cell a, html[data-theme="dark"] a{color:#8FB6F0;}
 .theme-select{padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:12px;}
 *{box-sizing:border-box;}
 @keyframes busy-spin{ to{ transform:rotate(360deg); } }
+.sk{background:linear-gradient(90deg,rgba(128,128,128,.14) 25%,rgba(128,128,128,.28) 50%,rgba(128,128,128,.14) 75%);background-size:200% 100%;animation:sk-shimmer 1.2s linear infinite;border-radius:8px;}
+@keyframes sk-shimmer{ from{background-position:200% 0;} to{background-position:-200% 0;} }
 body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans Thai',sans-serif;font-size:14px;}
 h1,h2,h3,h4{font-family:'Noto Serif Thai',serif;margin:0;color:var(--heading);}
 button{font-family:inherit;cursor:pointer;}
@@ -844,38 +846,48 @@ async function apiCall(action, payload, quiet){
   }
 }
 async function refreshData(opts){
-  const light = !!(opts && opts.light);
+  // opts.active / opts.light → incremental load (only changed rows); no opts → full load
+  const delta = !!(opts && (opts.active || opts.light));
   const t0 = performance.now();
-  const active = !!(opts && opts.active);
   const isSettled = x => x.status==='Complete' || x.status==='ยกเลิก';
-  const haveDocs = active ? state.documents.filter(isSettled) : [];
-  const havePv = active ? state.paymentVouchers.filter(isSettled) : [];
+  const num = v => { const n = Number(v); return isFinite(n) ? n : 0; };
+  const since = delta ? state.documents.reduce((m,d)=>Math.max(m, num(d.updatedAt)), 0) : 0;
+  const haveDocs = delta ? (since>0 ? state.documents : state.documents.filter(isSettled)) : [];
+  const havePv = delta ? state.paymentVouchers.filter(isSettled) : [];
+  const vendorCounts = (!(opts && opts.fullVendors) && state.vendors && state.vendors.length && state.vendorCounts) ? state.vendorCounts : undefined;
   let data = null;
   const legacy = !!state.serverLegacy;   // the deployed Code.gs predates the fast actions: go straight to the full load
-  if(active && !legacy){
-    data = await apiCall('bootstrapActive', { have: haveDocs.map(d=>d.id), havePv: havePv.map(v=>v.id) });
+  if(delta && !legacy){
+    data = await apiCall('bootstrapActive', { have: haveDocs.map(d=>d.id), since: since, havePv: havePv.map(v=>v.id), vendorCounts: vendorCounts });
     if(data && data.success && data.partial){
-      // merge: rows the server sent + the settled rows we already hold (server skipped those)
-      const gotD = new Set(data.documents.map(d=>d.id)), gotP = new Set(data.paymentVouchers.map(v=>v.id));
-      data.documents = data.documents.concat(haveDocs.filter(d=>!gotD.has(d.id)));
+      const gotP = new Set(data.paymentVouchers.map(v=>v.id));
       data.paymentVouchers = data.paymentVouchers.concat(havePv.filter(v=>!gotP.has(v.id)));
+      if(data.mode === 'delta'){
+        // merge changed/new rows into what we already hold, drop rows that no longer exist
+        const removed = new Set(data.removedIds || []);
+        const changed = new Map(data.documents.map(d=>[d.id, d]));
+        const merged = state.documents.filter(d=>!removed.has(d.id)).map(d=>changed.has(d.id) ? changed.get(d.id) : d);
+        const have = new Set(merged.map(d=>d.id));
+        data.documents.forEach(d=>{ if(!have.has(d.id)) merged.push(d); });
+        data.documents = merged;
+      } else {
+        const gotD = new Set(data.documents.map(d=>d.id));
+        data.documents = data.documents.concat(haveDocs.filter(d=>!gotD.has(d.id)));
+      }
     } else {
       if(data && String(data.error||'').indexOf('unknown_action')===0) state.serverLegacy = true;
       data = null;
     }
   }
-  if(!data && light && !active && !state.serverLegacy){
-    data = await apiCall('bootstrapLite', {});
-    if(!(data && data.success) && data && String(data.error||'').indexOf('unknown_action')===0) state.serverLegacy = true;
-  }
-  if(!(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the fast actions (or a failed fast call)
+  if(!(data && data.success)) data = await apiCall('bootstrap', { vendorCounts: vendorCounts });   // full load (also the fallback for an older Code.gs / a failed fast call)
   const ms = Math.round(performance.now() - t0);
   if(data && data.success && state.pendingOps>0) return true;   // a background save is in flight — don't overwrite its optimistic state
   if(data && data.success){
     applyBootstrap_(data);
-    cacheSave_(data);
-    window.__perf = { kind: data._perf && data._perf.lite ? 'lite' : 'full', clientMs: ms, server: data._perf || null, at: new Date().toISOString() };
-    try{ console.info('[perf] load', window.__perf.kind, ms+'ms', 'server:', JSON.stringify(data._perf||{})); }catch(e){}
+    cacheSave_();
+    const kind = data._perf && data._perf.active ? ('delta/'+(data._perf.mode||'?')) : (data._perf && data._perf.lite ? 'lite' : 'full');
+    window.__perf = { kind: kind, clientMs: ms, server: data._perf || null, at: new Date().toISOString() };
+    try{ console.info('[perf] load', kind, ms+'ms', 'server:', JSON.stringify(data._perf||{})); }catch(e){}
     if(data.members) setTimeout(loadSignatures_, 0);
   }
   state.lastLoadMs = ms;
@@ -885,17 +897,16 @@ async function refreshData(opts){
 const CACHE_KEY = 'dfCache';
 const CACHE_MAX_HOURS = 12;
 let cacheRaw_ = null;
-function cacheSave_(data){
+function cacheSave_(){
   try{
     if(!localStorage.getItem(SESSION_KEY)) return;
-    if(data.members){
-      const keepVendors = (!data.vendors && cacheRaw_) ? cacheRaw_.vendors : undefined;
-      cacheRaw_ = Object.assign({}, data, keepVendors ? { vendors: keepVendors } : {}, {
-        members: data.members.map(m=>{ const o = Object.assign({}, m); delete o.signatureImage; return o; }),
-        _perf: undefined, _cachedAt: Date.now() });
-    } else if(cacheRaw_){
-      cacheRaw_.documents = data.documents; cacheRaw_.paymentVouchers = data.paymentVouchers; cacheRaw_._cachedAt = Date.now();
-    } else { return; }
+    cacheRaw_ = {
+      success:true, _cachedAt: Date.now(), vendorCounts: state.vendorCounts || null,
+      members: state.members.map(m=>{ const o = Object.assign({}, m); delete o.signatureImage; return o; }),
+      companies: state.companies, docTypes: state.docTypes, approvalMappings: state.approvalMappings, appSettings: state.appSettings,
+      vendors: state.vendors, paymentAccounts: state.paymentAccounts, paymentMappings: state.paymentMappings,
+      documents: state.documents, paymentVouchers: state.paymentVouchers
+    };
     localStorage.setItem(CACHE_KEY, JSON.stringify(cacheRaw_));
   }catch(e){ try{ localStorage.removeItem(CACHE_KEY); }catch(_){} cacheRaw_ = null; }
 }
@@ -942,9 +953,21 @@ function applyBootstrap_(data){
     state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true'), receivable: (t.receivable===true||t.receivable==='TRUE'||t.receivable==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
-    if(data.vendors) state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
     state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
+    }
+    if(data.vendors){
+      const normV = v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) });
+      const incoming = (data.vendors || []).map(normV);
+      if(data.vendorsReplace === undefined || data.vendorsReplace === '*'){ state.vendors = incoming; }
+      else if(data.vendorsReplace.length){
+        const rep = new Set(data.vendorsReplace.map(String));
+        state.vendors = (state.vendors || []).filter(v=>!rep.has(v.companyCode)).concat(incoming);
+      }
+    }
+    if(data.vendorCounts) state.vendorCounts = data.vendorCounts;
+    else if(data.vendors && data.vendorsReplace === undefined){   // older Code.gs: derive the counts ourselves
+      const vc = {}; state.vendors.forEach(v=>{ vc[v.companyCode] = (vc[v.companyCode]||0) + 1; }); state.vendorCounts = vc;
     }
     state.paymentVouchers = (data.paymentVouchers || []).map(v=>{ const o = { ...v, companyCode:String(v.companyCode) }; fixFlippedDates_(o); return o; });
     state.documents = (data.documents || []).map(d=>{
@@ -991,6 +1014,7 @@ async function loadAll(){
   let hasSession = false;
   try{ hasSession = !!JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){}
   const cached = (hasSession && !getLinkedDocIdFromUrl_() && !getLinkedPvIdFromUrl_()) ? cacheLoad_() : null;
+  window.__cacheDbg = { hasSession: hasSession, cached: !!cached, rawLen: (function(){ try{ return (localStorage.getItem(CACHE_KEY)||'').length; }catch(e){ return -1; } })() };
   if(cached){
     try{
       applyBootstrap_(cached);
@@ -1592,6 +1616,7 @@ function render(){
   const selEnd = active && typeof active.selectionEnd==='number' ? active.selectionEnd : null;
 
   if(state.loading){ root.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;color:#8792A8;background:var(--navy);font-family:IBM Plex Mono,monospace;font-size:13px;">กำลังโหลดระบบ...</div>'; return; }
+  if(!state.user && state.loggingIn){ root.innerHTML = loginShellHTML_(); return; }
   if(!state.user){ root.innerHTML = loginHTML(); return; }
   initCalculatorWidget();
   root.innerHTML = layoutHTML();
@@ -1606,6 +1631,26 @@ function render(){
 }
 
 /* ============================= LOGIN / PASSWORD ============================= */
+/* Skeleton of the app shown the instant the login button is pressed (no data, no names — those appear only after the password is verified) */
+function loginShellHTML_(){
+  const bar = (w,h)=>`<div class="sk" style="width:${w};height:${h||'14px'};margin:14px 16px;"></div>`;
+  return `
+  <div class="app">
+    <div class="sidebar">
+      <div class="sidebar-brand"><div><div class="mark">MITRPHOL · E-SIGN</div><h2>Document Flow</h2></div></div>
+      <div class="nav"><div class="nav-group-label">เมนูหลัก</div>${bar('70%')}${bar('55%')}${bar('65%')}${bar('50%')}${bar('60%')}${bar('45%')}</div>
+    </div>
+    <div class="main">
+      <div class="topbar"><div><h1>กำลังเข้าสู่ระบบ…</h1><div class="sub">กำลังตรวจสอบสิทธิ์ของคุณ</div></div></div>
+      <div class="content">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-bottom:18px;">
+          ${[1,2,3,4,5,6].map(()=>'<div class="sk" style="height:96px;border-radius:12px;"></div>').join('')}
+        </div>
+        <div class="sk" style="height:260px;border-radius:14px;"></div>
+      </div>
+    </div>
+  </div>`;
+}
 function loginHTML(){
   return state.authView === 'set-password' ? setPasswordHTML() : loginFormHTML();
 }
@@ -1621,7 +1666,7 @@ function loginFormHTML(){
         <form onsubmit="doLogin(event)">
           <div class="field">
             <label>Email</label>
-            <input id="login-email" type="email" name="email" placeholder="name@company.com" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required>
+            <input id="login-email" type="email" name="email" value="${state.loginEmail||''}" placeholder="name@company.com" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="username" required>
           </div>
           <div class="field">
             <label>รหัสผ่าน</label>
@@ -1631,7 +1676,7 @@ function loginFormHTML(){
             </div>
           </div>
           <div class="field" style="display:flex;align-items:center;gap:8px;">
-            <input id="login-remember" type="checkbox" name="remember" style="width:auto;margin:0;">
+            <input id="login-remember" type="checkbox" name="remember" ${state.loginRemember?'checked':''} style="width:auto;margin:0;">
             <label for="login-remember" style="margin:0;font-size:13px;font-weight:400;cursor:pointer;">จดจำการเข้าสู่ระบบไว้ในเครื่องนี้</label>
           </div>
           <button class="btn btn-primary btn-block" type="submit">เข้าสู่ระบบ</button>
@@ -1724,33 +1769,47 @@ function restoreSession(){
 
 async function doLogin(e){
   e.preventDefault();
-  const submitBtn = e.target.querySelector('button[type=submit]');
-  if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'กำลังเข้าสู่ระบบ...'; }
   const f = new FormData(e.target);
   const email = f.get('email').trim().toLowerCase();
   const password = f.get('password').trim();
   const remember = f.get('remember') === 'on';
+  // go straight into the app shell (skeleton) while the password is checked — the data itself only appears once it's verified
+  state.loginEmail = email; state.loginRemember = remember; state.loggingIn = true;
+  render();
   const res = await apiCall('login', { email, password });
-  if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = 'เข้าสู่ระบบ'; }
+  state.loggingIn = false;
   if(!res.success){
+    render();   // back to the login form (email stays filled in)
     if(res.error === 'not_found'){ showToast('ไม่พบบัญชีนี้ในระบบ กรุณาติดต่อ Admin'); return; }
     if(res.error === 'no_password'){ showToast('บัญชีนี้ยังไม่ได้ตั้งรหัสผ่าน กรุณาตั้งรหัสผ่านก่อน'); state.authEmail = email; state.authView='set-password'; render(); return; }
     showToast('อีเมลหรือรหัสผ่านไม่ถูกต้อง'); return;
   }
-  state.user = res.user;
+  // the data was already loaded when the page opened — use it as-is and refresh quietly in the background
+  state.user = state.members.find(m=>m.id===res.user.id) || res.user;
   state.view = 'dashboard';
   state.approvalTab = defaultApprovalTab();
-  await refreshData();
-  // keep the freshly-logged-in user object (refreshData rebuilds state.members, so re-point state.user at the matching record)
-  const refreshedUser = state.members.find(m=>m.id===res.user.id);
-  if(refreshedUser) state.user = refreshedUser;
   saveSession(state.user, remember);
+  cacheSave_();
+  const noData = !state.members.length;
+  if(noData) await refreshData();   // the first load had failed — nothing to show yet
+  const reUser = state.members.find(m=>m.id===res.user.id); if(reUser) state.user = reUser;
   // if this login was triggered by opening a notification email link, jump straight there
   const linkedDocId = getLinkedDocIdFromUrl_();
-  if(linkedDocId){ render(); openDocFromLink(linkedDocId); return; }
   const linkedPvId = getLinkedPvIdFromUrl_();
-  if(linkedPvId){ render(); openPvFromLink(linkedPvId); return; }
   render();
+  setTimeout(loadSignatures_, 0);
+  if(linkedDocId){ openDocFromLink(linkedDocId); }
+  else if(linkedPvId){ openPvFromLink(linkedPvId); }
+  if(!noData){
+    (async()=>{
+      const ok = await refreshData({light:true});
+      if(ok && state.user){
+        const u = state.members.find(m=>m.id===state.user.id); if(u) state.user = u;
+        const ae = document.activeElement;
+        if(!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) render();
+      }
+    })();
+  }
 }
 async function doSetPassword(e){
   e.preventDefault();
@@ -4732,6 +4791,7 @@ function openApprovalReport(id){
       .pcv{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;}
       .pcv.on{pointer-events:auto;cursor:crosshair;touch-action:none;}
       .pcv.on.pan{touch-action:pan-x pan-y pinch-zoom;}
+      .pcv.on.penhover{touch-action:none !important;}
       #penBar{position:fixed;top:12px;right:14px;z-index:50;background:#fff;border:1px solid #ccc;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.2);padding:6px 8px;display:flex;align-items:center;gap:6px;font-size:13px;zoom:1.3;}
       #penBar button{border:1px solid #ccc;background:#fff;border-radius:8px;padding:4px 9px;cursor:pointer;font-size:13px;}
       #penBar button.act{background:#fff3b0;border-color:#c9a400;}
@@ -4866,7 +4926,7 @@ const PEN_POPUP_JS_ = `(function(){
   var P = window.__PEN, bar = document.getElementById('penBar');
   var src = document.getElementById('src'), host = document.getElementById('pages'), wrap = document.getElementById('wrap');
   var COLORS = {black:'#111111', blue:'#1d4ed8', red:'#dc2626'};
-  var s = 0.75, fingerDraw = (navigator.maxTouchPoints||0) > 0, touches = {}, pinching = false, pinchLast = null;
+  var s = 0.75, fingerDraw = false, touches = {}, pinching = false, pinchLast = null, lastPen = 0, hov = false, hovT = null;
   var pages = [], mine = null, others = [], strokes = [], saved = '', color = 'red', tool = 'pen', drawing = null, open = false;
   function newPage(){
     var pg = document.createElement('div'); pg.className = 'page';
@@ -4927,6 +4987,23 @@ const PEN_POPUP_JS_ = `(function(){
     if(strokes.length!==before) redraw();
   }
   function tcount(){ return Object.keys(touches).length; }
+  // Pencil vs. hand: while the Pencil is down or hovering, nothing else may scroll/zoom the page (palm, wrist, the Pencil itself)
+  function penActive(){ return (drawing && drawing.byPen) || (Date.now() - lastPen) < 700; }
+  function markPen(){
+    lastPen = Date.now();
+    if(!hov){ hov = true; pages.forEach(function(o){ o.cv.classList.add('penhover'); }); }
+    clearTimeout(hovT);
+    hovT = setTimeout(function(){ hov = false; pages.forEach(function(o){ o.cv.classList.remove('penhover'); }); }, 1200);
+  }
+  function guardTouch(e){
+    var stylus = false, i;
+    for(i=0;i<e.changedTouches.length;i++){ if(e.changedTouches[i].touchType === 'stylus') stylus = true; }
+    if(open && (stylus || penActive()) && e.cancelable) e.preventDefault();
+  }
+  document.addEventListener('touchstart', guardTouch, {passive:false});
+  document.addEventListener('touchmove', guardTouch, {passive:false});
+  window.addEventListener('pointerdown', function(e){ if(e.pointerType==='pen') markPen(); }, true);
+  window.addEventListener('pointermove', function(e){ if(e.pointerType==='pen') markPen(); }, true);
   function pinchState(){ var k = Object.keys(touches), a = touches[k[0]], b = touches[k[1]]; return {d:Math.hypot(a.x-b.x,a.y-b.y)||1, mx:(a.x+b.x)/2, my:(a.y+b.y)/2}; }
   function doPinch(){
     var cur = pinchState(), last = pinchLast; if(!last) { pinchLast = cur; return; }
@@ -4937,7 +5014,7 @@ const PEN_POPUP_JS_ = `(function(){
     pinchLast = cur;
   }
   window.addEventListener('pointerdown', function(e){
-    if(e.pointerType!=='touch' || !open || !fingerDraw) return;
+    if(e.pointerType!=='touch' || !open || !fingerDraw || penActive()) return;
     touches[e.pointerId] = {x:e.clientX, y:e.clientY};
     if(tcount()>=2){ pinching = true; drawing = null; redraw(); pinchLast = pinchState(); }
   }, true);
@@ -4953,19 +5030,19 @@ const PEN_POPUP_JS_ = `(function(){
       cv.addEventListener('pointerdown', function(e){
         if(!open) return;
         if(e.pointerType==='pen' && fingerDraw){ fingerDraw = false; render(); }   // Apple Pencil detected: fingers go back to scroll/zoom
-        if(e.pointerType==='touch' && (!fingerDraw || pinching || tcount()>=2)) return;
+        if(e.pointerType==='touch' && (!fingerDraw || pinching || tcount()>=2 || penActive())) return;
         e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(x){}
         var q = pt(o,e);
-        if(tool==='erase'){ drawing = {erase:true, g:gi}; eraseAt(gi,q[0],q[1]); return; }
-        drawing = {c:color, g:gi, p:[q[0],q[1]]};
+        if(tool==='erase'){ drawing = {erase:true, g:gi, byPen:(e.pointerType==='pen'), pid:e.pointerId}; eraseAt(gi,q[0],q[1]); return; }
+        drawing = {c:color, g:gi, p:[q[0],q[1]], byPen:(e.pointerType==='pen'), pid:e.pointerId};
       });
       cv.addEventListener('pointermove', function(e){
-        if(!drawing || drawing.g!==gi || pinching) return; var q = pt(o,e);
+        if(!drawing || drawing.g!==gi || pinching || e.pointerId!==drawing.pid) return; var q = pt(o,e);
         if(drawing.erase){ eraseAt(gi,q[0],q[1]); return; }
         var n = drawing.p.length, dx = q[0]-drawing.p[n-2], dy = q[1]-drawing.p[n-1];
         if(dx*dx+dy*dy < 4) return; drawing.p.push(q[0],q[1]); redraw();
       });
-      var end = function(){ if(drawing && !drawing.erase){ strokes.push({c:drawing.c, g:drawing.g, p:drawing.p}); } drawing = null; redraw(); render(); };
+      var end = function(e){ if(e && drawing && e.pointerId!==drawing.pid) return; if(drawing && !drawing.erase){ strokes.push({c:drawing.c, g:drawing.g, p:drawing.p}); } lastPen = Date.now(); drawing = null; redraw(); render(); };
       cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
     });
   }
@@ -7685,7 +7762,7 @@ function adminVendorsHTML(){
 
   <div class="card">
     <div class="eyebrow">Vendor List</div>
-    <h3 style="margin-top:4px;">รายชื่อ Vendor (${shown.length}${vf!=='all'?' / '+state.vendors.length:''})</h3>
+    <h3 style="margin-top:4px;">รายชื่อ Vendor (${shown.length}${vf!=='all'?' / '+state.vendors.length:''}) <button class="btn btn-sm btn-outline" style="margin-left:10px;vertical-align:middle;" onclick="reloadVendors()" title="ดึงรายชื่อ Vendor ทั้งหมดจาก Server ใหม่ (ใช้หลังแก้ข้อมูลของเดิมในชีตโดยตรง)">↻ โหลด Vendor ใหม่ทั้งหมด</button></h3>
     <div class="helper">Vendor รหัสเดียวกันมีได้หลายแถวถ้าต่างบริษัท (1 แถว = 1 Com + 1 รหัส Vendor) — แถวที่ Com ยังว่างจะใช้ได้ทุกบริษัทชั่วคราวจนกว่าจะเติม Com ในชีท VendorMaster</div>
     <div class="filter-bar" style="margin-bottom:10px;"><div class="f-field"><label>กรองตาม Com</label><select onchange="state.vendorAdminCo=this.value;render();"><option value="all" ${vf==='all'?'selected':''}>ทุกบริษัท</option><option value="blank" ${vf==='blank'?'selected':''}>ยังไม่ระบุ Com (ว่าง)</option>${state.companies.map(c=>`<option value="${c.code}" ${vf===c.code?'selected':''}>${c.code} — ${c.name}</option>`).join('')}</select></div></div>
     <hr class="div">
@@ -7713,14 +7790,32 @@ async function addVendor(e){
   if(!res.success){ showToast('บันทึก Vendor ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   showToast('บันทึก Vendor เรียบร้อย');
   e.target.reset();
-  await refreshData();
+  await refreshData({fullVendors:true});
+  render();
+}
+// Vendors are kept in the browser and only added-to when a company's count changes; this pulls the whole list again
+// (use it after editing existing vendors directly in the sheet).
+async function reloadVendors(){
+  showBusyOverlay('กำลังโหลด Vendor ใหม่ทั้งหมด กรุณารอสักครู่...');
+  const t0 = performance.now();
+  let r = await apiCall('getVendors', {});
+  if(!(r && r.success) && r && String(r.error||'').indexOf('unknown_action')===0){   // older Code.gs: use the full load instead
+    const ok = await refreshData({fullVendors:true});
+    hideBusyOverlay();
+    showToast(ok ? 'โหลด Vendor ใหม่ทั้งหมดเรียบร้อย' : 'โหลด Vendor ไม่สำเร็จ ลองใหม่อีกครั้ง'); render(); return;
+  }
+  hideBusyOverlay();
+  if(!(r && r.success)){ showToast('โหลด Vendor ไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  applyBootstrap_({ vendors: r.vendors, vendorsReplace: '*', vendorCounts: r.vendorCounts, documents: state.documents, paymentVouchers: state.paymentVouchers });
+  cacheSave_();
+  showToast('โหลด Vendor ใหม่ทั้งหมดเรียบร้อย ('+state.vendors.length+' รายการ, '+((performance.now()-t0)/1000).toFixed(1)+' วินาที)');
   render();
 }
 async function deleteVendor(companyCode, vendorCode){
   const res = await apiCall('deleteVendor', { companyCode, vendorCode });
   if(!res.success){ showToast('ลบ Vendor ไม่สำเร็จ'); return; }
   showToast('ลบ Vendor แล้ว');
-  await refreshData();
+  await refreshData({fullVendors:true});
   render();
 }
 function uploadVendorFile(e){
@@ -7766,7 +7861,7 @@ function uploadVendorFile(e){
       if(statusEl) statusEl.textContent = 'อัปโหลดสำเร็จ '+rows.length+' รายการ'+(badCom?' · ข้าม '+badCom+' แถวที่ Com ว่างหรือไม่ตรงกับบริษัทในระบบ':'');
       showToast('อัปโหลด Vendor Master เรียบร้อย ('+rows.length+' รายการ)');
       e.target.value = '';
-      await refreshData();
+      await refreshData({fullVendors:true});
       render();
     }catch(err){
       if(statusEl) statusEl.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message;
