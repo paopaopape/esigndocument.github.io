@@ -846,8 +846,22 @@ async function apiCall(action, payload, quiet){
 async function refreshData(opts){
   const light = !!(opts && opts.light);
   const t0 = performance.now();
-  let data = await apiCall(light ? 'bootstrapLite' : 'bootstrap', {});
-  if(light && !(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the light action
+  const active = !!(opts && opts.active);
+  const isSettled = x => x.status==='Complete' || x.status==='ยกเลิก';
+  const haveDocs = active ? state.documents.filter(isSettled) : [];
+  const havePv = active ? state.paymentVouchers.filter(isSettled) : [];
+  let data = null;
+  if(active){
+    data = await apiCall('bootstrapActive', { have: haveDocs.map(d=>d.id), havePv: havePv.map(v=>v.id) });
+    if(data && data.success && data.partial){
+      // merge: rows the server sent + the settled rows we already hold (server skipped those)
+      const gotD = new Set(data.documents.map(d=>d.id)), gotP = new Set(data.paymentVouchers.map(v=>v.id));
+      data.documents = data.documents.concat(haveDocs.filter(d=>!gotD.has(d.id)));
+      data.paymentVouchers = data.paymentVouchers.concat(havePv.filter(v=>!gotP.has(v.id)));
+    } else data = null;
+  }
+  if(!data) data = await apiCall(light||active ? 'bootstrapLite' : 'bootstrap', {});
+  if((light||active) && !(data && data.success)) data = await apiCall('bootstrap', {});   // older Code.gs without the light action
   const ms = Math.round(performance.now() - t0);
   if(data && data.success && state.pendingOps>0) return true;   // a background save is in flight — don't overwrite its optimistic state
   if(data && data.success){
@@ -868,7 +882,8 @@ function cacheSave_(data){
   try{
     if(!localStorage.getItem(SESSION_KEY)) return;
     if(data.members){
-      cacheRaw_ = Object.assign({}, data, {
+      const keepVendors = (!data.vendors && cacheRaw_) ? cacheRaw_.vendors : undefined;
+      cacheRaw_ = Object.assign({}, data, keepVendors ? { vendors: keepVendors } : {}, {
         members: data.members.map(m=>{ const o = Object.assign({}, m); delete o.signatureImage; return o; }),
         _perf: undefined, _cachedAt: Date.now() });
     } else if(cacheRaw_){
@@ -920,7 +935,7 @@ function applyBootstrap_(data){
     state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true'), receivable: (t.receivable===true||t.receivable==='TRUE'||t.receivable==='true') }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
-    state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
+    if(data.vendors) state.vendors = (data.vendors || []).map(v=>({ ...v, companyCode: String(v.companyCode==null?'':v.companyCode).trim(), vendorCode: String(v.vendorCode) }));
     state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     }
@@ -1016,7 +1031,7 @@ async function manualRefresh(){
   const btn = document.getElementById('refresh-btn');
   if(btn){ btn.disabled = true; btn.textContent = 'กำลังรีเฟรช...'; }
   const tm0 = performance.now();
-  const ok = await refreshData();
+  const ok = await refreshData({light:true, active:true});
   if(ok && state.user){
     // re-point state.user at the refreshed record in case role/company changed
     const refreshedUser = state.members.find(m=>m.id===state.user.id);
