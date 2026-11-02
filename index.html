@@ -4896,10 +4896,14 @@ function reportSig_(d){
 }
 function canMarkReport_(d){
   if(!state.user) return false;
-  if(!/^(รอผู้ตรวจสอบ|รอผู้อนุมัติ)/.test(d.status||'')) return false;
   const r = state.user.role;
   if(!(isAdmin() || r==='ผู้ตรวจสอบ' || r==='ผู้อนุมัติ')) return false;
-  try{ return canActOnStage(d); }catch(e){ return true; }
+  const st = d.status||'';
+  if(/^(รอผู้ตรวจสอบ|รอผู้อนุมัติ)/.test(st)){ try{ return canActOnStage(d); }catch(e){ return true; } }
+  // once they have signed off, a reviewer/approver may still correct their OWN pen layer until the document is Complete
+  if(st==='Complete' || st==='ยกเลิก' || /^ตีกลับ/.test(st)) return false;
+  const me = fullName(state.user);
+  return [d.reviewerBy, d.approverBy, d.approver2By, d.approver3By].some(x=>x && x===me);
 }
 window.addEventListener('message', async function(ev){
   const m = ev.data;
@@ -4928,6 +4932,7 @@ const PEN_POPUP_JS_ = `(function(){
   var COLORS = {black:'#111111', blue:'#1d4ed8', red:'#dc2626'};
   var s = 0.75, fingerDraw = false, touches = {}, pinching = false, pinchLast = null, lastPen = 0, hov = false, hovT = null;
   var pages = [], mine = null, others = [], strokes = [], saved = '', color = 'red', tool = 'pen', drawing = null, open = false;
+  var WPX = {1:1.5, 2:2.0, 3:3.0}, WLAB = {1:'บาง', 2:'กลาง', 3:'หนา'}, penW = 2;   // line width in page pixels; 2 (medium) is the default and is not stored
   function newPage(){
     var pg = document.createElement('div'); pg.className = 'page';
     var pc = document.createElement('div'); pc.className = 'pc'; pg.appendChild(pc);
@@ -4943,33 +4948,90 @@ const PEN_POPUP_JS_ = `(function(){
     var table = src.querySelector('table.data'), colg = table.querySelector('colgroup').outerHTML, thead = table.querySelector('thead').outerHTML;
     var rows = [].slice.call(table.querySelectorAll('tbody > tr'));
     var trail = src.querySelector('table.trail'), sign = src.querySelector('.sign-grid');
-    var cur = newPage(); cur.pc.appendChild(h1.cloneNode(true)); cur.pc.appendChild(meta.cloneNode(true));
-    function addTable(o){ var t = document.createElement('table'); t.className = 'data'; t.innerHTML = colg + thead + '<tbody></tbody>'; o.pc.appendChild(t); o.tb = t.querySelector('tbody'); }
+    var cur = newPage(); var h1c = h1.cloneNode(true), mc = meta.cloneNode(true); h1c.setAttribute('data-ai', String(rows.length)); mc.setAttribute('data-ai', String(rows.length+1)); cur.pc.appendChild(h1c); cur.pc.appendChild(mc);
+    var NR = rows.length;   // anchor ids: 0..NR-1 table rows, NR title, NR+1 meta, NR+2 trail, NR+3 signatures, NR+4 table header
+    function addTable(o){ var t = document.createElement('table'); t.className = 'data'; t.innerHTML = colg + thead + '<tbody></tbody>'; var th = t.querySelector('thead'); if(th) th.setAttribute('data-ai', String(NR+4)); o.pc.appendChild(t); o.tb = t.querySelector('tbody'); }
     function nextPage(withTable){ cur = newPage(); var c = document.createElement('div'); c.className = 'cont'; c.textContent = 'ใบสรุปการอนุมัติเอกสาร (ต่อ)'; cur.pc.appendChild(c); if(withTable) addTable(cur); }
     addTable(cur);
-    rows.forEach(function(r){
-      var c = r.cloneNode(true); cur.tb.appendChild(c); fitNums(c);
+    rows.forEach(function(r, ri){
+      var c = r.cloneNode(true); c.setAttribute('data-ai', String(ri)); cur.tb.appendChild(c); fitNums(c);
       if(over(cur) && cur.tb.children.length > 1){ cur.tb.removeChild(c); nextPage(true); cur.tb.appendChild(c); }
     });
-    var t2 = trail.cloneNode(true); cur.pc.appendChild(t2);
+    var t2 = trail.cloneNode(true); t2.setAttribute('data-ai', String(NR+2)); cur.pc.appendChild(t2);
     if(over(cur)){ cur.pc.removeChild(t2); nextPage(false); cur.pc.appendChild(t2); }
-    var sg = sign.cloneNode(true); cur.pc.appendChild(sg);
+    var sg = sign.cloneNode(true); sg.setAttribute('data-ai', String(NR+3)); cur.pc.appendChild(sg);
     if(over(cur)){ cur.pc.removeChild(sg); nextPage(false); cur.pc.appendChild(sg); }
     pages.forEach(function(o,i){ o.no.textContent = 'หน้า '+(i+1)+'/'+pages.length; });
     applyScale();
   }
-  function applyScale(){ host.style.transform = 'scale('+s+')'; wrap.style.width = Math.round(1123*s)+'px'; wrap.style.height = Math.ceil(pages.length*(794+16)*s)+'px'; }
+  function applyScale(){ AMAP = null; host.style.transform = 'scale('+s+')'; wrap.style.width = Math.round(1123*s)+'px'; wrap.style.height = Math.ceil(pages.length*(794+16)*s)+'px'; }
   function ctxOf(o){ return o.cv.getContext('2d'); }
-  function sz(){ var dpr = Math.min(2, window.devicePixelRatio||1); pages.forEach(function(o){ o.cv.width = Math.round(1123*dpr); o.cv.height = Math.round(794*dpr); }); redraw(); }
+  function sz(){ AMAP = null; var dpr = Math.min(2, window.devicePixelRatio||1); pages.forEach(function(o){ o.cv.width = Math.round(1123*dpr); o.cv.height = Math.round(794*dpr); }); redraw(); }
+  // ---- marks are anchored to the table row / block they were drawn on, so they follow it when the layout reflows on another device ----
+  var AMAP = null;
+  function indexAnchors(){
+    AMAP = {};
+    pages.forEach(function(o, pi){
+      var pr = o.cv.getBoundingClientRect(), k = (pr.width / 1123) || 1;
+      [].forEach.call(o.pg.querySelectorAll('[data-ai]'), function(el){
+        var r = el.getBoundingClientRect(), id = parseInt(el.getAttribute('data-ai'), 10);
+        (AMAP[id] = AMAP[id] || []).push({ pi:pi, top:(r.top - pr.top)/k, h:Math.max(1, r.height/k) });
+      });
+    });
+  }
+  function anchorFor(pi, px, py){
+    if(!AMAP) indexAnchors();
+    var best = null, bd = 1e9;
+    Object.keys(AMAP).forEach(function(id){
+      AMAP[id].forEach(function(e){
+        if(e.pi !== pi) return;
+        var d = py < e.top ? e.top - py : (py > e.top + e.h ? py - (e.top + e.h) : 0);
+        if(d < bd){ bd = d; best = { id:parseInt(id,10), e:e }; }
+      });
+    });
+    if(!best) return null;
+    return [Math.round(px/1123*1000), best.id, Math.round((py - best.e.top)/best.e.h*1000)];
+  }
+  // a stroke as page-normalised points [{g,x,y}] (x,y in 0..1000 of the page), whichever format it was saved in
+  function ptsOf(s){
+    var out = [], p = s.p, k;
+    if(s.v === 2){
+      if(!AMAP) indexAnchors();
+      for(k=0;k+2<p.length;k+=3){
+        var list = AMAP[p[k+1]]; if(!list || !list.length) continue;
+        var e = list[0], q;
+        for(q=1;q<list.length;q++){ if(Math.abs(list[q].pi - (s.g||0)) < Math.abs(e.pi - (s.g||0))) e = list[q]; }
+        out.push({ g:e.pi, x:p[k], y:(e.top + p[k+2]/1000*e.h)/794*1000 });
+      }
+    } else {
+      for(k=0;k+1<p.length;k+=2) out.push({ g:(s.g||0), x:p[k], y:p[k+1] });
+    }
+    return out;
+  }
+  function toV2(st){
+    var pts = [], k, ok = true;
+    for(k=0;k+1<st.p.length;k+=2){
+      var a = anchorFor(st.g, st.p[k]/1000*1123, st.p[k+1]/1000*794);
+      if(!a){ ok = false; break; }
+      pts.push(a[0], a[1], a[2]);
+    }
+    var o = ok ? { c:st.c, g:st.g, v:2, p:pts } : { c:st.c, g:st.g, p:st.p };
+    if(st.w && st.w!==2) o.w = st.w;
+    return o;
+  }
   function paint(o, i, list){
     var ctx = ctxOf(o), W = o.cv.width, H = o.cv.height;
     list.forEach(function(s){
-      if((s.g||0)!==i) return; var p = s.p; if(p.length<2) return;
-      ctx.strokeStyle = COLORS[s.c]||s.c; ctx.lineWidth = Math.max(2, W/420); ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.beginPath(); ctx.moveTo(p[0]/1000*W, p[1]/1000*H);
-      if(p.length===2) ctx.lineTo(p[0]/1000*W+0.1, p[1]/1000*H);
-      for(var k=2;k<p.length;k+=2) ctx.lineTo(p[k]/1000*W, p[k+1]/1000*H);
-      ctx.stroke();
+      var pts = ptsOf(s); if(!pts.length) return;
+      ctx.strokeStyle = COLORS[s.c]||s.c; ctx.lineWidth = Math.max(1, (WPX[s.w||2]||2.0) * W/1123); ctx.lineCap='round'; ctx.lineJoin='round';
+      var open2 = false, n = 0;
+      pts.forEach(function(q, idx){
+        if(q.g !== i){ open2 = false; return; }
+        var x = q.x/1000*W, y = q.y/1000*H;
+        if(!open2){ ctx.beginPath(); ctx.moveTo(x, y); open2 = true; n = 1; if(idx===pts.length-1 || pts[idx+1].g!==i){ ctx.lineTo(x+0.1, y); ctx.stroke(); open2 = false; } return; }
+        ctx.lineTo(x, y); n++;
+        if(idx===pts.length-1 || pts[idx+1].g!==i){ ctx.stroke(); open2 = false; }
+      });
     });
   }
   function redraw(){
@@ -4983,7 +5045,7 @@ const PEN_POPUP_JS_ = `(function(){
   function dirty(){ return JSON.stringify(strokes)!==saved; }
   function eraseAt(g,x,y){
     var before = strokes.length;
-    strokes = strokes.filter(function(s){ if((s.g||0)!==g) return true; for(var i=0;i<s.p.length;i+=2){ if(Math.abs(s.p[i]-x)<14 && Math.abs(s.p[i+1]-y)<18) return false; } return true; });
+    strokes = strokes.filter(function(s){ var pts = ptsOf(s), i; for(i=0;i<pts.length;i++){ if(pts[i].g===g && Math.abs(pts[i].x-x)<14 && Math.abs(pts[i].y-y)<18) return false; } return true; });
     if(strokes.length!==before) redraw();
   }
   function tcount(){ return Object.keys(touches).length; }
@@ -5034,7 +5096,7 @@ const PEN_POPUP_JS_ = `(function(){
         e.preventDefault(); try{ cv.setPointerCapture(e.pointerId); }catch(x){}
         var q = pt(o,e);
         if(tool==='erase'){ drawing = {erase:true, g:gi, byPen:(e.pointerType==='pen'), pid:e.pointerId}; eraseAt(gi,q[0],q[1]); return; }
-        drawing = {c:color, g:gi, p:[q[0],q[1]], byPen:(e.pointerType==='pen'), pid:e.pointerId};
+        drawing = {c:color, g:gi, p:[q[0],q[1]], byPen:(e.pointerType==='pen'), pid:e.pointerId, w:penW};
       });
       cv.addEventListener('pointermove', function(e){
         if(!drawing || drawing.g!==gi || pinching || e.pointerId!==drawing.pid) return; var q = pt(o,e);
@@ -5042,7 +5104,7 @@ const PEN_POPUP_JS_ = `(function(){
         var n = drawing.p.length, dx = q[0]-drawing.p[n-2], dy = q[1]-drawing.p[n-1];
         if(dx*dx+dy*dy < 4) return; drawing.p.push(q[0],q[1]); redraw();
       });
-      var end = function(e){ if(e && drawing && e.pointerId!==drawing.pid) return; if(drawing && !drawing.erase){ strokes.push({c:drawing.c, g:drawing.g, p:drawing.p}); } lastPen = Date.now(); drawing = null; redraw(); render(); };
+      var end = function(e){ if(e && drawing && e.pointerId!==drawing.pid) return; if(drawing && !drawing.erase){ strokes.push(toV2({c:drawing.c, g:drawing.g, p:drawing.p, w:drawing.w})); } lastPen = Date.now(); drawing = null; redraw(); render(); };
       cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
     });
   }
@@ -5092,13 +5154,14 @@ const PEN_POPUP_JS_ = `(function(){
     if(!P.can){ bar.style.display='none'; note(); return; }
     var h = '<button id="pbOpen" class="'+(open?'act':'')+'">✏️ ปากกา</button><span id="penTools">';
     ['black','blue','red'].forEach(function(k){ h += '<button class="clr '+(color===k&&tool==='pen'?'act':'')+'" data-c="'+k+'" style="background:'+COLORS[k]+'" title="'+k+'"></button>'; });
-    h += ''+((navigator.maxTouchPoints||0)>0?'<button id="pbFinger" class="'+(fingerDraw?'act':'')+'" title="เปิด: นิ้วใช้วาด / ปิด: นิ้วใช้เลื่อนและซูม (ใช้ Apple Pencil วาด)">👆 นิ้ววาด</button>':'')+'<button id="pbFit">⤢ พอดี</button><button id="pbErase" class="'+(tool==='erase'?'act':'')+'">ยางลบ</button><button id="pbUndo">↶ ย้อน</button><button id="pbClear">ล้าง</button><button id="pbSave" style="background:#e8f5e9;border-color:#2e7d32;">💾 Save'+(dirty()?' •':'')+'</button></span><button id="pbClose" title="ปิดใบสรุป">✕ ปิด</button>';
+    h += ''+((navigator.maxTouchPoints||0)>0?'<button id="pbFinger" class="'+(fingerDraw?'act':'')+'" title="เปิด: นิ้วใช้วาด / ปิด: นิ้วใช้เลื่อนและซูม (ใช้ Apple Pencil วาด)">👆 นิ้ววาด</button>':'')+'<button id="pbFit">⤢ พอดี</button><button id="pbW" title="ความหนาเส้น: บาง 1.5 / กลาง 2.0 / หนา 3.0">เส้น: '+WLAB[penW]+'</button><button id="pbErase" class="'+(tool==='erase'?'act':'')+'">ยางลบ</button><button id="pbUndo">↶ ย้อน</button><button id="pbClear">ล้าง</button><button id="pbSave" style="background:#e8f5e9;border-color:#2e7d32;">💾 Save'+(dirty()?' •':'')+'</button></span><button id="pbClose" title="ปิดใบสรุป">✕ ปิด</button>';
     bar.innerHTML = h; bar.className = open?'open':'';
     pages.forEach(function(o){ o.cv.className = 'pcv'+(open?' on':'')+(open&&!fingerDraw?' pan':''); });
     document.getElementById('pbOpen').onclick = function(){ open = !open; render(); };
     Array.prototype.forEach.call(bar.querySelectorAll('.clr'), function(b){ b.onclick = function(){ color = b.getAttribute('data-c'); tool='pen'; render(); }; });
     var fb = document.getElementById('pbFinger'); if(fb) fb.onclick = function(){ fingerDraw = !fingerDraw; render(); };
     document.getElementById('pbFit').onclick = function(){ s = 0.75; applyScale(); };
+    document.getElementById('pbW').onclick = function(){ penW = penW===2 ? 3 : (penW===3 ? 1 : 2); render(); };
     document.getElementById('pbErase').onclick = function(){ tool = tool==='erase'?'pen':'erase'; render(); };
     document.getElementById('pbUndo').onclick = function(){ strokes.pop(); redraw(); render(); };
     document.getElementById('pbClear').onclick = function(){ if(strokes.length && confirm('ล้างรอยปากกาของคุณทั้งหมด?')){ strokes = []; redraw(); render(); } };
@@ -5111,7 +5174,7 @@ const PEN_POPUP_JS_ = `(function(){
   }
   function start(){
     P.marks.forEach(function(l){ if(l.uid===P.me.uid) mine = l; else others.push(l); });
-    strokes = mine ? mine.strokes.map(function(s){ return {c:s.c, g:s.g||0, p:s.p.slice()}; }) : []; saved = JSON.stringify(strokes);
+    strokes = mine ? mine.strokes.map(function(s){ var o = {c:s.c, g:s.g||0, p:s.p.slice()}; if(s.v===2) o.v = 2; if(s.w && s.w!==2) o.w = s.w; return o; }) : []; saved = JSON.stringify(strokes);
     build(); wire(); sz(); render();
   }
   var fr = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
