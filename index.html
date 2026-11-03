@@ -497,9 +497,54 @@ function payTypeLabel(v){
 // ---- Vendor Master is per company: a vendor is only visible/usable under its own company.
 // Rows with a blank companyCode are legacy rows and stay usable by every company until Com is filled in.
 function vendorsFor_(co){ const c = String(co||''); return state.vendors.filter(v=>!v.companyCode || String(v.companyCode)===c); }
-function findVendor_(co, code){
+// One-time vendor cards: a code starting with OTD (e.g. OTD002) is kept in the Master as OTD002-1, OTD002-2 ... one per payee name.
+// Documents/reports keep the real SAP card code (OTD002); the payee is told apart by name.
+function isOtdCode_(c){ return /^OTD/i.test(String(c||'').trim()); }
+function vendorSapCode_(v){ const c = String((v&&v.vendorCode)||''); return isOtdCode_(c) ? c.replace(/-\d+$/, '') : c; }
+function vendorNameKey_(n){ return String(n||'').replace(/\s+/g,'').toLowerCase(); }
+function findVendor_(co, code, name){
   const list = vendorsFor_(co).filter(v=>String(v.vendorCode)===String(code));
-  return list.find(v=>String(v.companyCode)===String(co)) || list[0] || null;
+  const hit = list.find(v=>String(v.companyCode)===String(co)) || list[0] || null;
+  if(hit || !isOtdCode_(code) || !name) return hit;
+  const base = String(code).trim().toLowerCase(), nk = vendorNameKey_(name);
+  return vendorsFor_(co).find(v=>vendorSapCode_(v).toLowerCase()===base && vendorNameKey_(v.vendorName)===nk) || null;
+}
+// add vendors that are not in the Master yet (accountant flows). Runs in the background; never blocks or fails the submit.
+async function ensureVendorsInMaster_(co, items){
+  try{
+    const seen = {}, todo = [];
+    (items||[]).forEach(it=>{
+      const code = String(it.code||'').trim(), name = String(it.name||'').trim();
+      if(!co || !code || !name) return;
+      if(findVendor_(co, code, name)) return;
+      const k = code.toLowerCase()+'|'+vendorNameKey_(name);
+      if(seen[k]) return; seen[k] = 1;
+      todo.push({ code, name, bankAccount: it.bankAccount||'', bankName: it.bankName||'' });
+    });
+    if(!todo.length) return;
+    const r = await apiCall('ensureVendors', { companyCode: co, items: todo, createdBy: fullName(state.user) }, true);
+    if(!r || !r.success){ if(r && r.error==='unknown_action') showToast('เพิ่ม Vendor เข้า Master ไม่ได้ — ต้อง Deploy Code.gs เวอร์ชันใหม่ก่อน'); return; }
+    const made = r.created || [];
+    made.forEach(v=>{ state.vendors.push(v); });
+    if(made.length){
+      if(state.vendorCounts && state.vendorCounts[co]!==undefined) state.vendorCounts[co] += made.length;
+      try{ cacheSave_(); }catch(e){}
+      try{ refreshVendorLists_(); }catch(e){}
+      showToast('เพิ่ม Vendor เข้า Master แล้ว '+made.length+' ราย: '+made.map(v=>v.vendorCode).join(', '), 4000);
+    }
+  }catch(e){}
+}
+// Fill each line's Vendor Name from the Vendor Master (matched by code, within the company) when the code exists there;
+// otherwise keep whatever name the file/user gave. Master wins so names stay consistent with the Master.
+function fillVendorNamesFromMaster_(lines, co){
+  let n = 0;
+  (lines||[]).forEach(l=>{
+    const code = String(l.vendor||'').trim();
+    if(!code) return;
+    const v = findVendor_(co, code);
+    if(v && v.vendorName){ if(l.vendorName !== v.vendorName){ l.vendorName = v.vendorName; n++; } }
+  });
+  return n;
 }
 function findVendorByLabel_(co, label){ return vendorsFor_(co).find(v=>`${v.vendorCode} — ${v.vendorName}`===label) || null; }
 function vendorOptionsHTML_(co){ return vendorsFor_(co).map(v=>`<option value="${v.vendorCode} — ${v.vendorName}">`).join(''); }
@@ -509,27 +554,27 @@ function refreshVendorLists_(){
   ['submit-vendor-dl','saown-vendor-dl'].forEach(id=>{ const dl = document.getElementById(id); if(dl) dl.innerHTML = vendorOptionsHTML_(co); });
   [['submit-vendor','submit-vendorName'],['saown-vendor','saown-vendorName']].forEach(([vi,ni])=>{
     const el = document.getElementById(vi); if(!el || !el.value) return;
-    if(!findVendor_(co, el.value)){ el.value=''; const n = document.getElementById(ni); if(n) n.value=''; const bb = document.getElementById('saown-bank-block'); if(bb && vi==='saown-vendor') bb.innerHTML=''; }
+    if(!isOtdCode_(el.value) && !findVendor_(co, el.value)){ el.value=''; const n = document.getElementById(ni); if(n) n.value=''; const bb = document.getElementById('saown-bank-block'); if(bb && vi==='saown-vendor') bb.innerHTML=''; }
   });
 }
-function vendorBankInfoText(vendorCode, co){
+function vendorBankInfoText(vendorCode, co, vname){
   if(!vendorCode) return 'ยังไม่ได้เลือก Vendor';
-  const v = findVendor_(co, vendorCode);
+  const v = findVendor_(co, vendorCode, vname);
   if(!v || (!v.bankAccount && !v.bankName)) return 'ไม่มีข้อมูลบัญชี/ธนาคารของ Vendor นี้';
   return `เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}`;
 }
 function vendorBankAccountFor(d){
   if(d.manualBankAccount) return d.manualBankAccount;
-  const v = findVendor_(d.companyCode, d.vendor);
+  const v = findVendor_(d.companyCode, d.vendor, d.vendorName);
   return (v && v.bankAccount) || '';
 }
 function vendorBankNameFor(d){
   if(d.manualBankName) return d.manualBankName;
-  const v = findVendor_(d.companyCode, d.vendor);
+  const v = findVendor_(d.companyCode, d.vendor, d.vendorName);
   return (v && v.bankName) || '';
 }
 function vendorBankBlockHTML(d){
-  const v = findVendor_(d.companyCode, d.vendor);
+  const v = findVendor_(d.companyCode, d.vendor, d.vendorName);
   const hasManual = d.manualBankAccount || d.manualBankName;
   if(!hasManual && v && (v.bankAccount || v.bankName)){
     return `<span style="font-size:12px;color:var(--ink-soft);padding-bottom:8px;">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`;
@@ -548,14 +593,15 @@ function onVendorInput(id){
   if(!el) return;
   const match = findVendorByLabel_((state.documents.find(x=>x.id===id)||{}).companyCode, el.value);
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('vendorName-'+id);
     if(nameEl) nameEl.value = match.vendorName;
   }
   const doc = state.documents.find(d=>d.id===id);
   const bankWrap = document.getElementById('vendor-bank-'+id);
   if(bankWrap && doc){
-    bankWrap.innerHTML = vendorBankBlockHTML(Object.assign({}, doc, { vendor: el.value }));
+    const vnEl = document.getElementById('vendorName-'+id);
+    bankWrap.innerHTML = vendorBankBlockHTML(Object.assign({}, doc, { vendor: el.value, vendorName: vnEl ? vnEl.value : doc.vendorName }));
   }
 }
 /* Tax Code calculation (accounting): V7 = 7% VAT (Base = Net × 100/107, VAT = Net − Base); VX = no VAT (Base = Net, VAT = 0) */
@@ -1369,7 +1415,7 @@ function onSapLineVendorInput(docId, idx){
   if(!el) return;
   const match = findVendorByLabel_((state.documents.find(x=>x.id===docId)||{}).companyCode, el.value);
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('sapline-vendorname-'+docId+'-'+idx);
     if(nameEl) nameEl.value = match.vendorName;
   }
@@ -1616,7 +1662,7 @@ function onManualVendorInput(){
   if(!el) return;
   const match = findVendorByLabel_(state.pendingSapImport ? (state.documents.find(x=>x.id===state.pendingSapImport.id)||{}).companyCode : '', el.value);
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('manual-vendorname');
     if(nameEl) nameEl.value = match.vendorName;
   }
@@ -1648,6 +1694,7 @@ async function confirmSapImport(){
   if(!doc) return;
   const statusEl = document.getElementById('sap-import-status-'+id);
   const finalLines = selected.map((l,i)=>({ subId: id+'-'+(i+1), fiDoc:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
+  fillVendorNamesFromMaster_(finalLines, doc.companyCode);
   const sums = finalLines.reduce((t,l)=>({vat:t.vat+l.vat, wht:t.wht+l.wht, base:t.base+l.base, net:t.net+l.net}), {vat:0,wht:0,base:0,net:0});
   const patch = {
     id, sapLines: JSON.stringify(finalLines),
@@ -2873,7 +2920,7 @@ function onSubmitVendorInput(){
   if(!el) return;
   const match = findVendorByLabel_(currentFormCompany_(), el.value);
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('submit-vendorName');
     if(nameEl) nameEl.value = match.vendorName;
   }
@@ -3033,12 +3080,13 @@ function onSaOwnVendorInput(){
   const match = findVendorByLabel_(currentFormCompany_(), el.value);
   const bankBlock = document.getElementById('saown-bank-block');
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('saown-vendorName');
     if(nameEl) nameEl.value = match.vendorName;
   }
   if(bankBlock){
-    const v = findVendor_(currentFormCompany_(), el.value);
+    const vnE = document.getElementById('saown-vendorName');
+    const v = findVendor_(currentFormCompany_(), el.value, vnE ? vnE.value : '');
     bankBlock.innerHTML = (v && (v.bankAccount||v.bankName))
       ? `<span style="font-size:12px;color:var(--ink-soft);">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`
       : (el.value ? `<span style="font-size:11.5px;color:var(--stamp-red);">ไม่พบใน Vendor Master — สามารถกรอกเพิ่มเองได้ทีหลังจากหน้าอนุมัติเอกสาร</span>` : '');
@@ -3271,9 +3319,9 @@ function applySaOwnSapLineTaxCalc(idx, taxCode){
 function onSaOwnSapLineVendorInput(idx){
   const el = document.getElementById('saownsap-vendor-'+idx);
   if(!el) return;
-  const match = findVendorByLabel_(currentFormCompany_(), el.value);
+  const match = findVendorByLabel_(currentFormCompany_(), el.value) || findVendor_(currentFormCompany_(), String(el.value||'').trim());
   if(match){
-    el.value = match.vendorCode;
+    el.value = vendorSapCode_(match);
     const nameEl = document.getElementById('saownsap-vendorname-'+idx);
     if(nameEl) nameEl.value = match.vendorName;
   }
@@ -3432,7 +3480,7 @@ function saOwnExcelValidate_(parsed, formCompany){
       const hit = nmN ? vendorsFor_(currentFormCompany_()).find(v=>String(v.vendorName||'').replace(/\s+/g,'').toLowerCase()===nmN) : null;
       if(hit){ l.code = String(hit.vendorCode); l.issues.push({level:'warn', text:'ไฟล์ไม่มีรหัส Account — ระบบจับคู่รหัส '+l.code+' จากชื่อใน Vendor Master กรุณาตรวจสอบ'}); }
       else l.issues.push({level:'error', text:'ไฟล์ไม่มีรหัส Account และหาชื่อ "'+(l.name||'')+'" ใน Vendor Master ไม่พบ — กรุณาเติมรหัส Account ในไฟล์'});
-    } else if(!findVendor_(currentFormCompany_(), l.code)) l.issues.push({level:'warn', text:'ไม่พบรหัส Vendor นี้ใน Vendor Master'});
+    } else if(!findVendor_(currentFormCompany_(), l.code, l.name)) l.issues.push({level:'warn', text:isOtdCode_(l.code) ? 'Vendor ขาจรรายนี้ยังไม่มีใน Vendor Master — ระบบจะเพิ่มให้ตอนกดส่ง' : 'ไม่พบรหัส Vendor นี้ใน Vendor Master (ถ้ากรอกชื่อไว้ ระบบจะเพิ่มให้ตอนกดส่ง)'});
     const dupDocs = l.docs.filter(d=>existing.indexOf(d)!==-1);
     if(dupDocs.length) l.issues.push({level:'warn', text:'FI Doc '+dupDocs.join(', ')+' มีอยู่ในเอกสารอื่นในระบบแล้ว อาจซ้ำ'});
     if(l.net < 0) l.issues.push({level:'warn', text:'ยอดสุทธิติดลบ (ใบลดหนี้/รายการกลับ)'});
@@ -3676,6 +3724,7 @@ function confirmSaOwnExcel(){
         vat:it.vat, wht:it.wht, base:it.base, net:it.net });
     });
   });
+  fillVendorNamesFromMaster_(lines, currentFormCompany_());
   const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
   if(lines.length === 1){
     const l = lines[0];
@@ -3755,7 +3804,7 @@ function ewfValidate_(parsed, formCompany){
     if(!l.fi) l.issues.push({level:'error', text:'ไม่มี FI Doc Number'});
     if(!l.web) l.issues.push({level:'warn', text:'ไม่มี Web Doc Number'});
     if(!l.vendor) l.issues.push({level:'error', text:'ไม่มี Vendor Number'});
-    else if(!findVendor_(formCompany || l.co, l.vendor)) l.issues.push({level:'warn', text:'ไม่พบ Vendor นี้ใน Vendor Master'});
+    else if(!findVendor_(formCompany || l.co, l.vendor, l.name)) l.issues.push({level:'warn', text:isOtdCode_(l.vendor) ? 'Vendor ขาจรรายนี้ยังไม่มีใน Vendor Master — ระบบจะเพิ่มให้ตอนกดส่ง' : 'ไม่พบ Vendor นี้ใน Vendor Master (ถ้ากรอกชื่อไว้ ระบบจะเพิ่มให้ตอนกดส่ง)'});
     if(Math.abs(l.calc - l.net) > 0.015 && !l.netBlank) l.issues.push({level:'error', text:'Amount + VAT − WHT = '+l.calc.toLocaleString('en-US',{minimumFractionDigits:2})+' ไม่เท่ากับ Net Amount ในไฟล์'});
     if(l.netBlank) l.issues.push({level:'warn', text:'Net Amount ว่าง ('+(l.wType||'-')+') — ใช้ Amount เป็นยอดสุทธิ'+(l.advDate?' · Advance Date '+l.advDate:'')});
     if(l.wType && l.wType!=='EXPENSE') l.issues.push({level:'warn', text:'ประเภท '+l.wType+' ไม่ใช่ EXPENSE'});
@@ -3893,6 +3942,7 @@ function confirmEwf(){
   const newLines = sel.map(l=>({ fiDoc:l.fi, webDocNo:l.web, vendor:l.vendor, vendorName:l.name, taxCode:l.taxCode, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
   const keep = p.append ? gatherSaOwnSapLinesFromDOM() : [];
   const lines = keep.concat(newLines);
+  fillVendorNamesFromMaster_(lines, currentFormCompany_());
   const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
   if(lines.length === 1){
     const l = lines[0];
@@ -4033,6 +4083,7 @@ async function submitApproveOwn(e){
   hideBusyOverlay();
   if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
   if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData({light:true}); render(); return; }
+  ensureVendorsInMaster_(companyCode, [{code:vendorVal, name:vendorNameVal}].concat(saOwnLines.map(l=>({code:l.vendor, name:l.vendorName}))));
   showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
   e.target.reset();
   state.saOwnSapLines = [];
@@ -4881,7 +4932,7 @@ function openApprovalReport(id){
           let rows;
           if(lines.length>1){
             rows = lines.map(l=>{
-              const vRec = findVendor_(d.companyCode, l.vendor);
+              const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
               return {id:displayId(l.subId||d.id), sap:l.fiDoc, web:l.webDocNo||d.webDocNo, vendor:l.vendor, vname:l.vendorName,
                       acct:vRec&&vRec.bankAccount, bank:vRec&&vRec.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net)};
             });
@@ -5744,14 +5795,19 @@ async function processStage(id, decision){
     action: decision==='approve' ? 'approve' : 'reject',
   });
 
+  let statusBeforeAcct_ = '';
   {
-    const statusBefore = doc.status;
+    const statusBefore = doc.status; statusBeforeAcct_ = doc.status;
     const ok = await confirmBox_(decision==='approve' ? 'ยืนยันอนุมัติ / ส่งต่อ' : 'ยืนยันตีกลับแก้ไข',
       displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\n' + (decision==='approve' ? 'ต้องการอนุมัติ / ส่งต่อเอกสารนี้ใช่หรือไม่?' : 'ต้องการตีกลับเอกสารนี้ให้แก้ไขใช่หรือไม่?') + ((note && note.trim()) ? '\n\nความเห็น: ' + note.trim() : ''),
       decision==='approve' ? 'อนุมัติ / ส่งต่อ' : 'ตีกลับ', decision==='approve' ? 'approve' : 'reject');
     if(!ok) return;
     const cur = state.documents.find(d=>d.id===id);
     if(!cur || cur.status !== statusBefore){ showToast('สถานะเอกสารเปลี่ยนไปแล้ว กรุณาตรวจสอบอีกครั้ง'); render(); return; }
+  }
+  if(decision==='approve' && (statusBeforeAcct_ === 'รอนักบัญชี' || statusBeforeAcct_ === 'รอผู้ตรวจสอบ')){
+    let ls = []; try{ ls = doc.sapLines ? JSON.parse(doc.sapLines) : []; }catch(e){ ls = []; }
+    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName}))));
   }
   bgUpdateDoc_(doc, patch, decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
 }
@@ -5812,6 +5868,8 @@ async function skipReviewerStage(id){
   history.push({ stage:'ผู้ตรวจสอบ', actor: fullName(state.user), date: nowStr(), note: 'ข้ามโดยนักบัญชี เหตุผล: '+note, action:'skip_reviewer' });
   patch.historyLog = JSON.stringify(history);
 
+  { let ls = []; try{ ls = doc.sapLines ? JSON.parse(doc.sapLines) : []; }catch(e){ ls = []; }
+    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName})))); }
   bgUpdateDoc_(doc, patch, 'ข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติเรียบร้อย');
 }
 async function resubmitFromStage(id){
@@ -6270,7 +6328,7 @@ function paymentHTML(){
       const lines = parseSapLines(d);
       const subRows = lines.length>1 ? lines.map(l=>{
         const money2 = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-        const vRec = findVendor_(d.companyCode, l.vendor);
+        const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
         return `
         <tr style="background:var(--paper);font-size:12px;">
           <td></td>
@@ -6667,7 +6725,7 @@ async function exportVoucherReportToExcel(){
     const lines = parseSapLines(d);
     if(lines.length>1){
       lines.forEach(l=>{
-        const vRec = findVendor_(d.companyCode, l.vendor);
+        const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
         lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
       });
     } else {
@@ -6820,7 +6878,7 @@ function generateVoucherSummary(){
     const lines = parseSapLines(d);
     if(lines.length>1){
       return lines.map(l=>{
-        const vRec = findVendor_(d.companyCode, l.vendor);
+        const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
         return `
         <tr>
           <td>${displayId(d.id)}</td>
@@ -7305,7 +7363,7 @@ function openPaymentReport(docPayment){
     const lines = parseSapLines(d);
     if(lines.length>1){
       return lines.map(l=>{
-        const vRec = findVendor_(d.companyCode, l.vendor);
+        const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
         return `
         <tr>
           <td>${dateStr}</td>
