@@ -273,6 +273,10 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 .ag-3{color:#9A7418;background:rgba(184,144,42,.15);border-color:rgba(184,144,42,.36);}  /* 31-60 */
 .ag-4{color:#BE6C17;background:rgba(190,108,23,.14);border-color:rgba(190,108,23,.34);}  /* 61-90 */
 .ag-5{color:#A83A2C;background:rgba(168,58,44,.13);border-color:rgba(168,58,44,.4);font-weight:700;}  /* over 90 */
+.ntc-id{font-size:26px;font-weight:700;letter-spacing:.04em;text-align:center;margin:10px 0 6px;color:var(--heading);font-family:ui-monospace,Menlo,Consolas,monospace;user-select:all;}
+.ntc-bar{height:4px;border-radius:4px;background:var(--line);margin-top:14px;overflow:hidden;}
+.ntc-bar>i{display:block;height:100%;width:100%;background:#2e7d32;transform-origin:left;}
+@keyframes ntcShrink{from{transform:scaleX(1)}to{transform:scaleX(0)}}
 .cfm-bg{position:fixed;inset:0;background:rgba(21,34,56,.55);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;}
 .cfm-box{background:#fff;border-radius:12px;max-width:420px;width:100%;padding:22px 22px 16px;box-shadow:0 18px 50px rgba(0,0,0,.35);border-top:5px solid var(--navy);}
 .cfm-box.k-approve{border-top-color:#2e7d32;} .cfm-box.k-reject{border-top-color:#e08a00;} .cfm-box.k-cancel{border-top-color:#c62828;}
@@ -575,11 +579,31 @@ function vendorOptionsHTML_(co){ return vendorsFor_(co).map(v=>`<option value="$
 function currentFormCompany_(){ const el = document.querySelector('form select[name="companyCode"]'); return el ? el.value : ''; }
 function refreshVendorLists_(){
   const co = currentFormCompany_();
+  try{ updateSaOwnPayTypeFlags_(); }catch(_){}
   ['submit-vendor-dl','saown-vendor-dl'].forEach(id=>{ const dl = document.getElementById(id); if(dl) dl.innerHTML = vendorOptionsHTML_(co); });
   [['submit-vendor','submit-vendorName'],['saown-vendor','saown-vendorName']].forEach(([vi,ni])=>{
     const el = document.getElementById(vi); if(!el || !el.value) return;
     if(!isOtdCode_(el.value) && !findVendor_(co, el.value)){ el.value=''; const n = document.getElementById(ni); if(n) n.value=''; const bb = document.getElementById('saown-bank-block'); if(bb && vi==='saown-vendor') bb.innerHTML=''; }
   });
+}
+// Suggest the payment type from the Vendor Master's bank: SCB (ไทยพาณิชย์) -> 1 = Direct, any other bank -> 2 = Media.
+// Only fills an empty choice (or one this function filled earlier) — a type the user picked by hand is never overwritten.
+function payTypeFromBank_(bankName){
+  const b = String(bankName||'').trim().toLowerCase();
+  if(!b) return '';
+  return /ไทยพาณิชย์|scb|siam\s*commercial/.test(b) ? '1' : '2';
+}
+function applyPayTypeFromVendor_(radioName, v){
+  const radios = [...document.querySelectorAll('input[type="radio"][name="'+radioName+'"]')];
+  if(!radios.length) return;
+  const cur = radios.find(r=>r.checked);
+  if(cur && !cur.dataset.auto) return;           // chosen by hand (or already saved on the document)
+  const want = v ? payTypeFromBank_(v.bankName) : '';
+  if(!want){ if(cur){ cur.checked = false; delete cur.dataset.auto; } return; }   // no bank info -> drop our earlier suggestion
+  const target = radios.find(r=>r.value===want);
+  if(!target) return;
+  radios.forEach(r=>{ delete r.dataset.auto; });
+  target.checked = true; target.dataset.auto = '1';
 }
 function vendorBankInfoText(vendorCode, co, vname){
   if(!vendorCode) return 'ยังไม่ได้เลือก Vendor';
@@ -625,6 +649,7 @@ function onVendorInput(id){
   const bankWrap = document.getElementById('vendor-bank-'+id);
   if(bankWrap && doc){
     const vnEl = document.getElementById('vendorName-'+id);
+    applyPayTypeFromVendor_('payType-'+id, findVendor_(doc.companyCode, el.value, vnEl ? vnEl.value : doc.vendorName));
     bankWrap.innerHTML = vendorBankBlockHTML(Object.assign({}, doc, { vendor: el.value, vendorName: vnEl ? vnEl.value : doc.vendorName }));
   }
 }
@@ -1188,7 +1213,29 @@ async function manualRefresh(){
 }
 
 /* ============================= TOAST ============================= */
-function confirmBox_(title, msg, okLabel, kind){
+// centred "success" notice that stays ~5s (so the ID can be copied down) and can be closed earlier. Does not block the app behind it.
+function noticeBox_(title, bigText, msg, secs){
+  secs = secs || 5;
+  const old = document.querySelector('.cfm-bg.ntc'); if(old) old.remove();
+  const bg = document.createElement('div'); bg.className = 'cfm-bg ntc';
+  const box = document.createElement('div'); box.className = 'cfm-box k-approve';
+  box.setAttribute('role','dialog');
+  const t = document.createElement('div'); t.className = 'cfm-ttl'; t.textContent = title;
+  box.appendChild(t);
+  if(bigText){ const b = document.createElement('div'); b.className = 'ntc-id'; b.textContent = bigText; box.appendChild(b); }
+  if(msg){ const m = document.createElement('div'); m.className = 'cfm-msg'; m.textContent = msg; box.appendChild(m); }
+  const bar = document.createElement('div'); bar.className = 'ntc-bar'; const fill = document.createElement('i'); fill.style.animation = 'ntcShrink '+secs+'s linear forwards'; bar.appendChild(fill); box.appendChild(bar);
+  const bt = document.createElement('div'); bt.className = 'cfm-btns'; const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'ok'; ok.textContent = 'ปิด'; bt.appendChild(ok); box.appendChild(bt);
+  bg.appendChild(box);
+  let done = false, timer = null;
+  function fin(){ if(done) return; done = true; clearTimeout(timer); document.removeEventListener('keydown', onKey, true); bg.remove(); }
+  function onKey(e){ if(e.key==='Escape'||e.key==='Enter'){ fin(); } }
+  ok.onclick = fin; bg.addEventListener('mousedown', e=>{ if(e.target===bg) fin(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(bg);
+  timer = setTimeout(fin, secs*1000);
+}
+function confirmBox_(title, msg, okLabel, kind, cancelLabel){
   return new Promise(resolve=>{
     const bg = document.createElement('div'); bg.className = 'cfm-bg';
     const box = document.createElement('div'); box.className = 'cfm-box k-' + (kind||'');
@@ -1196,7 +1243,7 @@ function confirmBox_(title, msg, okLabel, kind){
     const t = document.createElement('div'); t.className = 'cfm-ttl'; t.textContent = title;
     const m = document.createElement('div'); m.className = 'cfm-msg'; m.textContent = msg;
     const bt = document.createElement('div'); bt.className = 'cfm-btns';
-    const no = document.createElement('button'); no.type = 'button'; no.textContent = 'ยกเลิก';
+    const no = document.createElement('button'); no.type = 'button'; no.textContent = cancelLabel || 'ยกเลิก';
     const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'ok'; ok.textContent = okLabel || 'ยืนยัน';
     bt.appendChild(no); bt.appendChild(ok); box.appendChild(t); box.appendChild(m); box.appendChild(bt); bg.appendChild(box);
     let done = false;
@@ -3014,9 +3061,8 @@ async function submitNewDoc(e){
     }
     showToast('วางบิลไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
   }
-  showToast(res.autoCompleted
-    ? 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id)+' — ประเภทนี้ข้ามขั้นตอนอนุมัติ บันทึกเป็น Complete ให้ทันทีแล้ว'
-    : 'วางบิลเอกสารเรียบร้อย ID '+displayId(res.id), 5000);
+  noticeBox_('ส่งเอกสารเข้าสู่การอนุมัติเรียบร้อย', displayId(res.id),
+    res.autoCompleted ? 'ประเภทนี้ข้ามขั้นตอนอนุมัติ บันทึกเป็น Complete ให้ทันทีแล้ว' : 'กรุณาจดเลข ID ไว้อ้างอิง', 5);
   e.target.reset();
   await refreshData({light:true});
   state.view = 'tracking';
@@ -3056,7 +3102,7 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ประเภทการจ่าย</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;">
-        ${PAY_TYPES.map((t,i)=>`<label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="${t[0]}" ${i===0?'required':''}> ${t[1]}</label>`).join('')}
+        ${PAY_TYPES.map((t,i)=>`<label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="${t[0]}" ${i===0?'required':''} onchange="updateSaOwnPayTypeFlags_()"> ${t[1]}</label>`).join('')}
       </div>
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ยอดเงิน</div>
@@ -3076,6 +3122,7 @@ function submitApproveOwnHTML(){
         <div class="field"><label>Rate WHT</label>
           <select id="saown-whtRate" style="width:140px;" onchange="applySaOwnWhtRate(this.value)">${whtRateOptionsHTML_('','')}</select>
         </div>
+        <div class="field" style="align-self:flex-end;"><button type="button" class="icon-btn dl-icon" style="width:auto;padding:0 12px;height:38px;gap:6px;display:inline-flex;align-items:center;" title="ดูตัวอย่างใบสรุปการอนุมัติ (ก่อนกดส่ง) เพื่อตรวจสอบความถูกต้อง" onclick="previewSaOwnReport()">${DOWNLOAD_SVG} <span style="font-size:12px;font-weight:600;">ดูตัวอย่างใบสรุป (PDF)</span></button></div>
       </div>
       <div id="saown-net-hint" style="margin-top:2px;"></div>
 
@@ -3140,6 +3187,8 @@ function onSaOwnVendorInput(){
   if(bankBlock){
     const vnE = document.getElementById('saown-vendorName');
     const v = findVendor_(currentFormCompany_(), el.value, vnE ? vnE.value : '');
+    applyPayTypeFromVendor_('payType', v);
+    updateSaOwnPayTypeFlags_();
     bankBlock.innerHTML = (v && (v.bankAccount||v.bankName))
       ? `<span style="font-size:12px;color:var(--ink-soft);">เลขที่บัญชี: ${v.bankAccount||'-'} · ธนาคาร: ${v.bankName||'-'}</span>`
       : (el.value ? `<span style="font-size:11.5px;color:var(--stamp-red);">ไม่พบใน Vendor Master — สามารถกรอกเพิ่มเองได้ทีหลังจากหน้าอนุมัติเอกสาร</span>` : '');
@@ -3208,7 +3257,7 @@ function saOwnSapLineRowHTML(l, i){
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-fidoc-${i}" value="${l.fiDoc||''}" placeholder="FI Doc"></td>
     <td><input type="text" class="sap-input" style="width:140px;" id="saownsap-webdocno-${i}" value="${l.webDocNo||''}" placeholder="Web Doc No."></td>
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-vendor-${i}" list="saown-vendor-dl" value="${l.vendor||''}" oninput="onSaOwnSapLineVendorInput(${i})" placeholder="Vendor"></td>
-    <td><input type="text" class="sap-input" style="width:150px;" id="saownsap-vendorname-${i}" value="${l.vendorName||''}" placeholder="Vendor Name"></td>
+    <td style="white-space:nowrap;"><input type="text" class="sap-input" style="width:132px;" id="saownsap-vendorname-${i}" value="${l.vendorName||''}" placeholder="Vendor Name" oninput="updateSaOwnPayTypeFlags_()"><b class="pt-flag" id="saownsap-ptflag-${i}" title="ประเภทการจ่ายตามธนาคารของ Vendor (1 = Direct / 2 = Media)" style="color:#A83A2C;margin-left:5px;font-size:13px;"></b></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-vat-${i}" value="${money(l.vat)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-wht-${i}" value="${money(l.wht)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"><select class="sap-input" id="saownsap-whtrate-${i}" style="width:85px;font-size:11px;margin-top:3px;" title="เลือก Rate WHT" onchange="applySaOwnSapLineWhtRate(${i},this.value)">${whtRateOptionsHTML_(l.base,l.wht)}</select></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-base-${i}" value="${money(l.base)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i},'base')"></td>
@@ -3242,6 +3291,7 @@ function saOwnSapLinesContainerHTML(){
     const last = i===lines.length-1 || vkey(lines[i+1])!==vkey(l);
     if(last){
       groups++;
+      rows += `<tr class="saown-ptwarn" data-from="${gStart}" data-to="${i}" style="display:none;"><td></td><td colspan="10" style="padding:2px 8px 6px;font-size:11.5px;color:#A83A2C;font-weight:600;"></td></tr>`;
       rows += totRow('', 'Total · '+(l.vendorName||l.vendor||'')+' ('+(i-gStart+1)+' รายการ)', gStart, i, false);
       gStart = i+1;
     }
@@ -3278,7 +3328,7 @@ function updateSaOwnSubtotals(){
 }
 function refreshSaOwnSapLineContainer(){
   const el = document.getElementById('saown-sapline-container');
-  if(el){ el.innerHTML = saOwnSapLinesContainerHTML(); updateSaOwnSubtotals(); }
+  if(el){ el.innerHTML = saOwnSapLinesContainerHTML(); updateSaOwnSubtotals(); updateSaOwnPayTypeFlags_(); }
 }
 function gatherSaOwnSapLinesFromDOM(){
   return (state.saOwnSapLines||[]).map((l,i)=>{
@@ -3369,6 +3419,98 @@ function applySaOwnSapLineTaxCalc(idx, taxCode){
   if(rateOn){ const w = whtFromRate_(base, parseFloat(rs.value)); wEl.value = formatMoney(w); if(netEl) netEl.value = formatMoney(netFrom_(base, vat, w)); }
   recomputeSaOwnSapTotalsLive();
 }
+// Per SAP line: show the payment type the Vendor Master's bank implies (1 / 2) and, when the lines disagree with each other
+// (or with the type picked for the document), put a "*" warning under that vendor. Vendors not in the Master (or without a bank) are ignored.
+function updateSaOwnPayTypeFlags_(){
+  const box = document.getElementById('saown-sapline-container'); if(!box) return;
+  const co = currentFormCompany_();
+  const types = [];
+  let i = 0;
+  for(;;){
+    const vEl = document.getElementById('saownsap-vendor-'+i); if(!vEl) break;
+    const nEl = document.getElementById('saownsap-vendorname-'+i);
+    const rec = String(vEl.value||'').trim() ? findVendor_(co, String(vEl.value).trim(), nEl ? nEl.value : '') : null;
+    const t = rec ? payTypeFromBank_(rec.bankName) : '';
+    types.push(t);
+    const f = document.getElementById('saownsap-ptflag-'+i); if(f) f.textContent = t;
+    i++;
+  }
+  const picked = document.querySelector('input[name="payType"]:checked');
+  let ref = picked && (picked.value==='1' || picked.value==='2') ? picked.value : '';
+  const fromPick = !!ref;
+  const n1 = types.filter(t=>t==='1').length, n2 = types.filter(t=>t==='2').length;
+  if(!ref && n1 && n2) ref = n1 >= n2 ? '1' : '2';          // no type picked yet: the majority is "normal", the minority gets flagged
+  const label = { '1':'Direct (1)', '2':'Media (2)' };
+  box.querySelectorAll('tr.saown-ptwarn').forEach(tr=>{
+    const t = types[+tr.dataset.from];
+    const td = tr.cells[1];
+    if(ref && t && t !== ref){
+      td.textContent = '* Vendor นี้เป็น ' + label[t] + (fromPick ? ' — ไม่ตรงกับประเภทการจ่ายที่เลือกไว้ ('+ref+')' : ' — ปนกับ Vendor อื่นในเอกสารนี้');
+      tr.style.display = '';
+    } else { td.textContent = ''; tr.style.display = 'none'; }
+  });
+}
+// Before submit: do the amounts agree with the formulas? (Net = Base + VAT - WHT; VAT matches the Tax Code; WHT matches the chosen Rate.)
+// Catches amounts that were edited but never recalculated. Returns a list of readable problems (empty = fine).
+function saOwnAmountIssues_(){
+  const money = v => formatMoney(Math.round((parseFloat(v)||0)*100)/100);
+  const check = (label, base, vat, wht, net, taxCode, rate) => {
+    const out = [];
+    const exp = Math.round((base + vat - wht)*100)/100;
+    if(Math.abs(exp - net) > 0.015) out.push(label+': ยอดจ่ายสุทธิ '+money(net)+' ไม่เท่ากับ Base + VAT − WHT = '+money(exp));
+    if(taxCode){
+      const expVat = isVat7Code_(taxCode) ? Math.round(base*7)/100 : 0;
+      if(Math.abs(expVat - vat) > 0.025) out.push(label+': VAT '+money(vat)+' ไม่ตรงกับ Tax Code '+taxCode+' (ควรเป็น '+money(expVat)+')');
+    }
+    if(rate){
+      const expW = whtFromRate_(base, parseFloat(rate));
+      if(Math.abs(expW - wht) > 0.015) out.push(label+': WHT '+money(wht)+' ไม่ตรงกับอัตรา '+rate+'% (ควรเป็น '+money(expW)+')');
+    }
+    return out;
+  };
+  const num = id => { const e = document.getElementById(id); return e ? (parseFloat(unformatMoney(e.value))||0) : 0; };
+  const issues = [];
+  const n = (state.saOwnSapLines||[]).length;
+  if(n >= 2){
+    for(let i=0;i<n;i++){
+      const fi = ((document.getElementById('saownsap-fidoc-'+i)||{}).value||'').trim();
+      const tax = (document.getElementById('saownsap-tax-'+i)||{}).value || '';
+      const rs = document.getElementById('saownsap-whtrate-'+i);
+      issues.push(...check('บรรทัด '+(i+1)+(fi?' (FI '+fi+')':''), num('saownsap-base-'+i), num('saownsap-vat-'+i), num('saownsap-wht-'+i), num('saownsap-net-'+i), tax, rs ? rs.value : ''));
+    }
+  } else {
+    const tax = (document.getElementById('saown-taxCode')||{}).value || '';
+    const rs = document.getElementById('saown-whtRate');
+    issues.push(...check('ยอดเงินของเอกสาร', num('saown-baseAmount'), num('saown-vatAmount'), num('saown-whtAmount'), num('saown-netAmount'), tax, rs ? rs.value : ''));
+  }
+  return issues;
+}
+// Preview the approval summary from what is currently typed in the วางบิล (นักบัญชี) form — nothing is saved or sent.
+function previewSaOwnReport(){
+  const form = document.querySelector('form'); if(!form) return;
+  const f = new FormData(form);
+  const val = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+  const co = f.get('companyCode') || '';
+  if(!co){ showToast('กรุณาเลือกบริษัทก่อนดูตัวอย่าง'); return; }
+  const lines = gatherSaOwnSapLinesFromDOM();
+  const d = {
+    id: co + '-ตัวอย่าง', docType: f.get('docType')||'', docName: f.get('docName')||'(ยังไม่ได้ตั้งชื่อ)', companyCode: co,
+    createdBy: fullName(state.user), createdDate: new Date().toISOString().slice(0,10), dueDate: f.get('dueDate')||'',
+    status: 'ร่าง — ตัวอย่างก่อนส่ง (ยังไม่ได้บันทึก)', historyLog: '[]',
+    docSAP: (f.get('docSAP')||'').trim(), webDocNo: (f.get('webDocNo')||'').trim(),
+    vendor: (f.get('vendor')||'').trim(), vendorName: (f.get('vendorName')||'').trim(), payType: f.get('payType')||'',
+    vatAmount: unformatMoney(f.get('vatAmount')||''), whtAmount: unformatMoney(f.get('whtAmount')||''),
+    baseAmount: unformatMoney(f.get('baseAmount')||''), netAmount: unformatMoney(f.get('netAmount')||''), taxCode: f.get('taxCode')||'',
+    accountantBy: '', reviewerBy: '', approverBy: '', approver2By: '', approver3By: '', reportMarks: '[]',
+  };
+  if(lines.length >= 2){
+    lines.forEach((l,i)=>{ l.subId = d.id+'-'+(i+1); });
+    d.sapLines = JSON.stringify(lines);
+    const sum = k => lines.reduce((t,l)=>t+(parseFloat(l[k])||0),0);
+    d.vatAmount = sum('vat').toFixed(2); d.whtAmount = sum('wht').toFixed(2); d.baseAmount = sum('base').toFixed(2); d.netAmount = sum('net').toFixed(2);
+  }
+  openApprovalReport(d.id, d);
+}
 function onSaOwnSapLineVendorInput(idx){
   const el = document.getElementById('saownsap-vendor-'+idx);
   if(!el) return;
@@ -3378,6 +3520,7 @@ function onSaOwnSapLineVendorInput(idx){
     const nameEl = document.getElementById('saownsap-vendorname-'+idx);
     if(nameEl) nameEl.value = match.vendorName;
   }
+  updateSaOwnPayTypeFlags_();
 }
 function recomputeSaOwnSapTotalsLive(){
   const lines = gatherSaOwnSapLinesFromDOM();
@@ -4034,6 +4177,14 @@ async function submitApproveOwn(e){
   if(!vendorNameVal) missing.push('Vendor Name');
   if(!payTypeVal) missing.push('ประเภทการจ่าย');
   if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่ง: '+missing.join(', ')); return; }
+  {
+    const amtIssues = saOwnAmountIssues_();
+    if(amtIssues.length){
+      const shown = amtIssues.slice(0,10).map(t=>'• '+t).join('\n') + (amtIssues.length>10 ? '\n• ... และอีก '+(amtIssues.length-10)+' จุด' : '');
+      const go = await confirmBox_('จำนวนเงินไม่สัมพันธ์กับสูตร ('+amtIssues.length+' จุด)', shown + '\n\nกรุณาตรวจสอบตัวเลขก่อนส่ง หรือเลือกส่งต่อถ้าตรวจแล้วว่าถูกต้อง', 'ส่งต่อไปเลย', 'reject', 'กลับไปตรวจสอบ');
+      if(!go) return;
+    }
+  }
 
   // ข้ามผู้ตรวจสอบเป็นเรื่องผิดปกติของ Flow ปกติ — ต้องมีเหตุผลกำกับไว้เสมอเพื่อการตรวจสอบย้อนหลัง,
   // same rule as the normal accountant-stage skipReviewerStage()
@@ -4137,7 +4288,7 @@ async function submitApproveOwn(e){
   if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
   if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData({light:true}); render(); return; }
   ensureVendorsInMaster_(companyCode, [{code:vendorVal, name:vendorNameVal}].concat(saOwnLines.map(l=>({code:l.vendor, name:l.vendorName}))));
-  showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
+  noticeBox_('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย', displayId(newId), 'ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว\nกรุณาจดเลข ID ไว้อ้างอิง', 5);
   e.target.reset();
   try{ onSaOwnDocTypeChange(); }catch(_){}
   state.saOwnSapLines = [];
@@ -4149,7 +4300,7 @@ async function resubmitDoc(id){
   const patch = { id, status:'รอนักบัญชี', modifiedBy: fullName(state.user), modifiedDate: nowStr() };
   const res = await apiCall('updateDocument', patch);
   if(!res.success){ showToast('ส่งเอกสารไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
-  showToast('ส่งเอกสารกลับเข้าสู่กระบวนการอนุมัติแล้ว');
+  noticeBox_('ส่งเอกสารกลับเข้าสู่กระบวนการอนุมัติแล้ว', displayId(id), '', 5);
   await refreshData({light:true});
   render();
 }
@@ -4882,9 +5033,9 @@ function toggleHdrBlock(id){
   if(box) box.style.display = state.hdrOpen[id] ? '' : 'none';
   if(btn){ const n = btn.querySelector('span') ? btn.querySelector('span').outerHTML : ''; btn.innerHTML = (state.hdrOpen[id]?'🙈 ซ่อน':'👁 แสดง')+' ข้อมูลเอกสาร SAP / ผู้รับเงิน '+n; }
 }
-function openApprovalReport(id){
+function openApprovalReport(id, draft){
   if(!sigReady_()) return;
-  const d = state.documents.find(x=>x.id===id);
+  const d = draft || state.documents.find(x=>x.id===id);
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
   const fmt = str => { if(!str) return '-'; const dt = parseThaiDateStr(str); return fmtDate(dt || str); };
   const num = v => parseFloat(v)||0;
@@ -5982,7 +6133,7 @@ async function resubmitFromStage(id){
   hideBusyOverlay();
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
-  showToast('ส่งเอกสารกลับเข้าสู่การอนุมัติเรียบร้อย · '+id);
+  noticeBox_('ส่งเอกสารกลับเข้าสู่การอนุมัติเรียบร้อย', displayId(id), '', 5);
   await refreshData({light:true});
   render();
 }
