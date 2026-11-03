@@ -5348,7 +5348,7 @@ function paymentApprovalHTML(){
       <td>${agg.paymentBy||v.createdBy||'-'}</td>
       <td>${pvDueLabel_(infoOf[v.id])}</td>
       <td>${isRejectedItem ? `<span class="status-pill reject">↺ ${v.status}</span>` : `<span class="status-pill">${v.status}</span>`}<div class="sent-at" title="เวลาที่ขั้นก่อนหน้าส่งงานมา">ส่งมาเมื่อ ${fmtDateTime(pvPrevStepDate_(v))}</div></td>
-      <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : ''}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
+      <td style="white-space:nowrap;">${agg.link ? `<a class="icon-btn ql-payment" href="${agg.link}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอนที่การเงินแนบ">${PAYMENT_SLIP_SVG}</a> ` : slipMissingBtn_(v.docPayment)}<button class="icon-btn dl-icon" title="เปิด Journal Voucher Report" onclick="openPaymentReport('${v.docPayment}')">${DOWNLOAD_SVG}</button> ${actionBtn}</td>
     </tr>`;
     let actionRow = '';
     if(expanded && canAct && !isRejectedItem){
@@ -5518,6 +5518,30 @@ async function cancelRejectedPv(id){
   if(!res.success){ showToast('เอกสารกลับไปรอชำระเงินแล้ว แต่ปิดชุดไม่สำเร็จ กรุณาแจ้ง Admin'); await refreshData({light:true}); render(); return; }
   showToast('ยกเลิกชุดรวบจ่ายแล้ว เอกสารกลับไปรอชำระเงิน — รวบจ่ายใหม่ได้เลย');
   await refreshData({light:true});
+  render();
+}
+function canAddSlipLink_(){ return !!state.user && (isAdmin() || ['เจ้าหน้าที่การเงิน','หัวหน้าแผนกการเงิน'].indexOf(state.user.role)!==-1); }
+// grey card icon for a batch that has no slip/evidence link yet; finance/Admin can click it to attach one
+function slipMissingBtn_(docPayment){
+  const can = canAddSlipLink_();
+  const dp = String(docPayment||'').replace(/\\/g,'').replace(/'/g,'');
+  return `<button class="icon-btn" style="opacity:.55;border-style:dashed;" title="${can ? 'ยังไม่ได้แนบไฟล์สลิป/หลักฐาน — คลิกเพื่อเพิ่มลิงก์' : 'ยังไม่ได้แนบไฟล์สลิป/หลักฐานการโอน'}" ${can ? `onclick="addBatchSlipLink('${dp}')"` : 'disabled'}>${PAYMENT_SLIP_SVG}</button> `;
+}
+async function addBatchSlipLink(docPayment){
+  if(!canAddSlipLink_()){ showToast('เฉพาะการเงินหรือ Admin เท่านั้นที่เพิ่มลิงก์ได้'); return; }
+  const docs = state.documents.filter(d=>String(d.docPayment)===String(docPayment));
+  if(!docs.length) return;
+  const link = (prompt('วางลิงก์ไฟล์สลิป/หลักฐานการโอนของ Doc Payment ' + docPayment + '\n(เช่น https://drive.google.com/...)', '') || '').trim();
+  if(!link) return;
+  if(!/^https?:\/\//i.test(link)){ showToast('ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://'); return; }
+  showBusyOverlay('กำลังบันทึกลิงก์ กรุณารอสักครู่...');
+  for(const d of docs){
+    const r = await apiCall('updateDocument', { id:d.id, docPaymentLink: link, modifiedBy: fullName(state.user), modifiedDate: nowStr() });
+    if(!r.success){ hideBusyOverlay(); showToast('บันทึกลิงก์ไม่สำเร็จที่เอกสาร '+displayId(d.id)+' ลองใหม่อีกครั้ง'); return; }
+    d.docPaymentLink = link;
+  }
+  hideBusyOverlay();
+  showToast('เพิ่มลิงก์ไฟล์เรียบร้อย');
   render();
 }
 async function resubmitRejectedPv(id){
@@ -7131,7 +7155,7 @@ function reportPaymentHTML(){
       <td style="white-space:nowrap;">${batchDueLabel(b)}</td>
       <td>${b.stage.key==='none' ? '<span style="color:var(--ink-soft);">-</span>' : `<span class="status-pill ${b.stage.rejected?'reject':''}">${b.stage.label}</span>${(b.stage.key==='review'||b.stage.key==='approve') && pvStageWho_(b.stage) ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:3px;">รอ: ${pvStageWho_(b.stage)}</div>`:''}`}</td>
       <td style="white-space:nowrap;">
-        ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
+        ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : slipMissingBtn_(b.docPayment)}
         <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
       </td>
     </tr>`).join('') : `<tr class="empty-row"><td colspan="14">ไม่พบประวัติการจ่ายเงินที่ตรงกับตัวกรอง</td></tr>`;
