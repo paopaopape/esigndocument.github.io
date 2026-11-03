@@ -892,6 +892,11 @@ function canOwnerEditDoc(d){
   return state.user.role === 'User' && d.createdBy === fullName(state.user) && d.status === 'รอนักบัญชี';
 }
 // a document sent back for correction can be cancelled by whoever keyed it, or by a reviewer / Admin
+// whoever keyed a document can cancel their OWN document while it is still in the approval stages (even after it was sent on to the head);
+// never someone else's. Once it moves on to payment/Complete it can no longer be cancelled this way.
+function canOwnerCancelDoc_(d){
+  return !!state.user && !!d.createdBy && d.createdBy === fullName(state.user) && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status);
+}
 function canCancelRejectedDoc_(d){
   if(!String(d.status||'').startsWith('ตีกลับแก้ไข')) return false;
   return d.createdBy === fullName(state.user) || ['ผู้ตรวจสอบ','Admin'].includes(state.user.role);
@@ -2837,7 +2842,7 @@ function dashDocRowHTML(d){
     </tr>`;
   }
   const pencil = (canEditDocuments() || canOwnerEditDoc(d)) ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openDashDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
-  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d) || canCancelRejectedDoc_(d))
+  const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d) || canOwnerCancelDoc_(d) || canCancelRejectedDoc_(d))
     ? `<button class="icon-btn" style="color:var(--ink-soft);border-color:var(--ink-soft);" title="ยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด)" onclick="cancelDoc('${d.id}')">✕</button>` : '';
   const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
   return `
@@ -3029,7 +3034,7 @@ function submitApproveOwnHTML(){
     <form onsubmit="submitApproveOwn(event)">
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:4px 0 8px;">ข้อมูลเอกสาร</div>
       <div class="form-grid">
-        <div class="field"><label>ประเภทเอกสาร</label><select name="docType" required>${typeOptions}</select></div>
+        <div class="field"><label>ประเภทเอกสาร</label><select name="docType" id="saown-docType" required onchange="onSaOwnDocTypeChange()">${typeOptions}</select></div>
         <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required onchange="refreshVendorLists_()">${companyOptions}</select></div>
         <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
         <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
@@ -3087,7 +3092,7 @@ function submitApproveOwnHTML(){
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ตัวเลือกเพิ่มเติม (ไม่บังคับ)</div>
       <label style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><input type="checkbox" name="skipApprover" id="saown-skipApprover"> เลือกผู้อนุมัติ = หัวหน้าแผนกบัญชี (ข้ามขั้นผู้อนุมัติ)</label>
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" name="skipFinance"> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ)</label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><input type="checkbox" name="skipFinance" id="saown-skipFinance" ${(state.docTypes[0]&&state.docTypes[0].viaPayment)?'checked disabled':''}> ไม่ส่งการเงิน (Complete ทันทีหลังอนุมัติเสร็จ) <span id="saown-skipFinance-note" style="font-size:11.5px;color:var(--ink-soft);">${(state.docTypes[0]&&state.docTypes[0].viaPayment)?'— ประเภทนี้อนุมัติผ่านแท็บ Payment':''}</span></label>
       <div class="field full"><label>บันทึกความเห็น / หมายเหตุ (ไม่บังคับ)</label><textarea name="note" placeholder="บันทึกความเห็น (ไม่บังคับ)"></textarea></div>
 
       <div style="width:100%;background:#FFF8E8;border:1px solid var(--gold);border-radius:8px;padding:10px 12px;margin-top:4px;">
@@ -3107,6 +3112,20 @@ function submitApproveOwnHTML(){
       <button class="btn btn-primary" type="submit" style="margin-top:14px;">✓ ส่งเข้าสู่กระบวนการอนุมัติ</button>
     </form>
   </div>`;
+}
+// document types flagged "อนุมัติผ่านแท็บ PAYMENT" must never go to Finance again: tick "ไม่ส่งการเงิน" by default and lock it
+function onSaOwnDocTypeChange(){
+  const sel = document.getElementById('saown-docType'), cb = document.getElementById('saown-skipFinance'), note = document.getElementById('saown-skipFinance-note');
+  if(!sel || !cb) return;
+  if(isViaPaymentType_(sel.value)){
+    if(!cb.dataset.forced) cb.dataset.prev = cb.checked ? '1' : '';
+    cb.checked = true; cb.disabled = true; cb.dataset.forced = '1';
+    if(note) note.textContent = '— ประเภทนี้อนุมัติผ่านแท็บ Payment';
+  } else {
+    if(cb.dataset.forced){ cb.checked = !!cb.dataset.prev; delete cb.dataset.forced; }
+    cb.disabled = false;
+    if(note) note.textContent = '';
+  }
 }
 function onSaOwnVendorInput(){
   const el = document.getElementById('saown-vendor');
@@ -4120,6 +4139,7 @@ async function submitApproveOwn(e){
   ensureVendorsInMaster_(companyCode, [{code:vendorVal, name:vendorNameVal}].concat(saOwnLines.map(l=>({code:l.vendor, name:l.vendorName}))));
   showToast('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย ID '+displayId(newId)+' (ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว)', 5000);
   e.target.reset();
+  try{ onSaOwnDocTypeChange(); }catch(_){}
   state.saOwnSapLines = [];
   await refreshData({light:true});
   state.view = 'tracking';
@@ -4871,7 +4891,7 @@ function openApprovalReport(id){
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   let history = [];
   try{ history = d.historyLog ? JSON.parse(d.historyLog) : []; }catch(e){ history = []; }
-  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)', receive:'💰 ยืนยันรับเงิน' };
+  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)', receive:'💰 ยืนยันรับเงิน', close_no_payment:'⏹ จบ Flow (ไม่ต้องจ่าย)' };
   const mappedSlots_ = approver2Slots(d);
   const slotName_ = n => { const m = state.members.find(x=>x.id===(mappedSlots_.find(z=>z.slot===n)||{}).id); return m ? fullName(m) : ''; };
   // signature block that also works when the person hasn't signed yet: blank line + the mapped name in grey
@@ -5991,8 +6011,8 @@ async function forwardToSubmitter(id){
 async function cancelDoc(id){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
-  if(!canEditDocuments() && !canOwnerEditDoc(doc) && !canCancelRejectedDoc_(doc)){ showToast('คุณไม่มีสิทธิ์ยกเลิกเอกสารนี้'); return; }
-  if(!canCancelRejectedDoc_(doc) && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
+  if(!canEditDocuments() && !canOwnerEditDoc(doc) && !canOwnerCancelDoc_(doc) && !canCancelRejectedDoc_(doc)){ showToast('คุณไม่มีสิทธิ์ยกเลิกเอกสารนี้'); return; }
+  if(!canCancelRejectedDoc_(doc) && !canOwnerCancelDoc_(doc) && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
   const confirmed = await confirmBox_('ยืนยันยกเลิกเอกสาร', displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\nต้องการยกเลิกเอกสารนี้ใช่หรือไม่?\nเอกสารจะถูกปิดถาวร ไม่สามารถส่งต่อหรือแก้ไขได้อีก', 'ยกเลิกเอกสาร', 'cancel');
   if(!confirmed) return;
   const noteEl = document.getElementById('note-'+id);
@@ -6441,6 +6461,7 @@ function paymentHTML(){
       </div>
     </div>
     <button id="payment-confirm-btn" class="btn btn-sm btn-approve" ${(!noCompanyPicked && state.paymentSelected.length && state.paymentDocNumber.trim() && state.paymentAccountNo) ? '' : 'disabled'} onclick="confirmBatchPayment()">✓ ยืนยันรวบจ่าย</button>
+    <button type="button" id="payment-close-btn" class="btn btn-sm btn-outline" ${state.paymentSelected.length ? '' : 'disabled'} onclick="closeWithoutPayment()" title="สำหรับรายการที่ไม่ต้องจ่ายเงิน (หลุดมารอชำระเงิน) — จบ Flow เป็น Complete ทันที">⏹ Complete</button>
   </div>`;
 
   const paidList = state.documents.filter(d=>d.status==='Complete' && d.docPayment);
@@ -6994,6 +7015,23 @@ function generateVoucherSummary(){
   window.open(url, '_blank');
 }
 
+// finance: documents that landed in รอชำระเงิน but never needed a payment -> Complete straight away.
+// Uses the same "ไม่ส่งการเงิน" flag (skipFinance) as documents that were flagged that way from the start, so they never enter Doc Payment / Report Payment.
+async function closeWithoutPayment(){
+  const docs = state.documents.filter(d=>state.paymentSelected.includes(d.id) && d.status==='รอชำระเงิน');
+  if(!docs.length){ showToast('กรุณาติ๊กเลือกรายการที่ต้องการจบ Flow'); return; }
+  const list = docs.slice(0,8).map(d=>'• '+displayId(d.id)+'  '+(d.docName||'')).join('\n') + (docs.length>8 ? '\n• ... และอีก '+(docs.length-8)+' รายการ' : '');
+  const ok = await confirmBox_('ยืนยันจบ Flow (ไม่ต้องจ่ายเงิน)', 'ต้องการจบ Flow เป็น Complete ให้ '+docs.length+' รายการนี้ใช่หรือไม่?\nรายการจะไม่เข้า Doc Payment และไม่มีการจ่ายเงิน\n\n'+list, 'จบ Flow (Complete)', 'approve');
+  if(!ok) return;
+  const me = fullName(state.user);
+  const live = docs.filter(d=>d.status==='รอชำระเงิน' && state.documents.indexOf(d)!==-1);
+  state.paymentSelected = [];
+  live.forEach((d,i)=>{
+    const patch = { id:d.id, status:'Complete', skipFinance:'TRUE', modifiedBy: me, modifiedDate: nowStr(),
+      historyLog: appendHistoryLog(d, { stage:'การเงิน', actor: me, date: nowStr(), note:'จบ Flow — ไม่ต้องจ่ายเงิน', action:'close_no_payment' }) };
+    bgUpdateDoc_(d, patch, 'จบ Flow (Complete) แล้ว '+live.length+' รายการ');
+  });
+}
 function setPaymentCompany(v){ state.paymentCompany = v; state.expandedRow=null; state.paymentSelected=[]; state.paymentAccountNo=''; render(); }
 function setPaymentSearch(field, val){ state.paymentSearch[field] = val; render(); }
 function clearPaymentSearch(){ state.paymentSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
