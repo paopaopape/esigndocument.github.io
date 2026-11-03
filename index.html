@@ -266,6 +266,15 @@ tbody tr:hover{background:rgba(184,144,42,0.05);}
 
 .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.12em;color:var(--gold);text-transform:uppercase;}
 .helper{color:var(--ink-soft);font-size:12.5px;margin-top:2px;margin-bottom:16px;}
+.cfm-bg{position:fixed;inset:0;background:rgba(21,34,56,.55);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;}
+.cfm-box{background:#fff;border-radius:12px;max-width:420px;width:100%;padding:22px 22px 16px;box-shadow:0 18px 50px rgba(0,0,0,.35);border-top:5px solid var(--navy);}
+.cfm-box.k-approve{border-top-color:#2e7d32;} .cfm-box.k-reject{border-top-color:#e08a00;} .cfm-box.k-cancel{border-top-color:#c62828;}
+.cfm-ttl{font-size:17px;font-weight:700;margin-bottom:8px;color:var(--ink);}
+.cfm-msg{font-size:14px;line-height:1.55;color:var(--ink);white-space:pre-line;word-break:break-word;}
+.cfm-btns{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
+.cfm-btns button{padding:9px 18px;border-radius:8px;border:1px solid #bbb;background:#fff;font-size:14px;cursor:pointer;font-family:inherit;}
+.cfm-btns button.ok{color:#fff;border-color:transparent;background:var(--navy);font-weight:600;}
+.k-approve .cfm-btns button.ok{background:#2e7d32;} .k-reject .cfm-btns button.ok{background:#e08a00;} .k-cancel .cfm-btns button.ok{background:#c62828;}
 .toast{position:fixed;bottom:22px;right:22px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:999;opacity:0;transform:translateY(10px);transition:all .25s;}
 .toast.show{opacity:1;transform:translateY(0);}
 .role-tag{font-size:10.5px;background:var(--navy);color:#fff;padding:2px 8px;border-radius:20px;}
@@ -897,27 +906,57 @@ async function refreshData(opts){
 const CACHE_KEY = 'dfCache';
 const CACHE_MAX_HOURS = 12;
 let cacheRaw_ = null;
+/* The snapshot is large (every document), so it lives in IndexedDB (hundreds of MB allowed); localStorage (~5MB) is only a fallback. */
+function idbOpen_(){
+  return new Promise((resolve, reject)=>{
+    try{
+      const rq = indexedDB.open('dfCacheDB', 1);
+      rq.onupgradeneeded = ()=>{ rq.result.createObjectStore('kv'); };
+      rq.onsuccess = ()=>resolve(rq.result);
+      rq.onerror = ()=>reject(rq.error || new Error('idb open failed'));
+    }catch(e){ reject(e); }
+  });
+}
+async function idbPut_(key, val){ const db = await idbOpen_(); return new Promise((res, rej)=>{ const tx = db.transaction('kv','readwrite'); tx.objectStore('kv').put(val, key); tx.oncomplete = ()=>{ db.close(); res(); }; tx.onerror = tx.onabort = ()=>{ db.close(); rej(tx.error || new Error('idb put failed')); }; }); }
+async function idbGet_(key){ const db = await idbOpen_(); return new Promise((res, rej)=>{ const rq = db.transaction('kv','readonly').objectStore('kv').get(key); rq.onsuccess = ()=>{ db.close(); res(rq.result); }; rq.onerror = ()=>{ db.close(); rej(rq.error); }; }); }
+async function idbDel_(key){ try{ const db = await idbOpen_(); const tx = db.transaction('kv','readwrite'); tx.objectStore('kv').delete(key); tx.oncomplete = ()=>db.close(); }catch(e){} }
+let cacheTimer_ = null;
 function cacheSave_(){
+  // coalesce bursts of saves; build the snapshot when the timer fires so it reflects the latest state
+  clearTimeout(cacheTimer_);
+  cacheTimer_ = setTimeout(cacheSaveNow_, 150);
+}
+async function cacheSaveNow_(){
   try{
     if(!localStorage.getItem(SESSION_KEY)) return;
-    cacheRaw_ = {
+    const snap = {
       success:true, _cachedAt: Date.now(), vendorCounts: state.vendorCounts || null,
       members: state.members.map(m=>{ const o = Object.assign({}, m); delete o.signatureImage; return o; }),
       companies: state.companies, docTypes: state.docTypes, approvalMappings: state.approvalMappings, appSettings: state.appSettings,
       vendors: state.vendors, paymentAccounts: state.paymentAccounts, paymentMappings: state.paymentMappings,
       documents: state.documents, paymentVouchers: state.paymentVouchers
     };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(cacheRaw_));
-  }catch(e){ try{ localStorage.removeItem(CACHE_KEY); }catch(_){} cacheRaw_ = null; }
+    cacheRaw_ = snap;
+    try{
+      await idbPut_('snap', snap);
+      window.__cacheErr = null;
+      try{ localStorage.removeItem(CACHE_KEY); }catch(e){}   // drop any old oversized localStorage copy
+      return;
+    }catch(e1){
+      window.__cacheErr = 'idb: ' + (e1 && e1.message);
+      try{ localStorage.setItem(CACHE_KEY, JSON.stringify(snap)); window.__cacheErr += ' (used localStorage)'; }
+      catch(e2){ window.__cacheErr += ' | localStorage: ' + (e2 && e2.message); cacheRaw_ = null; try{ console.warn('[cache] could not save the local copy — the page will open from the server each time:', window.__cacheErr); }catch(_){} }
+    }
+  }catch(e){ window.__cacheErr = String(e && e.message || e); }
 }
-function cacheLoad_(){
-  try{
-    const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-    if(!c || !c.members || !c.documents) return null;
-    if((Date.now() - (c._cachedAt||0)) > CACHE_MAX_HOURS*3600000) return null;
-    cacheRaw_ = c;
-    return c;
-  }catch(e){ return null; }
+async function cacheLoad_(){
+  let c = null;
+  try{ c = await idbGet_('snap'); }catch(e){ c = null; }
+  if(!c){ try{ c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); }catch(e){ c = null; } }
+  if(!c || !c.members || !c.documents) return null;
+  if((Date.now() - (c._cachedAt||0)) > CACHE_MAX_HOURS*3600000) return null;
+  cacheRaw_ = c;
+  return c;
 }
 /* ---- signature images are loaded separately (they are large) ---- */
 async function loadSignatures_(){
@@ -1013,8 +1052,8 @@ async function loadAll(){
   // stale-while-revalidate: with a remembered session + a recent local copy, open instantly, then refresh in the background
   let hasSession = false;
   try{ hasSession = !!JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){}
-  const cached = (hasSession && !getLinkedDocIdFromUrl_() && !getLinkedPvIdFromUrl_()) ? cacheLoad_() : null;
-  window.__cacheDbg = { hasSession: hasSession, cached: !!cached, rawLen: (function(){ try{ return (localStorage.getItem(CACHE_KEY)||'').length; }catch(e){ return -1; } })() };
+  const cached = (hasSession && !getLinkedDocIdFromUrl_() && !getLinkedPvIdFromUrl_()) ? await cacheLoad_() : null;
+  window.__cacheDbg = { hasSession: hasSession, cached: !!cached, fromIdbOrLs: !!cached, cacheErr: window.__cacheErr || null };
   if(cached){
     try{
       applyBootstrap_(cached);
@@ -1074,6 +1113,27 @@ async function manualRefresh(){
 }
 
 /* ============================= TOAST ============================= */
+function confirmBox_(title, msg, okLabel, kind){
+  return new Promise(resolve=>{
+    const bg = document.createElement('div'); bg.className = 'cfm-bg';
+    const box = document.createElement('div'); box.className = 'cfm-box k-' + (kind||'');
+    box.setAttribute('role','dialog'); box.setAttribute('aria-modal','true');
+    const t = document.createElement('div'); t.className = 'cfm-ttl'; t.textContent = title;
+    const m = document.createElement('div'); m.className = 'cfm-msg'; m.textContent = msg;
+    const bt = document.createElement('div'); bt.className = 'cfm-btns';
+    const no = document.createElement('button'); no.type = 'button'; no.textContent = 'ยกเลิก';
+    const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'ok'; ok.textContent = okLabel || 'ยืนยัน';
+    bt.appendChild(no); bt.appendChild(ok); box.appendChild(t); box.appendChild(m); box.appendChild(bt); bg.appendChild(box);
+    let done = false;
+    function fin(v){ if(done) return; done = true; document.removeEventListener('keydown', onKey, true); bg.remove(); resolve(v); }
+    function onKey(e){ if(e.key==='Escape'){ e.preventDefault(); fin(false); } }
+    no.onclick = ()=>fin(false); ok.onclick = ()=>fin(true);
+    bg.addEventListener('mousedown', e=>{ if(e.target===bg) fin(false); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(bg);
+    setTimeout(()=>{ try{ no.focus(); }catch(e){} }, 0);   // default focus = cancel, so a stray Enter cannot confirm
+  });
+}
 function showToast(msg, duration){
   let t = document.getElementById('toast');
   if(!t){ t = document.createElement('div'); t.id='toast'; t.className='toast'; document.body.appendChild(t); }
@@ -1751,7 +1811,7 @@ const SESSION_MAX_HOURS = 5; // un-"remembered" session auto-expires this many h
 function saveSession(user, remember){
   try{ localStorage.setItem(SESSION_KEY, JSON.stringify({ id:user.id, ts:Date.now(), remember: !!remember })); }catch(e){}
 }
-function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); localStorage.removeItem(CACHE_KEY); }catch(e){} cacheRaw_ = null; }
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); localStorage.removeItem(CACHE_KEY); }catch(e){} cacheRaw_ = null; clearTimeout(cacheTimer_); idbDel_('snap'); }
 function restoreSession(){
   let saved;
   try{ saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }catch(e){ saved = null; }
@@ -4789,7 +4849,7 @@ function openApprovalReport(id){
       .sign-line{border-top:1px solid #333;margin:30px 12px 6px;}
       .no-print{margin:16px 0;text-align:center;}
       .pcv{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;}
-      .pcv.on{pointer-events:auto;cursor:crosshair;touch-action:none;}
+      .pcv.on{pointer-events:auto;cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M3 25l1.5-6L19 4.5a2 2 0 0 1 2.8 0l1.7 1.7a2 2 0 0 1 0 2.8L9 23.5z' fill='%23ffd54a' stroke='%23222' stroke-width='1.4' stroke-linejoin='round'/%3E%3Cpath d='M3 25l1.5-6 4.5 4.5z' fill='%23f1c9a0' stroke='%23222' stroke-width='1.2' stroke-linejoin='round'/%3E%3Cpath d='M3 25l.9-3.6 2.7 2.7z' fill='%23222'/%3E%3C/svg%3E") 3 25, crosshair;touch-action:none;}
       .pcv.on.pan{touch-action:pan-x pan-y pinch-zoom;}
       .pcv.on.penhover{touch-action:none !important;}
       #penBar{position:fixed;top:12px;right:14px;z-index:50;background:#fff;border:1px solid #ccc;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.2);padding:6px 8px;display:flex;align-items:center;gap:6px;font-size:13px;zoom:1.3;}
@@ -5425,6 +5485,15 @@ async function processPaymentStage(id, decision){
   history.push({ stage: cfg.stageLabel, actor: fullName(state.user), date: nowStr(), note: (note&&note.trim())?note.trim():'', action: decision==='approve'?'approve':'reject' });
   patch.historyLog = JSON.stringify(history);
 
+  {
+    const statusBefore = v.status;
+    const ok = await confirmBox_(decision==='approve' ? 'ยืนยันอนุมัติ / ส่งต่อ' : 'ยืนยันตีกลับแก้ไข',
+      'Doc Payment ' + (v.docPayment || displayId(id)) + '\n\n' + (decision==='approve' ? (cfg.next ? 'ต้องการอนุมัติ / ส่งต่อชุดนี้ใช่หรือไม่?' : 'ต้องการอนุมัติชุดนี้ใช่หรือไม่?\nเมื่ออนุมัติแล้วชุดจะถูกล็อก') : 'ต้องการตีกลับชุดนี้ให้แก้ไขใช่หรือไม่?') + ((note && note.trim()) ? '\n\nความเห็น: ' + note.trim() : ''),
+      decision==='approve' ? 'อนุมัติ / ส่งต่อ' : 'ตีกลับ', decision==='approve' ? 'approve' : 'reject');
+    if(!ok) return;
+    const cur = state.paymentVouchers.find(x=>x.id===id);
+    if(!cur || cur.status !== statusBefore){ showToast('สถานะรายการเปลี่ยนไปแล้ว กรุณาตรวจสอบอีกครั้ง'); render(); return; }
+  }
   bgUpdateDoc_(v, patch, decision==='approve' ? 'บันทึกการอนุมัติเรียบร้อย' : 'ตีกลับแล้ว', 'updatePaymentVoucher');
 }
 // finance withdraws a batch that was sent back to them: every document returns to รอชำระเงิน so they can be re-grouped
@@ -5651,6 +5720,15 @@ async function processStage(id, decision){
     action: decision==='approve' ? 'approve' : 'reject',
   });
 
+  {
+    const statusBefore = doc.status;
+    const ok = await confirmBox_(decision==='approve' ? 'ยืนยันอนุมัติ / ส่งต่อ' : 'ยืนยันตีกลับแก้ไข',
+      displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\n' + (decision==='approve' ? 'ต้องการอนุมัติ / ส่งต่อเอกสารนี้ใช่หรือไม่?' : 'ต้องการตีกลับเอกสารนี้ให้แก้ไขใช่หรือไม่?') + ((note && note.trim()) ? '\n\nความเห็น: ' + note.trim() : ''),
+      decision==='approve' ? 'อนุมัติ / ส่งต่อ' : 'ตีกลับ', decision==='approve' ? 'approve' : 'reject');
+    if(!ok) return;
+    const cur = state.documents.find(d=>d.id===id);
+    if(!cur || cur.status !== statusBefore){ showToast('สถานะเอกสารเปลี่ยนไปแล้ว กรุณาตรวจสอบอีกครั้ง'); render(); return; }
+  }
   bgUpdateDoc_(doc, patch, decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
 }
 function toggleSkipReasonOther(id){
@@ -5799,7 +5877,7 @@ async function cancelDoc(id){
   if(!doc) return;
   if(!canEditDocuments() && !canOwnerEditDoc(doc) && !canCancelRejectedDoc_(doc)){ showToast('คุณไม่มีสิทธิ์ยกเลิกเอกสารนี้'); return; }
   if(!canCancelRejectedDoc_(doc) && !canActOnStage(doc)){ showToast('เอกสารนี้ถูกมอบหมายให้ผู้อื่นดำเนินการ คุณไม่มีสิทธิ์ทำรายการนี้'); return; }
-  const confirmed = confirm('ยืนยันยกเลิกเอกสาร '+displayId(id)+' ใช่หรือไม่?\nเอกสารจะถูกปิดถาวร ไม่สามารถส่งต่อหรือแก้ไขต่อได้อีก (เหมาะกับเอกสารที่คีย์ซ้ำหรือผิดพลาด)');
+  const confirmed = await confirmBox_('ยืนยันยกเลิกเอกสาร', displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\nต้องการยกเลิกเอกสารนี้ใช่หรือไม่?\nเอกสารจะถูกปิดถาวร ไม่สามารถส่งต่อหรือแก้ไขได้อีก', 'ยกเลิกเอกสาร', 'cancel');
   if(!confirmed) return;
   const noteEl = document.getElementById('note-'+id);
   const note = noteEl ? noteEl.value.trim() : '';
