@@ -2362,7 +2362,7 @@ function sidebarHTML(){
   const nav = [];
   nav.push(navItem('dashboard','แดชบอร์ด'));
   if(canSubmitBill()) nav.push(navItem('submit','วางบิลเอกสาร'));
-  if(['นักบัญชี','ผู้ตรวจสอบ','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
+  if(['นักบัญชี','ผู้ตรวจสอบ','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','ส่งเอกสาร (บัญชี)'));
   if(state.user.role!=='เจ้าหน้าที่การเงิน' && canSeeTracking_()) nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
     const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
@@ -2406,12 +2406,12 @@ function sidebarHTML(){
 function navItem(view,label){
   return `<div class="nav-item ${state.view===view?'active':''}" onclick="goView('${view}')"><span class="dot"></span>${label}</div>`;
 }
-// the plain "วางบิลเอกสาร" form is not for นักบัญชี / ผู้ตรวจสอบ (they use "วางบิล (นักบัญชี)") — hidden from the menu AND blocked if reached directly
-function canSubmitBill(){ return !['นักบัญชี','ผู้ตรวจสอบ'].includes(state.user.role); }
+// the plain "วางบิลเอกสาร" form is not for นักบัญชี / ผู้ตรวจสอบ (they use "ส่งเอกสาร (บัญชี)") — hidden from the menu AND blocked if reached directly
+function canSubmitBill(){ return !['นักบัญชี','ผู้ตรวจสอบ','เจ้าหน้าที่การเงิน'].includes(state.user.role); }
 function goView(v){
   if(v==='tracking' && !canSeeTracking_()){ showToast('บริษัทของคุณไม่ได้เปิดใช้ Tracking Invoice'); return; }
   if(v==='payment' && !canSeePaymentVoucherMenu()){ showToast('เมนูนี้สำหรับฝ่ายการเงินเท่านั้น'); return; }
-  if(v==='submit' && !canSubmitBill()){ showToast('บทบาทของคุณไม่ใช้เมนูนี้ — ใช้ "วางบิล (นักบัญชี)" แทน'); return; }
+  if(v==='submit' && !canSubmitBill()){ showToast('บทบาทของคุณไม่ใช้เมนูนี้ — ใช้ "ส่งเอกสาร (บัญชี)" แทน'); return; }
   state.view=v; state.expandedRow=null;
   if(v==='approval'){
     state.approvalGroup = allowedApprovalGroups().includes(state.approvalGroup) ? state.approvalGroup : defaultApprovalGroup();
@@ -2429,7 +2429,7 @@ function topbarHTML(){
   const titles = {
     dashboard:['แดชบอร์ด','ภาพรวมสถานะเอกสารทั้งหมดในระบบ'],
     submit:['วางบิลเอกสาร','บันทึกเอกสารใหม่เข้าสู่กระบวนการอนุมัติ'],
-    submitApproveOwn:['วางบิล (นักบัญชี)','สำหรับนักบัญชีที่คีย์งานและอนุมัติขั้นนักบัญชีเองในขั้นตอนเดียว'],
+    submitApproveOwn:['ส่งเอกสาร (บัญชี)','สำหรับนักบัญชีที่คีย์งานและอนุมัติขั้นนักบัญชีเองในขั้นตอนเดียว'],
     tracking:['Tracking Invoice','ติดตามการรับเอกสารตัวจริง (กระดาษ) แยกจากการอนุมัติดิจิทัล'],
     approval:['การอนุมัติเอกสาร','ตรวจสอบและส่งต่อเอกสารตามลำดับขั้น'],
     payment:['Payment Voucher','บันทึกการชำระเงินสำหรับเอกสารที่อนุมัติแล้ว'],
@@ -2461,7 +2461,7 @@ function topbarHTML(){
 function viewHTML(){
   switch(state.view){
     case 'dashboard': return dashboardHTML();
-    case 'submit': return canSubmitBill() ? submitHTML() : `<div class="card"><h3>เมนูนี้ไม่เปิดให้บทบาทของคุณ</h3><div class="helper">กรุณาใช้เมนู "วางบิล (นักบัญชี)" แทน</div></div>`;
+    case 'submit': return canSubmitBill() ? submitHTML() : `<div class="card"><h3>เมนูนี้ไม่เปิดให้บทบาทของคุณ</h3><div class="helper">กรุณาใช้เมนู "ส่งเอกสาร (บัญชี)" แทน</div></div>`;
     case 'submitApproveOwn': return submitApproveOwnHTML();
     case 'tracking': return trackingHTML();
     case 'approval': return approvalHTML();
@@ -3106,7 +3106,7 @@ function submitApproveOwnHTML(){
   return `
   <div class="card">
     <div class="eyebrow">New Submission · Self-approve</div>
-    <h3 style="margin-top:4px;">วางบิล (นักบัญชี)</h3>
+    <h3 style="margin-top:4px;">ส่งเอกสาร (บัญชี)</h3>
     <div class="helper">ใช้เมนูนี้เมื่อคุณเป็นคนคีย์เอกสารเองและต้องการอนุมัติขั้นนักบัญชีในตัวเลย — เอกสารจะถูกส่งตรงไปที่ "รอผู้ตรวจสอบ" ทันที ไม่ต้องเข้าไปกดอนุมัติซ้ำอีกรอบ (ถ้าอยากให้คนอื่นตรวจ SAP/Vendor ให้ก่อน ใช้เมนู "วางบิลเอกสาร" ปกติแทน)</div>
     <hr class="div">
     <form onsubmit="submitApproveOwn(event)">
@@ -3562,7 +3562,7 @@ function saOwnAmountIssues_(){
   }
   return issues;
 }
-// Preview the approval summary from what is currently typed in the วางบิล (นักบัญชี) form — nothing is saved or sent.
+// Preview the approval summary from what is currently typed in the ส่งเอกสาร (บัญชี) form — nothing is saved or sent.
 function previewSaOwnReport(){
   const form = document.querySelector('form'); if(!form) return;
   const f = new FormData(form);
