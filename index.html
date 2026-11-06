@@ -390,6 +390,9 @@ function docSeqNum(id){
 // ---- Aging (display only, nothing stored): days since the document was created, for documents still in the flow
 function canSeeAging_(){ return !!state.user && (isAdmin() || ['นักบัญชี','ผู้ตรวจสอบ','ผู้อนุมัติ'].indexOf(state.user.role)!==-1); }
 function isPendingDoc_(d){ const st = d.status||''; return st!=='Complete' && st!=='ยกเลิก'; }
+// New approval-summary layout (Text column, bank on the subtotal row) applies only to documents created after the
+// server's cutover time (set the first time the new Code.gs runs). Older documents keep the old layout so saved pen marks stay in place.
+function useNewReportLayout_(d){ return !!(state.layoutCutover && docCreatedMs_(d) >= state.layoutCutover); }
 function docCreatedMs_(d){
   const v = d.createdDate; if(!v) return 8.64e15;
   const dt = parseThaiDateStr(v) || new Date(v);
@@ -1106,6 +1109,7 @@ function applyBootstrap_(data){
     state.docTypes = (data.docTypes || []).map(t=>({ ...t, autoComplete: (t.autoComplete===true||t.autoComplete==='TRUE'||t.autoComplete==='true'), viaPayment: (t.viaPayment===true||t.viaPayment==='TRUE'||t.viaPayment==='true'), receivable: (t.receivable===true||t.receivable==='TRUE'||t.receivable==='true'), skipFin: (String(t.skipFin).toUpperCase()==='TRUE' ? true : (String(t.skipFin).toUpperCase()==='FALSE' ? false : undefined)) }));
     state.approvalMappings = (data.approvalMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     state.appSettings = data.appSettings || {};
+    if(data.layoutCutover) state.layoutCutover = Number(data.layoutCutover) || 0;
     state.paymentAccounts = (data.paymentAccounts || []).map(a=>({ ...a, companyCode:String(a.companyCode), accountNo:String(a.accountNo), reviewerId:String(a.reviewerId||''), approverId:String(a.approverId||'') }));
     state.paymentMappings = (data.paymentMappings || []).map(mp=>({ ...mp, companyCode:String(mp.companyCode) }));
     }
@@ -1397,6 +1401,7 @@ function gatherCurrentSapLinesFromDOM(docId){
     const taxEl = document.getElementById('sapline-tax-'+docId+'-'+i);
     const fiDocEl = document.getElementById('sapline-fidoc-'+docId+'-'+i);
     const webDocNoEl = document.getElementById('sapline-webdocno-'+docId+'-'+i);
+    const textEl = document.getElementById('sapline-text-'+docId+'-'+i);
     const vendorEl = document.getElementById('sapline-vendor-'+docId+'-'+i);
     const vendorNameEl = document.getElementById('sapline-vendorname-'+docId+'-'+i);
     return Object.assign({}, l, {
@@ -1407,6 +1412,7 @@ function gatherCurrentSapLinesFromDOM(docId){
       taxCode: taxEl ? taxEl.value : (l.taxCode||''),
       fiDoc: fiDocEl ? fiDocEl.value.trim() : (l.fiDoc||''),
       webDocNo: webDocNoEl ? webDocNoEl.value.trim() : (l.webDocNo||''),
+      text: textEl ? textEl.value.trim() : (l.text||''),
       vendor: vendorEl ? vendorEl.value.trim() : (l.vendor||''),
       vendorName: vendorNameEl ? vendorNameEl.value.trim() : (l.vendorName||''),
     });
@@ -1435,6 +1441,7 @@ async function saveSapLinesToDoc(docId, lines){
     patch.sapLines = '';
     patch.docSAP = l.fiDoc || doc.docSAP || '';
     patch.webDocNo = l.webDocNo || doc.webDocNo || '';
+    patch.sapText = l.text || doc.sapText || '';
     patch.vendor = l.vendor || doc.vendor || '';
     patch.vendorName = l.vendorName || doc.vendorName || '';
     patch.vatAmount = (parseFloat(l.vat)||0).toFixed(2);
@@ -1470,6 +1477,7 @@ async function addSapLineInline(docId){
       subId: docId+'-1',
       fiDoc: doc.docSAP || '',
       webDocNo: (webDocNoEl ? webDocNoEl.value.trim() : '') || doc.webDocNo || '',
+      text: doc.sapText || '',
       vendor: doc.vendor || '',
       vendorName: doc.vendorName || '',
       vat: readAmt('amt-vatAmount-'+docId, doc.vatAmount),
@@ -1478,11 +1486,11 @@ async function addSapLineInline(docId){
       net: readAmt('amt-netAmount-'+docId, doc.netAmount),
       taxCode: doc.taxCode || '',
     };
-    const line2 = { subId: docId+'-2', fiDoc:'', webDocNo:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' };
+    const line2 = { subId: docId+'-2', fiDoc:'', webDocNo:'', text:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' };
     lines = [line1, line2];
   } else {
     lines = gatherCurrentSapLinesFromDOM(docId); // preserve any pending unsaved edits before adding
-    lines.push({ subId:'', fiDoc:'', webDocNo:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' });
+    lines.push({ subId:'', fiDoc:'', webDocNo:'', text:'', vendor:'', vendorName:'', vat:0, wht:0, base:0, net:0, taxCode:'' });
   }
   await saveSapLinesToDoc(docId, lines);
 }
@@ -1519,10 +1527,12 @@ function saveSapLineDetailsLocal(docId, idx){
   if(!lines[idx]) return;
   const fiDocEl = document.getElementById('sapline-fidoc-'+docId+'-'+idx);
   const webDocNoEl = document.getElementById('sapline-webdocno-'+docId+'-'+idx);
+  const textEl2 = document.getElementById('sapline-text-'+docId+'-'+idx);
   const vendorEl = document.getElementById('sapline-vendor-'+docId+'-'+idx);
   const vendorNameEl = document.getElementById('sapline-vendorname-'+docId+'-'+idx);
   if(fiDocEl) lines[idx].fiDoc = fiDocEl.value.trim();
   if(webDocNoEl) lines[idx].webDocNo = webDocNoEl.value.trim();
+  if(textEl2) lines[idx].text = textEl2.value.trim();
   if(vendorEl) lines[idx].vendor = vendorEl.value.trim();
   if(vendorNameEl) lines[idx].vendorName = vendorNameEl.value.trim();
   doc.sapLines = JSON.stringify(lines); // kept in memory only until the explicit Save button runs
@@ -2352,7 +2362,7 @@ function sidebarHTML(){
   const nav = [];
   nav.push(navItem('dashboard','แดชบอร์ด'));
   if(canSubmitBill()) nav.push(navItem('submit','วางบิลเอกสาร'));
-  if(['นักบัญชี','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
+  if(['นักบัญชี','ผู้ตรวจสอบ','เจ้าหน้าที่การเงิน','Admin'].includes(state.user.role)) nav.push(navItem('submitApproveOwn','วางบิล (นักบัญชี)'));
   if(state.user.role!=='เจ้าหน้าที่การเงิน' && canSeeTracking_()) nav.push(navItem('tracking','Tracking Invoice'));
   if(canSeeApproval()){
     const approvalTotalPending = accountingPendingCountForUser() + pvPendingCountForUser();
@@ -3113,6 +3123,7 @@ function submitApproveOwnHTML(){
       <div class="form-grid">
         <div class="field"><label>Document SAP</label><input type="text" name="docSAP" id="saown-docSAP" placeholder="ระบุเลขที่ SAP" required></div>
         <div class="field"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input type="text" name="webDocNo" id="saown-webDocNo" placeholder="เช่น EXP1160260211R0012"></div>
+        <div class="field"><label>Text <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ — แสดงในใบสรุป ถ้าไม่กรอกจะใช้ชื่อเอกสาร)</span></label><input type="text" name="sapText" id="saown-sapText" placeholder="เช่น ข้อความจาก SAP (คอลัมน์ Text)"></div>
       </div>
 
       <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ผู้รับเงิน</div>
@@ -3152,7 +3163,7 @@ function submitApproveOwnHTML(){
         <span>รายการ SAP แยกย่อย (Sub ID) <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">— ถ้าเอกสารนี้ถูกตัดเป็นหลาย FI Doc</span></span>
         <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์ Excel สรุปการจ่าย (แถวสีเหลือง = ยอดรวมรายเจ้าหนี้) ระบบสรุปเป็น 1 บรรทัดต่อ Vendor แล้วให้ตรวจสอบก่อนนำเข้า">⬆ อัปโหลด Excel สรุปรายเจ้าหนี้<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadSaOwnExcel(event)"></label>
-          <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์ Export จาก SAP (Document Number / Account / Supplier Name / Tax Code / Text ...) — ช่อง Text จะไปกรอก Web Doc No.">⬆ From SAP<input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="uploadSaOwnFromSap(event)"></label>
+          <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์ Export จาก SAP (Document Number / Account / Supplier Name / Tax Code / Text ...) — คอลัมน์ Text จะไปกรอกช่อง Text">⬆ From SAP<input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="uploadSaOwnFromSap(event)"></label>
           <label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="อัปโหลดไฟล์รายงาน Journal Voucher จาก EWF (มี Web Doc Number) — 1 FI Doc = 1 บรรทัด (1 Sub ID)">⬆ อัพโหลด EWF<input type="file" accept=".xlsx,.xls" style="display:none;" onchange="uploadSaOwnEwf(event)"></label>
           <button type="button" class="btn btn-sm btn-outline" onclick="addSaOwnSapLine()">+ เพิ่มรายการ SAP</button>
         </span>
@@ -3312,6 +3323,7 @@ function saOwnSapLineRowHTML(l, i){
     <td class="mono" style="text-align:center;">${i+1}</td>
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-fidoc-${i}" value="${l.fiDoc||''}" placeholder="FI Doc"></td>
     <td><input type="text" class="sap-input" style="width:140px;" id="saownsap-webdocno-${i}" value="${l.webDocNo||''}" placeholder="Web Doc No."></td>
+    <td><input type="text" class="sap-input" style="width:170px;" id="saownsap-text-${i}" value="${(String(l.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'))}" placeholder="Text"></td>
     <td><input type="text" class="sap-input" style="width:110px;" id="saownsap-vendor-${i}" list="saown-vendor-dl" value="${l.vendor||''}" oninput="onSaOwnSapLineVendorInput(${i})" placeholder="Vendor"></td>
     <td style="white-space:nowrap;"><input type="text" class="sap-input" style="width:132px;" id="saownsap-vendorname-${i}" value="${l.vendorName||''}" placeholder="Vendor Name" oninput="updateSaOwnPayTypeFlags_()"><b class="pt-flag" id="saownsap-ptflag-${i}" title="ประเภทการจ่ายตามธนาคารของ Vendor (1 = Direct / 2 = Media)" style="color:#A83A2C;margin-left:5px;font-size:13px;"></b></td>
     <td><input type="text" inputmode="decimal" class="sap-input" style="width:85px;text-align:right;" id="saownsap-vat-${i}" value="${money(l.vat)}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnSapLineAmtBlur(${i})"></td>
@@ -3358,6 +3370,7 @@ function saOwnSapLinesContainerHTML(){
         <th style="padding:4px;"></th>
         <th style="text-align:left;padding:4px;">FI Doc</th>
         <th style="text-align:left;padding:4px;">Web Doc No.</th>
+        <th style="text-align:left;padding:4px;">Text</th>
         <th style="text-align:left;padding:4px;">Vendor</th>
         <th style="text-align:left;padding:4px;">Vendor Name</th>
         <th style="text-align:right;padding:4px;">VAT Amt</th>
@@ -3393,6 +3406,7 @@ function gatherSaOwnSapLinesFromDOM(){
     return {
       fiDoc: (get('fidoc')||'').trim(),
       webDocNo: (get('webdocno')||'').trim(),
+      text: (get('text')||'').trim(),
       vendor: (get('vendor')||'').trim(),
       vendorName: (get('vendorname')||'').trim(),
       taxCode: get('tax')||'',
@@ -3410,6 +3424,7 @@ function addSaOwnSapLine(){
     const line1 = {
       fiDoc: (val('saown-docSAP')||'').trim(),
       webDocNo: (val('saown-webDocNo')||'').trim(),
+      text: (val('saown-sapText')||'').trim(),
       vendor: (val('saown-vendor')||'').trim(),
       vendorName: (val('saown-vendorName')||'').trim(),
       taxCode: val('saown-taxCode')||'',
@@ -3418,10 +3433,10 @@ function addSaOwnSapLine(){
       base: parseFloat(unformatMoney(val('saown-baseAmount')))||0,
       net: parseFloat(unformatMoney(val('saown-netAmount')))||0,
     };
-    const line2 = { fiDoc:'', webDocNo:'', vendor:'', vendorName:'', taxCode:'', vat:0, wht:0, base:0, net:0 };
+    const line2 = { fiDoc:'', webDocNo:'', text:'', vendor:'', vendorName:'', taxCode:'', vat:0, wht:0, base:0, net:0 };
     lines = [line1, line2];
   } else {
-    lines.push({ fiDoc:'', webDocNo:'', vendor:'', vendorName:'', taxCode:'', vat:0, wht:0, base:0, net:0 });
+    lines.push({ fiDoc:'', webDocNo:'', text:'', vendor:'', vendorName:'', taxCode:'', vat:0, wht:0, base:0, net:0 });
   }
   state.saOwnSapLines = lines;
   refreshSaOwnSapLineContainer();
@@ -3559,7 +3574,7 @@ function previewSaOwnReport(){
     id: co + '-ตัวอย่าง', docType: f.get('docType')||'', docName: f.get('docName')||'(ยังไม่ได้ตั้งชื่อ)', companyCode: co,
     createdBy: fullName(state.user), createdDate: new Date().toISOString().slice(0,10), dueDate: f.get('dueDate')||'',
     status: 'ร่าง — ตัวอย่างก่อนส่ง (ยังไม่ได้บันทึก)', historyLog: '[]',
-    docSAP: (f.get('docSAP')||'').trim(), webDocNo: (f.get('webDocNo')||'').trim(),
+    docSAP: (f.get('docSAP')||'').trim(), webDocNo: (f.get('webDocNo')||'').trim(), sapText: (f.get('sapText')||'').trim(),
     vendor: (f.get('vendor')||'').trim(), vendorName: (f.get('vendorName')||'').trim(), payType: f.get('payType')||'',
     vatAmount: unformatMoney(f.get('vatAmount')||''), whtAmount: unformatMoney(f.get('whtAmount')||''),
     baseAmount: unformatMoney(f.get('baseAmount')||''), netAmount: unformatMoney(f.get('netAmount')||''), taxCode: f.get('taxCode')||'',
@@ -4139,7 +4154,7 @@ function parseFromSapSheet_(aoa){
     else if(/7$/.test(tax)){ base=r2(gross/1.07); vat=r2(gross-base); }
     else if(/^VX$/i.test(tax)){ base=gross; }
     if(net0<0){ base=base?-base:0; vat=vat?-vat:0; }
-    lines.push({ fiDoc:fi, webDocNo:String(idx.text!=null&&row[idx.text]!=null?row[idx.text]:'').trim(), vendor:String(idx.vendor!=null&&row[idx.vendor]!=null?row[idx.vendor]:'').trim(), vendorName:String(idx.name!=null&&row[idx.name]!=null?row[idx.name]:'').trim(), taxCode:tax, vat:vat, wht:wht, base:base, net:r2(net0-wht) });
+    lines.push({ fiDoc:fi, webDocNo:'', text:String(idx.text!=null&&row[idx.text]!=null?row[idx.text]:'').trim(), vendor:String(idx.vendor!=null&&row[idx.vendor]!=null?row[idx.vendor]:'').trim(), vendorName:String(idx.name!=null&&row[idx.name]!=null?row[idx.name]:'').trim(), taxCode:tax, vat:vat, wht:wht, base:base, net:r2(net0-wht) });
   }
   return lines;
 }
@@ -4159,7 +4174,7 @@ function uploadSaOwnFromSap(e){
       }
       e.target.value='';
       if(!lines){ if(st) st.textContent='อ่านไฟล์ From SAP ไม่ได้'; showInfoModal('อ่านไฟล์ From SAP ไม่ได้','<div style="font-size:13px;margin-bottom:10px;">ไม่พบหัวคอลัมน์ <b>Document Number</b> และ <b>Amount in Doc. Curr.</b> ในไฟล์ <b>'+file.name.replace(/</g,'&lt;')+'</b><br>(ถ้าไฟล์ติด Sensitivity Label / เข้ารหัส ให้ Save As เป็นไฟล์ใหม่แบบไม่เข้ารหัสก่อน)</div><div style="text-align:right;"><button class="btn btn-sm btn-outline" onclick="hideBusyOverlay()">ปิด</button></div>'); return; }
-      const keep = gatherSaOwnSapLinesFromDOM().filter(l=>l.fiDoc||l.webDocNo||l.vendor||l.net||l.base);
+      const keep = gatherSaOwnSapLinesFromDOM().filter(l=>l.fiDoc||l.webDocNo||l.text||l.vendor||l.net||l.base);
       const have = {}; keep.forEach(l=>{ if(l.fiDoc) have[l.fiDoc]=1; });
       const fresh = lines.filter(l=>!have[l.fiDoc]); const dup = lines.length-fresh.length;
       if(st) st.textContent = 'อ่านไฟล์ From SAP แล้ว: '+file.name+' ('+lines.length+' รายการ)';
@@ -4170,8 +4185,8 @@ function uploadSaOwnFromSap(e){
       fillVendorNamesFromMaster_(all, currentFormCompany_());
       state.saOwnSapLines = all; refreshSaOwnSapLineContainer(); recomputeSaOwnSapTotalsLive();
       const setVal = (id, v) => { const el = document.getElementById(id); if(el){ el.value = v; el.dispatchEvent(new Event('input')); } };
-      const f = all[0]; setVal('saown-docSAP', f.fiDoc); setVal('saown-webDocNo', f.webDocNo); setVal('saown-vendor', f.vendor); setVal('saown-vendorName', f.vendorName);
-      showToast('นำเข้าจาก SAP '+fresh.length+' รายการแล้ว — ช่อง Text ถูกใส่ใน Web Doc No. ตรวจสอบก่อนกดส่ง');
+      const f = all[0]; setVal('saown-docSAP', f.fiDoc); setVal('saown-sapText', f.text||''); setVal('saown-vendor', f.vendor); setVal('saown-vendorName', f.vendorName);
+      showToast('นำเข้าจาก SAP '+fresh.length+' รายการแล้ว — ค่าคอลัมน์ Text ถูกใส่ในช่อง Text ตรวจสอบก่อนกดส่ง');
     }catch(err){ if(st) st.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message; }
   };
   reader.readAsArrayBuffer(file);
@@ -4343,19 +4358,6 @@ async function submitApproveOwn(e){
     vendor: vendorVal, vendorName: vendorNameVal, netAmount,
     createdBy, createdDate: new Date().toISOString().slice(0,10),
   };
-  const res1 = await apiCall('addDocument', basicPayload);
-  if(!res1.success){
-    hideBusyOverlay();
-    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
-    if(res1.error === 'duplicate_submission'){
-      const idText = res1.duplicateId ? ' อ้างอิง ID เลขที่ '+displayId(res1.duplicateId) : '';
-      showToast('มีการบันทึกวางบิลเอกสารนี้ไปแล้ว'+idText+' — ระบบป้องกันไม่ให้วางบิลซ้ำ ถ้าตั้งใจส่งจริงๆ กรุณารอสักครู่แล้วลองใหม่', 5000);
-      return;
-    }
-    showToast('วางบิลไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
-  }
-
-  const newId = res1.id;
   const note = (f.get('note')||'').trim();
   const skipApprover = !!document.getElementById('saown-skipApprover').checked;
   const skipFinance = typeSkipLocked_(f.get('docType')) ? typeSkipFinance_(f.get('docType')) : (!!e.target.querySelector('input[name="skipFinance"]').checked);
@@ -4366,8 +4368,7 @@ async function submitApproveOwn(e){
     historyEntries.push({ stage:'ผู้ตรวจสอบ', actor: createdBy, date: nowStr(), note: 'ข้ามโดยนักบัญชี เหตุผล: '+skipReviewerReason, action:'skip_reviewer' });
   }
   const patch = {
-    id: newId,
-    docSAP: sapVal, webDocNo: (f.get('webDocNo')||'').trim(),
+    docSAP: sapVal, webDocNo: (f.get('webDocNo')||'').trim(), sapText: (f.get('sapText')||'').trim(),
     vendor: vendorVal, vendorName: vendorNameVal,
     vatAmount: unformatMoney(f.get('vatAmount')||''), whtAmount: unformatMoney(f.get('whtAmount')||''),
     baseAmount: unformatMoney(f.get('baseAmount')||''), netAmount,
@@ -4400,7 +4401,7 @@ async function submitApproveOwn(e){
   // one go alongside the self-approval instead of as a separate save afterwards.
   const saOwnLines = gatherSaOwnSapLinesFromDOM();
   if(saOwnLines.length >= 2){
-    saOwnLines.forEach((l,i)=>{ l.subId = newId+'-'+(i+1); });
+    saOwnLines.forEach((l,i)=>{ l.subId = ''; }); // server fills <docId>-1, -2 ... once it has issued the ID
     const sums = saOwnLines.reduce((t,l)=>({vat:t.vat+(parseFloat(l.vat)||0), wht:t.wht+(parseFloat(l.wht)||0), base:t.base+(parseFloat(l.base)||0), net:t.net+(parseFloat(l.net)||0)}), {vat:0,wht:0,base:0,net:0});
     patch.sapLines = JSON.stringify(saOwnLines);
     patch.vatAmount = sums.vat.toFixed(2);
@@ -4408,10 +4409,21 @@ async function submitApproveOwn(e){
     patch.baseAmount = sums.base.toFixed(2);
     patch.netAmount = sums.net.toFixed(2);
   }
-  const res2 = await apiCall('updateDocument', patch);
+  const res1 = await apiCall('addDocument', Object.assign({}, basicPayload, patch));
+  if(!res1.success){
+    hideBusyOverlay();
+    if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
+    if(res1.error === 'duplicate_submission'){
+      const idText = res1.duplicateId ? ' อ้างอิง ID เลขที่ '+displayId(res1.duplicateId) : '';
+      showToast('มีการบันทึกวางบิลเอกสารนี้ไปแล้ว'+idText+' — ระบบป้องกันไม่ให้วางบิลซ้ำ ถ้าตั้งใจส่งจริงๆ กรุณารอสักครู่แล้วลองใหม่', 5000);
+      return;
+    }
+    showToast('วางบิลไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
+  }
+
+  const newId = res1.id;
   hideBusyOverlay();
   if(submitBtn){ submitBtn.disabled = false; submitBtn.textContent = '✓ ส่งเข้าสู่กระบวนการอนุมัติ'; }
-  if(!res2.success){ showToast('บันทึกสำเร็จบางส่วน (สร้างเอกสาร '+displayId(newId)+' แล้ว แต่บันทึกขั้นนักบัญชีไม่สำเร็จ) กรุณาเข้าไปแก้ไขที่หน้าอนุมัติเอกสารแทน'); await refreshData({light:true}); render(); return; }
   ensureVendorsInMaster_(companyCode, [{code:vendorVal, name:vendorNameVal}].concat(saOwnLines.map(l=>({code:l.vendor, name:l.vendorName}))));
   noticeBox_('วางบิลและอนุมัติขั้นนักบัญชีเรียบร้อย', displayId(newId), 'ยืนยัน Tracking Invoice ให้อัตโนมัติ เนื่องจากเอกสารต้นฉบับอยู่ที่แผนกบัญชีแล้ว\nกรุณาจดเลข ID ไว้อ้างอิง', 5);
   e.target.reset();
@@ -4874,6 +4886,7 @@ function accountingApprovalHTML(mode){
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
               <div class="sap-wrap"><label>FI Doc Number</label><input class="sap-input" id="sapline-fidoc-${d.id}-${i}" type="text" value="${l.fiDoc||''}" style="width:140px;"></div>
               <div class="sap-wrap"><label>Web Doc No. <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="sapline-webdocno-${d.id}-${i}" type="text" value="${l.webDocNo||''}" style="width:150px;"></div>
+              <div class="sap-wrap"><label>Text <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ไม่บังคับ)</span></label><input class="sap-input" id="sapline-text-${d.id}-${i}" type="text" value="${(String(l.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'))}" style="width:190px;"></div>
               <div class="sap-wrap">
                 <label>Vendor <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(ค้นหาได้)</span></label>
                 <input class="sap-input" id="sapline-vendor-${d.id}-${i}" list="sapline-vendor-dl-${d.id}-${i}" type="text" value="${l.vendor||''}" oninput="onSapLineVendorInput('${d.id}',${i})" style="width:170px;">
@@ -5164,6 +5177,8 @@ function openApprovalReport(id, draft){
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
   const fmt = str => { if(!str) return '-'; const dt = parseThaiDateStr(str); return fmtDate(dt || str); };
   const num = v => parseFloat(v)||0;
+  const NL_ = useNewReportLayout_(d);
+  const esc_ = t => String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   let history = [];
   try{ history = d.historyLog ? JSON.parse(d.historyLog) : []; }catch(e){ history = []; }
@@ -5254,8 +5269,8 @@ function openApprovalReport(id, draft){
       <div><span class="label">Due:</span> <b>${fmt(d.dueDate)}</b></div>
     </div>
     <table class="data">
-      <colgroup><col style="width:5%"><col style="width:5%"><col style="width:6.5%"><col style="width:8.5%"><col style="width:4.5%"><col style="width:5%"><col style="width:7.5%"><col style="width:5.5%"><col style="width:6.5%"><col style="width:7.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8.5%"></colgroup>
-      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th><th>ชื่อเอกสาร</th><th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th><th>ประเภทการจ่าย</th><th>เลขที่บัญชี</th><th>ธนาคาร</th><th style="text-align:right;">Base Amt</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">Total Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
+      ${NL_ ? '<colgroup><col style="width:5%"><col style="width:5%"><col style="width:8.5%"><col style="width:6%"><col style="width:6%"><col style="width:13%"><col style="width:20%"><col style="width:6.5%"><col style="width:7.5%"><col style="width:6%"><col style="width:7.5%"><col style="width:6%"><col style="width:7.5%"></colgroup>' : '<colgroup><col style="width:5%"><col style="width:5%"><col style="width:6.5%"><col style="width:8.5%"><col style="width:4.5%"><col style="width:5%"><col style="width:7.5%"><col style="width:5.5%"><col style="width:6.5%"><col style="width:7.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8%"><col style="width:6.5%"><col style="width:8.5%"></colgroup>'}
+      <thead><tr><th>ID</th><th>ประเภทเอกสาร</th>${NL_?'':'<th>ชื่อเอกสาร</th>'}<th>SAP</th><th>Web Doc No.</th><th>Vendor</th><th>Vendor Name</th>${NL_?'<th>Text</th>':''}<th>ประเภทการจ่าย</th>${NL_?'':'<th>เลขที่บัญชี</th><th>ธนาคาร</th>'}<th style="text-align:right;">Base Amt</th><th style="text-align:right;">VAT Amt</th><th style="text-align:right;">Total Amt</th><th style="text-align:right;">WHT Amt</th><th style="text-align:right;">ยอดจ่ายสุทธิ</th></tr></thead>
       <tbody>
         ${(function(){
           const lines = parseSapLines(d);
@@ -5263,34 +5278,35 @@ function openApprovalReport(id, draft){
           if(lines.length>1){
             rows = lines.map(l=>{
               const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
-              return {id:displayId(l.subId||d.id), sap:l.fiDoc, web:l.webDocNo||d.webDocNo, vendor:l.vendor, vname:l.vendorName,
+              return {id:displayId(l.subId||d.id), sap:l.fiDoc, web:l.webDocNo||d.webDocNo, text:l.text||'', vendor:l.vendor, vname:l.vendorName,
                       acct:vRec&&vRec.bankAccount, bank:vRec&&vRec.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net)};
             });
           } else {
-            rows = [{id:displayId(d.id), sap:d.docSAP, web:d.webDocNo, vendor:d.vendor, vname:d.vendorName,
+            rows = [{id:displayId(d.id), sap:d.docSAP, web:d.webDocNo, text:d.sapText||'', vendor:d.vendor, vname:d.vendorName,
                      acct:vendorBankAccountFor(d), bank:vendorBankNameFor(d), vat:num(d.vatAmount), wht:num(d.whtAmount), base:num(d.baseAmount), net:num(d.netAmount)}];
           }
           const rowHTML = r => `
         <tr>
           <td>${r.id}</td>
           <td>${docTypeInfo(d.docType).label}</td>
-          <td>${d.docName||'-'}</td>
+          ${NL_ ? '' : `<td>${d.docName||'-'}</td>`}
           <td>${r.sap||'-'}</td>
           <td>${r.web||'-'}</td>
           <td>${r.vendor||'-'}</td>
           <td>${r.vname||'-'}</td>
+          ${NL_ ? `<td>${esc_(r.text||d.docName||'-')}</td>` : ''}
           <td>${payTypeLabel(d.payType)}</td>
-          <td>${r.acct||'-'}</td>
-          <td>${r.bank||'-'}</td>
+          ${NL_ ? '' : `<td>${r.acct||'-'}</td><td>${r.bank||'-'}</td>`}
           <td class="n">${money(r.base)}</td>
           <td class="n">${money(r.vat)}</td>
           <td class="n">${money(r.base+r.vat)}</td>
           <td class="n">${money(r.wht)}</td>
           <td class="n"><b>${money(r.net)}</b></td>
         </tr>`;
+          const bankTxt = r => (r.bank||r.acct) ? ' · '+(r.bank?esc_(r.bank)+' ':'')+(r.acct?'เลขที่บัญชี '+esc_(r.acct):'') : '';
           const sum = rs => rs.reduce((t,r)=>({vat:t.vat+r.vat,wht:t.wht+r.wht,base:t.base+r.base,net:t.net+r.net}),{vat:0,wht:0,base:0,net:0});
           const totHTML = (cls,label,t) => `
-        <tr class="${cls}"><td colspan="10" class="tl">${label}</td>
+        <tr class="${cls}"><td colspan="${NL_?8:10}" class="tl">${label}</td>
           <td class="n">${money(t.base)}</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.base+t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.net)}</td></tr>`;
           // group rows by Vendor (first-appearance order), subtotal under each group, grand total at the end
           const order = [], groups = {};
@@ -5299,9 +5315,9 @@ function openApprovalReport(id, draft){
           order.forEach(k=>{
             const g = groups[k];
             out += g.map(rowHTML).join('');
-            if(order.length>1) out += totHTML('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)', sum(g));
+            if(order.length>1) out += totHTML('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)'+(NL_?bankTxt(g[0]):''), sum(g));
           });
-          out += totHTML('grand', 'Total ('+rows.length+' รายการ)', sum(rows));
+          out += totHTML('grand', 'Total ('+rows.length+' รายการ)'+((NL_ && order.length===1)?bankTxt(rows[0]):''), sum(rows));
           return out;
         })()}
       </tbody>
