@@ -444,6 +444,17 @@ function amountMismatchHTML(base, vat, wht, net){
 }
 /* Tax Code: V7 and D7 both = VAT 7% (Base = Net x 100/107, VAT = Net - Base); VX = no VAT */
 function isVat7Code_(c){ return c==='V7' || c==='D7'; }
+// Tax Code set back to "— เลือก —": no VAT split any more -> VAT 0, Base = old Base + VAT, WHT (if a rate is selected) and Net follow.
+function resetTaxEls_(baseEl, vatEl, whtEl, netEl, rateVal){
+  const b = parseFloat(unformatMoney(baseEl?baseEl.value:0))||0, v = parseFloat(unformatMoney(vatEl?vatEl.value:0))||0;
+  const gross = Math.round((b+v)*100)/100;
+  const w = rateVal ? whtFromRate_(gross, parseFloat(rateVal)) : (parseFloat(unformatMoney(whtEl?whtEl.value:0))||0);
+  if(baseEl) baseEl.value = formatMoney(gross);
+  if(vatEl) vatEl.value = formatMoney(0);
+  if(whtEl && rateVal) whtEl.value = formatMoney(w);
+  if(netEl) netEl.value = formatMoney(netFrom_(gross, 0, w));
+  return { base:gross, vat:0, wht:w, net:netFrom_(gross, 0, w) };
+}
 function taxSplit_(taxCode, net){
   if(isVat7Code_(taxCode)){
     const base = Math.round(net*100/107*100)/100;
@@ -486,12 +497,11 @@ async function amtInputBlur(el, id, field){
   }
   updateAmountHints(id);
 }
-async function applyWhtRate(id, rate){
-  if(!rate) return;
+async function applyWhtRate(id, rate){ // blank rate = back to 'not selected': WHT 0
   const baseEl = document.getElementById('amt-baseAmount-'+id);
   const whtEl = document.getElementById('amt-whtAmount-'+id);
   if(!baseEl || !whtEl) return;
-  const wht = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  const wht = rate ? whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate)) : 0;
   whtEl.value = formatMoney(wht);
   // Net (ยอดจ่ายสุทธิ) follows: Base + VAT - WHT
   const vatEl = document.getElementById('amt-vatAmount-'+id), netEl = document.getElementById('amt-netAmount-'+id);
@@ -664,7 +674,11 @@ async function applyTaxCalc(id){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
   const patch = { id, taxCode };
-  if(taxCode && netEl){
+  if(!taxCode){
+    const rs0 = document.getElementById('whtRate-'+id), whtEl0 = document.getElementById('amt-whtAmount-'+id);
+    const r0 = resetTaxEls_(baseEl, vatEl, whtEl0, netEl, rs0 ? rs0.value : '');
+    patch.baseAmount = r0.base.toFixed(2); patch.vatAmount = '0.00'; patch.whtAmount = r0.wht.toFixed(2); patch.netAmount = r0.net.toFixed(2);
+  } else if(taxCode && netEl){
     const rs = document.getElementById('whtRate-'+id), whtEl = document.getElementById('amt-whtAmount-'+id);
     const rateOn = !!(rs && rs.value && whtEl);
     // with a WHT rate selected the Net on screen is already "after WHT" — rebuild the gross first so Base/VAT stay right
@@ -1297,11 +1311,10 @@ function sapLineAmtInput(docId, idx, field, value){
   return `<input type="text" inputmode="decimal" id="sapline-${field}-${docId}-${idx}" class="sap-input" style="width:95px;text-align:right;" value="${display}" placeholder="0.00" onfocus="this.value=unformatMoney(this.value)" onblur="sapLineAmtLocalUpdate(this,'${docId}',${idx},'${field}')">`;
 }
 function applySapLineWhtRate(docId, idx, rate){
-  if(!rate) return;
   const baseEl = document.getElementById('sapline-base-'+docId+'-'+idx);
   const whtEl = document.getElementById('sapline-wht-'+docId+'-'+idx);
   if(!baseEl || !whtEl) return;
-  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  const w = rate ? whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate)) : 0;
   whtEl.value = formatMoney(w);
   const vEl = document.getElementById('sapline-vat-'+docId+'-'+idx), nEl = document.getElementById('sapline-net-'+docId+'-'+idx);
   if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
@@ -1526,7 +1539,11 @@ function saveSapLineDetailsLocal(docId, idx){
 function applySapLineTaxCalcLocal(docId, idx, taxCode){
   // local-only, mirrors sapLineAmtLocalUpdate — computes Base/VAT from Net right in the
   // browser and only marks the row unsaved; the actual save happens via the Save button
-  if(!taxCode) return;
+  if(!taxCode){
+    const g = id => document.getElementById(id), rs0 = g('sapline-whtrate-'+docId+'-'+idx);
+    resetTaxEls_(g('sapline-base-'+docId+'-'+idx), g('sapline-vat-'+docId+'-'+idx), g('sapline-wht-'+docId+'-'+idx), g('sapline-net-'+docId+'-'+idx), rs0 ? rs0.value : '');
+    recomputeSapLineTotalsLive(docId); updateSapLineHints(docId, idx); markSapLinesUnsaved(docId); return;
+  }
   const netEl = document.getElementById('sapline-net-'+docId+'-'+idx);
   const rs = document.getElementById('sapline-whtrate-'+docId+'-'+idx), wEl = document.getElementById('sapline-wht-'+docId+'-'+idx);
   const rateOn = !!(rs && rs.value && wEl);
@@ -3110,7 +3127,7 @@ function submitApproveOwnHTML(){
         ${PAY_TYPES.map((t,i)=>`<label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="payType" value="${t[0]}" ${i===0?'required':''} onchange="updateSaOwnPayTypeFlags_()"> ${t[1]}</label>`).join('')}
       </div>
 
-      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ยอดเงิน</div>
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);margin:16px 0 8px;">ยอดเงิน <span style="text-transform:none;letter-spacing:0;font-weight:400;font-size:12px;color:var(--ink-soft);">(เริ่มจากกรอก <b style="color:var(--navy);">ยอดจ่ายสุทธิ</b> ตามด้วยเลือก Tax Code และ Rate WHT ตามลำดับ — ระบบคำนวณ Base / VAT / WHT ให้ทันทีบนหน้าจอ)</span></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <div class="field"><label>VAT Amt</label><input type="text" inputmode="decimal" name="vatAmount" id="saown-vatAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"></div>
         <div class="field"><label>WHT Amt</label><input type="text" inputmode="decimal" name="whtAmount" id="saown-whtAmount" placeholder="0.00" style="width:100px;text-align:right;" onfocus="this.value=unformatMoney(this.value)" onblur="saOwnAmtBlur(this)"><div id="saown-wht-hint"></div></div>
@@ -3205,10 +3222,9 @@ function onSaOwnVendorInput(){
   }
 }
 function applySaOwnWhtRate(rate){
-  if(!rate) return;
   const baseEl = document.getElementById('saown-baseAmount'), whtEl = document.getElementById('saown-whtAmount');
   if(!baseEl || !whtEl) return;
-  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  const w = rate ? whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate)) : 0;
   whtEl.value = formatMoney(w);
   const vEl = document.getElementById('saown-vatAmount'), nEl = document.getElementById('saown-netAmount');
   if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
@@ -3265,7 +3281,11 @@ function updateSaOwnHints(){
   if(rs) rs.value = whtRateSelectedFor_(base, wht);
 }
 function applySaOwnTaxCalc(taxCode){
-  if(!taxCode) return;
+  if(!taxCode){
+    const g = id => document.getElementById(id), rs0 = g('saown-whtRate');
+    resetTaxEls_(g('saown-baseAmount'), g('saown-vatAmount'), g('saown-whtAmount'), g('saown-netAmount'), rs0 ? rs0.value : '');
+    updateSaOwnHints(); return;
+  }
   const netEl = document.getElementById('saown-netAmount');
   const rs = document.getElementById('saown-whtRate'), whtEl = document.getElementById('saown-whtAmount');
   const rateOn = !!(rs && rs.value && whtEl);
@@ -3415,10 +3435,9 @@ function removeSaOwnSapLine(idx){
   recomputeSaOwnSapTotalsLive();
 }
 function applySaOwnSapLineWhtRate(idx, rate){
-  if(!rate) return;
   const baseEl = document.getElementById('saownsap-base-'+idx), whtEl = document.getElementById('saownsap-wht-'+idx);
   if(!baseEl || !whtEl) return;
-  const w = whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate));
+  const w = rate ? whtFromRate_(unformatMoney(baseEl.value), parseFloat(rate)) : 0;
   whtEl.value = formatMoney(w);
   const vEl = document.getElementById('saownsap-vat-'+idx), nEl = document.getElementById('saownsap-net-'+idx);
   if(nEl) nEl.value = formatMoney(netFrom_(baseEl.value, vEl?vEl.value:0, w));
@@ -3445,7 +3464,11 @@ function saOwnSapLineAmtBlur(idx, field){
   recomputeSaOwnSapTotalsLive();
 }
 function applySaOwnSapLineTaxCalc(idx, taxCode){
-  if(!taxCode) return;
+  if(!taxCode){
+    const g = id => document.getElementById(id), rs0 = g('saownsap-whtrate-'+idx);
+    resetTaxEls_(g('saownsap-base-'+idx), g('saownsap-vat-'+idx), g('saownsap-wht-'+idx), g('saownsap-net-'+idx), rs0 ? rs0.value : '');
+    recomputeSaOwnSapTotalsLive(); return;
+  }
   const netEl = document.getElementById('saownsap-net-'+idx);
   const rs = document.getElementById('saownsap-whtrate-'+idx), wEl = document.getElementById('saownsap-wht-'+idx);
   const rateOn = !!(rs && rs.value && wEl);
