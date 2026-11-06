@@ -392,7 +392,13 @@ function canSeeAging_(){ return !!state.user && (isAdmin() || ['นักบั�
 function isPendingDoc_(d){ const st = d.status||''; return st!=='Complete' && st!=='ยกเลิก'; }
 // New approval-summary layout (Text column, bank on the subtotal row) applies only to documents created after the
 // server's cutover time (set the first time the new Code.gs runs). Older documents keep the old layout so saved pen marks stay in place.
-function useNewReportLayout_(d){ return !!(state.layoutCutover && docCreatedMs_(d) >= state.layoutCutover); }
+// createdDate is date-only (midnight), so a document created TODAY after the cutover would wrongly count as older —
+// compare with the exact submit time (submittedAt) when the document has one.
+function layoutStampMs_(d){
+  if(d.submittedAt){ const t = new Date(d.submittedAt).getTime(); if(!isNaN(t)) return t; }
+  return docCreatedMs_(d);
+}
+function useNewReportLayout_(d){ return !!(state.layoutCutover && layoutStampMs_(d) >= state.layoutCutover); }
 function docCreatedMs_(d){
   const v = d.createdDate; if(!v) return 8.64e15;
   const dt = parseThaiDateStr(v) || new Date(v);
