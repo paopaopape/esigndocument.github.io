@@ -344,7 +344,7 @@ let state = {
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
-  dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:''},
+  dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:''},
   dashPage:1,
   dashCompany:'all',
   dashGroupBy:'none',
@@ -2788,6 +2788,15 @@ function dashboardHTML(){
   if(s.id && s.id.trim()) filtered = filtered.filter(d=>d.id.toLowerCase().includes(s.id.trim().toLowerCase()));
   if(s.createdBy && s.createdBy.trim()) filtered = filtered.filter(d=>(d.createdBy||'').toLowerCase().includes(s.createdBy.trim().toLowerCase()));
   if(s.due) filtered = filtered.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
+  if(s.sap && s.sap.trim()){
+    // one box for both numbers, partial match: Document SAP (incl. every SAP sub-line) or Doc Payment (finance)
+    const q = s.sap.trim().toLowerCase();
+    filtered = filtered.filter(d=>{
+      if(String(d.docSAP||'').toLowerCase().includes(q)) return true;
+      if(String(d.docPayment||'').toLowerCase().includes(q)) return true;
+      try{ return parseSapLines(d).some(l=>String(l.fiDoc||l.docSAP||'').toLowerCase().includes(q)); }catch(_){ return false; }
+    });
+  }
   if(s.status){
     filtered = s.status==='__REJECTED__' ? filtered.filter(d=>d.status.startsWith('ตีกลับ')) : filtered.filter(d=>d.status===s.status);
   }
@@ -2803,6 +2812,7 @@ function dashboardHTML(){
     filtered.sort((a,b)=> (b.createdDate||'').localeCompare(a.createdDate||''));
   }
 
+  const DASH_CPL_ = dashCompleteView_();
   const groupBtn = (key, label) => `<button class="btn btn-sm ${state.dashGroupBy===key?'btn-approve':'btn-outline'}" onclick="setDashGroupBy('${key}')">${label}</button>`;
   const groupBar = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
     <span style="font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Group:</span>
@@ -2841,6 +2851,9 @@ function dashboardHTML(){
     <div class="f-field" style="flex:1;min-width:180px;"><label>ค้นหาชื่อเอกสาร</label>
       <input id="dash-f-name" type="text" placeholder="พิมพ์ชื่อเอกสาร..." value="${s.name}" oninput="setDashSearch('name', this.value)">
     </div>
+    <div class="f-field"><label>เลข Document SAP / Doc Payment</label>
+      <input id="dash-f-sap" type="text" placeholder="พิมพ์บางส่วนของเลขก็ได้..." value="${String(s.sap||'').replace(/"/g,'&quot;')}" oninput="setDashSearch('sap', this.value)" style="width:210px;">
+    </div>
     <div class="f-field"><label>สร้างโดย</label>
       <input id="dash-f-createdby" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setDashSearch('createdBy', this.value)">
     </div>
@@ -2874,7 +2887,7 @@ function dashboardHTML(){
     ${filterBar}
     <div class="table-scroll">
     <table>
-      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th><th style="text-align:right;">Net Amt</th><th>ไฟล์</th><th>Comment</th><th>สถานะ</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>ประเภท</th><th>ชื่อเอกสาร</th><th>Due ชำระเงิน</th><th>Document SAP</th>${DASH_CPL_?'<th>Doc Payment (การเงิน)</th>':''}<th style="text-align:right;">Net Amt</th><th>ไฟล์</th>${DASH_CPL_?'':'<th>Comment</th>'}<th>สถานะ</th><th>สร้างโดย</th><th>วันที่สร้าง</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>
@@ -2902,9 +2915,11 @@ function paginationHTML(current, total, fnName){
 }
 function setDashSearch(field, val){ state.dashSearch[field] = val; state.dashPage = 1; render(); }
 function setDashStatusFilter(val){ state.dashSearch.status = state.dashSearch.status===val ? '' : val; state.dashPage = 1; render(); }
-function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:'', due:''}; state.dashPage = 1; render(); }
+function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:''}; state.dashPage = 1; render(); }
 
 /* ---- Recent Activity row edit (accountant / reviewer only) ---- */
+// Dashboard with the "Complete" status card selected: show the finance Doc Payment no. (after Document SAP) instead of Comment
+function dashCompleteView_(){ return !!(state.dashSearch && state.dashSearch.status==='Complete'); }
 function dashDocRowHTML(d){
   if(state.dashDocEditId === d.id){
     return `
@@ -2930,6 +2945,8 @@ function dashDocRowHTML(d){
   const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d) || canOwnerCancelDoc_(d) || canCancelRejectedDoc_(d))
     ? `<button class="icon-btn" style="color:var(--ink-soft);border-color:var(--ink-soft);" title="ยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด)" onclick="cancelDoc('${d.id}')">✕</button>` : '';
   const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
+  const cpl = dashCompleteView_();
+  const payLinkBtn = (cpl && d.docPaymentLink) ? `<a class="icon-btn ql-payment" href="${String(d.docPaymentLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="เปิดลิงก์เอกสารที่การเงินวางไว้ (สลิป/หลักฐานการโอน)">${PAYMENT_SLIP_SVG}</a>` : '';
   return `
     <tr>
       <td class="mono">${displayId(d.id)}</td>
@@ -2937,13 +2954,14 @@ function dashDocRowHTML(d){
       <td>${d.docName}</td>
       <td>${fmtDate(d.dueDate)}</td>
       <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
+      ${cpl ? `<td class="mono">${d.docPayment ? String(d.docPayment).replace(/</g,'&lt;') : '-'}</td>` : ''}
       <td class="net-cell" style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">${(function(){ let n = parseFloat(String(d.netAmount||'').replace(/,/g,'')); if(isNaN(n)){ const ls = parseSapLines(d); if(ls.length) n = ls.reduce((t,l)=>t+(parseFloat(l.net)||0),0); } return isNaN(n) ? '<span style="color:var(--ink-soft);">-</span>' : formatMoney(n); })()}</td>
       <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
-      <td class="comment-cell">${d.comment || '-'}</td>
+      ${cpl ? '' : `<td class="comment-cell">${d.comment || '-'}</td>`}
       <td>${trailHTML(d)}</td>
       <td>${d.createdBy}</td>
       <td>${fmtDate(d.createdDate)}${agingHTML_(d)}</td>
-      <td style="text-align:right;white-space:nowrap;">${pencil} ${cancelBtn} ${pdfBtn}</td>
+      <td style="text-align:right;white-space:nowrap;">${payLinkBtn} ${pencil} ${cancelBtn} ${pdfBtn}</td>
     </tr>`;
 }
 function openDashDocEdit(id){
@@ -6879,6 +6897,13 @@ function paymentHTML(){
 /* Same select-multiple-then-summarize concept as Payment Voucher, but purely a read-only report
    generator — no status change, no docPayment, no data mutation of any kind. Works across every
    status so นักบัญชี/ผู้ตรวจสอบ can pull a summary at any point in the workflow. */
+// Report ใบสำคัญจ่าย: approved docs only, and NOT document types set to "ข้ามขั้นตอนอนุมัติ" (receipts / tax invoices ...) —
+// those are recorded as Complete straight away and are never paid, so they don't belong in a payment-voucher summary.
+function voucherReportBaseDocs_(){
+  const skip = {};
+  (state.docTypes||[]).forEach(t=>{ if(t.autoComplete) skip[t.key] = true; });
+  return state.documents.filter(d=>(d.status==='รอชำระเงิน' || d.status==='Complete') && !skip[d.docType]);
+}
 function voucherReportHTML(){
   const companyOpts = userCompanyOptions();
   const companyHeader = `
@@ -6894,7 +6919,7 @@ function voucherReportHTML(){
   const noCompanyPicked = state.voucherReportCompany === 'all';
   if(noCompanyPicked) state.voucherReportSelected = [];
 
-  let list = state.documents.filter(d=>d.status==='รอชำระเงิน' || d.status==='Complete'); // only docs already approved by ผจก.
+  let list = voucherReportBaseDocs_(); // only docs already approved by ผจก.
   if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
     list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
   }
@@ -7075,7 +7100,7 @@ function toggleVoucherReportSelect(id){
   render();
 }
 function toggleSelectAllVoucherReport(checked){
-  let list = state.documents.filter(d=>d.status==='รอชำระเงิน' || d.status==='Complete');
+  let list = voucherReportBaseDocs_();
   if(!isAdmin() && state.user.companyCodes && state.user.companyCodes.length){
     list = list.filter(d=>state.user.companyCodes.includes(d.companyCode));
   }
