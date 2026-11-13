@@ -65,6 +65,14 @@ html[data-theme="dark"] [style*="background:#FFF3E0"],
 html[data-theme="dark"] [style*="background:#E8F5E9"],
 html[data-theme="dark"] [style*="background:#E6F4EA"]{background:var(--surface) !important;color:var(--ink);}
 html[data-theme="dark"] .calc-window{background:#2C3A55;}
+/* dark mode: pop-ups / dialogs that hard-code a white background (SAP Docs detail, confirm box, busy box, inline white rows) */
+html[data-theme="dark"] [style*="background:#fff;"]:not(img){background:var(--paper-white) !important;color:var(--ink) !important;}
+html[data-theme="dark"] .cfm-box{background:var(--paper-white);color:var(--ink);}
+html[data-theme="dark"] .cfm-btns button{background:var(--surface);color:var(--ink);border-color:var(--line);}
+html[data-theme="dark"] .calc-btn{background:var(--surface);color:var(--ink);}
+html[data-theme="dark"] .calc-btn.calc-op{background:#34456A;color:var(--ink);}
+html[data-theme="dark"] .calc-display{background:#1B2436;color:var(--ink);}
+html[data-theme="dark"] #busy-overlay h3, html[data-theme="dark"] #busy-overlay table td, html[data-theme="dark"] #busy-overlay table th{color:var(--ink);}
 html[data-theme="dark"] .link-cell a, html[data-theme="dark"] a{color:#8FB6F0;}
 .sent-at{margin-top:3px;font-size:11px;color:var(--ink-soft);white-space:nowrap;}
 .theme-select{padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:12px;}
@@ -102,7 +110,7 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 
 /* ---------- LAYOUT ---------- */
 .app{display:flex;min-height:100vh;}
-.sidebar{width:236px;background:var(--navy);color:#EFE9DA;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden;transition:width .18s ease;}
+.sidebar{width:236px;background:var(--navy);color:#EFE9DA;flex-shrink:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto;transition:width .18s ease;position:sticky;top:0;height:100vh;align-self:flex-start;} /* stays put while the page scrolls; scrolls by itself only if the menu is taller than the screen */
 .sidebar.collapsed{width:0;}
 .sidebar-toggle{background:transparent;border:1px solid rgba(239,233,218,0.3);color:#EFE9DA;border-radius:6px;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
 .sidebar-toggle:hover{background:rgba(239,233,218,0.12);}
@@ -146,7 +154,12 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 .logout-btn{background:none;border:1px solid var(--line);border-radius:7px;padding:7px 12px;font-size:12px;color:var(--ink-soft);}
 .logout-btn:hover{border-color:var(--stamp-red);color:var(--stamp-red);}
 
-.content{padding:26px 28px 60px;overflow-y:auto;}
+.content{padding:26px 28px 60px;overflow-x:clip;}
+/* approval page: top bar (1) and company bar (2) stay pinned while the list scrolls */
+.topbar.pin{position:sticky;top:0;z-index:60;}
+.appr-pin{position:sticky;top:var(--topbar-h,70px);z-index:55;background:var(--paper);padding:10px 0 0;margin:-10px 0 0;}
+.appr-pin .company-header{margin-bottom:10px;}
+.appr-pin:empty{display:none;}
 .card{background:var(--paper-white);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:22px;margin-bottom:20px;}
 .card h3{font-size:16px;margin-bottom:14px;}
 .table-scroll{overflow-x:auto;}
@@ -484,6 +497,13 @@ function whtRateSelectedFor_(base, wht){
 function whtRateOptionsHTML_(base, wht){
   const sel = whtRateSelectedFor_(base, wht);
   return `<option value="">Rate WHT — กรอกเอง</option>` + WHT_RATES.map(r=>`<option value="${r}" ${sel===String(r)?'selected':''}>WHT ${r}%</option>`).join('');
+}
+// report "Text" column: when a standard WHT rate (1 / 3 / 5 %) applies to the line, append " (หัก 3%)" after the text
+function whtTextSuffix_(r, text){
+  const rate = whtRateSelectedFor_(r.base, r.wht);
+  if(!rate) return '';
+  if(/หัก\s*\d/.test(String(text||''))) return '';
+  return ' (หัก ' + rate + '%)';
 }
 function whtPercentHTML(base, wht){
   const b = parseFloat(unformatMoney(base))||0, w = parseFloat(unformatMoney(wht))||0;
@@ -1618,7 +1638,7 @@ function viewSapLines(id){
 }
 function existingSapLinesAsStaging(doc){
   return parseSapLines(doc).map(l=>({
-    webDoc:'', fiDoc:l.fiDoc||'', vendor:l.vendor||'', vendorName:l.vendorName||'',
+    webDoc:'', webDocNo:l.webDocNo||'', text:l.text||'', taxCode:l.taxCode||'', fiDoc:l.fiDoc||'', vendor:l.vendor||'', vendorName:l.vendorName||'',
     vat:l.vat||0, wht:l.wht||0, base:l.base||0, net:l.net||0, checked:true,
   }));
 }
@@ -1675,6 +1695,87 @@ function uploadSapDataForDoc(e, id){
       showSapImportPreview(id, existingSapLinesAsStaging(doc).concat(newLines));
     }catch(err){
       if(statusEl) statusEl.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ---- approval page (นักบัญชี / ผู้ตรวจสอบ): same 3 upload buttons as "ส่งเอกสาร (บัญชี)" — all go through the tick-to-confirm preview ---- */
+function sapUploadBtnsHTML_(id){
+  const b = (title, label, fn) => `<label class="btn btn-sm btn-outline" style="cursor:pointer;margin:0;" title="${title}">${label}<input type="file" accept=".xlsx,.xls,.csv" style="display:none;" onchange="${fn}(event,'${id}')"></label>`;
+  return b('อัปโหลดไฟล์ Excel สรุปการจ่าย (แถวสีเหลือง = ยอดรวมรายเจ้าหนี้) สรุปเป็นรายเจ้าหนี้แล้วให้ติ๊กเลือกก่อนนำเข้า','⬆ อัปโหลด EXCEL สรุปรายเจ้าหนี้','uploadSapSummaryForDoc')
+       + b('อัปโหลดไฟล์ Export จาก SAP (Document Number / Account / Supplier Name / Tax Code / Text ...)','⬆ FROM SAP','uploadSapFromSapForDoc')
+       + b('อัปโหลดไฟล์รายงาน Journal Voucher จาก EWF (มี Web Doc Number)','⬆ อัพโหลด EWF','uploadSapEwfForDoc');
+}
+function readSapWorkbookForDoc_(e, id, label, parseFn){
+  const file = e.target.files && e.target.files[0]; if(!file) return;
+  const doc = state.documents.find(d=>d.id===id); if(!doc) return;
+  const statusEl = document.getElementById('sap-import-status-'+id);
+  if(statusEl) statusEl.textContent = 'กำลังอ่านไฟล์ '+label+'...';
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    try{
+      if(typeof XLSX === 'undefined'){ showToast('โหลดไลบรารีอ่านไฟล์ไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'); return; }
+      const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:true});
+      const hidden = {};
+      ((wb.Workbook && wb.Workbook.Sheets) || []).forEach((sh,i)=>{ if(sh && sh.Hidden && wb.SheetNames[i]) hidden[wb.SheetNames[i]] = true; });
+      const names = wb.SheetNames.filter(n=>!hidden[n]);
+      let lines = null;
+      (names.length ? names : wb.SheetNames).forEach(name=>{
+        if(lines && lines.length) return;
+        const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, defval:'', raw:true});
+        const r = parseFn(aoa);
+        if(r && r.length) lines = r;
+      });
+      e.target.value = '';
+      if(!lines){
+        if(statusEl) statusEl.textContent = 'อ่านไฟล์ '+label+' ไม่ได้ตามรูปแบบที่ระบบกำหนด';
+        showInfoModal('อ่านไฟล์ '+label+' ไม่ได้', '<div style="font-size:13px;">ไฟล์ <b>'+file.name.replace(/</g,'&lt;')+'</b> ไม่ใช่รูปแบบ '+label+' ที่ระบบรองรับ — ตรวจสอบหัวตารางของไฟล์อีกครั้ง</div>');
+        return;
+      }
+      const have = {}; existingSapLinesAsStaging(doc).forEach(l=>{ if(l.fiDoc) have[l.fiDoc]=1; });
+      const fresh = lines.filter(l=>!l.fiDoc || !have[l.fiDoc]);
+      if(statusEl) statusEl.textContent = 'อ่านไฟล์ '+label+' แล้ว: '+file.name+' ('+lines.length+' รายการ'+(lines.length-fresh.length?' · ข้าม '+(lines.length-fresh.length)+' FI Doc ที่มีอยู่แล้ว':'')+') — ติ๊กเลือกแล้วกดนำเข้า';
+      const staged = fresh.map(l=>Object.assign({ webDoc:'', webDocNo:'', text:'', taxCode:'', vat:0, wht:0, base:0, net:0, checked:true }, l, { checked:true }));
+      showSapImportPreview(id, existingSapLinesAsStaging(doc).concat(staged));
+    }catch(err){ if(statusEl) statusEl.textContent = 'อ่านไฟล์ไม่สำเร็จ: '+err.message; }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function uploadSapFromSapForDoc(e, id){ readSapWorkbookForDoc_(e, id, 'From SAP', parseFromSapSheet_); }
+function uploadSapSummaryForDoc(e, id){
+  readSapWorkbookForDoc_(e, id, 'Excel สรุปรายเจ้าหนี้', function(aoa){
+    const parsed = parseSapSummarySheet_(aoa);
+    if(!parsed || parsed.missing || !parsed.lines.length) return null;
+    const out = [];
+    parsed.lines.forEach(l=>{
+      (l.items && l.items.length ? l.items : [{fiDoc:l.fiDoc, taxCode:l.taxCode, vat:l.vat, wht:l.wht, base:l.base, net:l.net}]).forEach(it=>{
+        out.push({ fiDoc:it.fiDoc, vendor:l.code, vendorName:l.name, taxCode:it.taxCode||'', vat:it.vat, wht:it.wht, base:it.base, net:it.net });
+      });
+    });
+    return out;
+  });
+}
+function uploadSapEwfForDoc(e, id){
+  // EWF Journal Voucher report; files in the older "Web Doc Number" layout still go through the original reader
+  const file = e.target.files && e.target.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(ev){
+    let ok = false;
+    try{
+      if(typeof XLSX !== 'undefined'){
+        const wb = XLSX.read(new Uint8Array(ev.target.result), {type:'array', cellDates:true});
+        ok = wb.SheetNames.some(n=>{ const r = parseEwfSheet_(XLSX.utils.sheet_to_json(wb.Sheets[n], {header:1, defval:'', raw:true})); return r && r.lines && r.lines.length; });
+      }
+    }catch(_){ ok = false; }
+    if(ok){
+      readSapWorkbookForDoc_(e, id, 'EWF', function(aoa){
+        const r = parseEwfSheet_(aoa);
+        if(!r || r.missing || !r.lines || !r.lines.length) return null;
+        return r.lines.map(l=>({ fiDoc:l.fi, webDocNo:l.web, vendor:l.vendor, vendorName:l.name, taxCode:l.taxCode||'', vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
+      });
+    } else {
+      uploadSapDataForDoc(e, id);
     }
   };
   reader.readAsArrayBuffer(file);
@@ -1803,7 +1904,7 @@ async function confirmSapImport(){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
   const statusEl = document.getElementById('sap-import-status-'+id);
-  const finalLines = selected.map((l,i)=>({ subId: id+'-'+(i+1), fiDoc:l.fiDoc, vendor:l.vendor, vendorName:l.vendorName, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
+  const finalLines = selected.map((l,i)=>({ subId: id+'-'+(i+1), fiDoc:l.fiDoc, webDocNo:l.webDocNo||'', text:l.text||'', taxCode:l.taxCode||'', vendor:l.vendor, vendorName:l.vendorName, vat:l.vat, wht:l.wht, base:l.base, net:l.net }));
   fillVendorNamesFromMaster_(finalLines, doc.companyCode);
   const sums = finalLines.reduce((t,l)=>({vat:t.vat+l.vat, wht:t.wht+l.wht, base:t.base+l.base, net:t.net+l.net}), {vat:0,wht:0,base:0,net:0});
   const patch = {
@@ -1837,6 +1938,7 @@ function render(){
   if(!state.user){ root.innerHTML = loginHTML(); return; }
   initCalculatorWidget();
   root.innerHTML = layoutHTML();
+  { const tb = root.querySelector('.topbar'); if(tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight+'px'); }
 
   if(activeId){
     const el = document.getElementById(activeId);
@@ -2452,7 +2554,7 @@ function topbarHTML(){
   const [t,s] = titles[state.view] || ['',''];
   const initials = (state.user.firstName||'?').slice(0,1);
   return `
-  <div class="topbar">
+  <div class="topbar ${state.view==='approval'?'pin':''}">
     <div><h1>${t}</h1><div class="sub">${s}</div></div>
     <div class="user-chip">
       <div class="who"><div class="name">${fullName(state.user)}</div><div class="role">${ROLE_LABELS[state.user.role]}</div></div>
@@ -2486,6 +2588,9 @@ function viewHTML(){
 }
 
 /* ============================= STAMP TRAIL ============================= */
+// A Payment close-out batch is closed once the final signer approved it. Google Sheets turns the text "TRUE" into a real
+// boolean, so `locked` can come back as true (not 'TRUE') — also trust status 'Complete' (set in the same update).
+function pvClosed_(v){ return !!v && (v.status==='Complete' || String(v.locked).toUpperCase()==='TRUE'); }
 function trailHTML(doc){
   if(doc.status === 'Complete'){
     // a small extra badge showing whether this Complete document's payment batch has gone
@@ -2497,7 +2602,7 @@ function trailHTML(doc){
     if(doc.docPayment){
       const pv = state.paymentVouchers.find(v=>String(v.docPayment)===String(doc.docPayment) && String(v.companyCode)===String(doc.companyCode));
       if(pv){
-        pvBadge = pv.locked==='TRUE'
+        pvBadge = pvClosed_(pv)
           ? ` <span class="status-pill" style="background:#E6F4EA;color:#1E7D32;font-size:10px;" title="ปิดรอบ Payment สมบูรณ์แล้ว">✓ ปิดรอบ Payment</span>`
           : ` <span class="status-pill" style="background:#FFF3E0;color:#B36B00;font-size:10px;" title="สถานะ: ${pv.status}">⏳ รอปิดรอบ Payment</span>`;
       }
@@ -4789,8 +4894,10 @@ function approvalHTML(){
     ${groups.includes('accounting') ? `<div class="tab ${state.approvalGroup==='accounting'?'active':''}" onclick="setApprovalGroup('accounting')">อนุมัติบันทึกบัญชี${pendingBadgeHTML(accountingPendingCountForUser())}</div>` : ''}
     ${groups.includes('payment') ? `<div class="tab ${state.approvalGroup==='payment'?'active':''}" onclick="setApprovalGroup('payment')">อนุมัติ Payment${pendingBadgeHTML(pvPendingCountForUser())}</div>` : ''}
   </div>` : '';
+  window.__apprHdr_ = '';
   const body = (state.approvalGroup==='payment' && groups.includes('payment')) ? paymentApprovalHTML() : accountingApprovalHTML();
-  return groupTabsHtml + body;
+  // order: 1 top bar (pinned) → 2 company bar (pinned) → 3 tabs → list
+  return `<div class="appr-pin">${window.__apprHdr_ || ''}</div>` + groupTabsHtml + body;
 }
 function accountingApprovalHTML(mode){
   const via = mode==='via';
@@ -4954,7 +5061,8 @@ function accountingApprovalHTML(mode){
           rows += `
         <tr style="background:#fff;">
           <td colspan="14" style="text-align:center;padding:8px;">
-            <button class="btn btn-sm btn-outline" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
+            ${sapUploadBtnsHTML_(d.id)}
+            <button class="btn btn-sm btn-outline" style="margin-left:2px;" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
             ${showBreakdown ? `<button class="btn btn-sm btn-outline" id="sapline-save-btn-${d.id}" onclick="saveSapLineRowsNow('${d.id}')" style="margin-left:8px;">💾 บันทึกรายการ SAP</button>` : ''}
           </td>
         </tr>`;
@@ -5024,7 +5132,7 @@ function accountingApprovalHTML(mode){
             <div style="flex:1;min-width:280px;">
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
+                ${sapUploadBtnsHTML_(d.id)}
               </div>
               <div style="font-size:11px;color:var(--ink-soft);margin-top:5px;">หรือเลื่อนลงไปกด "+ เพิ่มเอง" ใต้แถวเอกสารนี้เพื่อพิมพ์ทีละบรรทัดตรงในตารางได้เลย ไม่ต้องอัปโหลดไฟล์</div>
               <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
@@ -5084,7 +5192,7 @@ function accountingApprovalHTML(mode){
             <div style="flex:1;min-width:280px;">
               <label style="display:block;font-size:10.5px;color:var(--ink-soft);margin-bottom:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">นำเข้า / เพิ่ม SAP Doc &mdash; กรณีตั้งหนี้มากกว่า 1 Doc</label>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <input type="file" accept=".xlsx,.xls,.csv" onchange="uploadSapDataForDoc(event,'${d.id}')" style="flex:1;min-width:190px;">
+                ${sapUploadBtnsHTML_(d.id)}
               </div>
               <div style="font-size:11px;color:var(--ink-soft);margin-top:5px;">หรือเลื่อนลงไปกด "+ เพิ่มเอง" ใต้แถวเอกสารนี้เพื่อพิมพ์ทีละบรรทัดตรงในตารางได้เลย ไม่ต้องอัปโหลดไฟล์</div>
               <div id="sap-import-status-${d.id}" style="font-size:11px;color:var(--ink-soft);margin-top:5px;"></div>
@@ -5120,9 +5228,9 @@ function accountingApprovalHTML(mode){
     return header + rows;
   }).join('') : `<tr class="empty-row"><td colspan="14">ไม่มีเอกสารรอดำเนินการในขั้นตอนนี้</td></tr>`;
 
+  window.__apprHdr_ = companyHeader;   // approvalHTML() puts the company bar ABOVE the tabs and pins it
   return `
   <div class="tabs">${tabs}</div>
-  ${companyHeader}
   <div class="card">
     <div class="eyebrow">${via ? 'Payment อื่นๆ · ' : 'Stage · '}${meta.label}</div>
     <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
@@ -5318,7 +5426,7 @@ function openApprovalReport(id, draft){
           <td>${r.web||'-'}</td>
           <td>${r.vendor||'-'}</td>
           <td>${r.vname||'-'}</td>
-          ${NL_ ? `<td>${esc_(r.text||d.docName||'-')}</td>` : ''}
+          ${NL_ ? `<td>${esc_((r.text||d.docName||'-') + whtTextSuffix_(r, r.text||d.docName||''))}</td>` : ''}
           <td>${payTypeLabel(d.payType)}</td>
           ${NL_ ? '' : `<td>${r.acct||'-'}</td><td>${r.bank||'-'}</td>`}
           <td class="n">${money(r.base)}</td>
@@ -5812,7 +5920,7 @@ function paymentApprovalHTML(){
   // Admin-only: locked (fully closed) batches for this view's company scope, with an unlock button
   const lockedSection = (function(){
     if(!isAdmin()) return '';
-    let locked = state.paymentVouchers.filter(v=>v.locked==='TRUE');
+    let locked = state.paymentVouchers.filter(v=>pvClosed_(v));
     if(state.pvCompany!=='all') locked = locked.filter(v=>v.companyCode===state.pvCompany);
     if(!locked.length) return '';
     const lockedRows = locked.map(v=>`
@@ -5836,9 +5944,9 @@ function paymentApprovalHTML(){
     </div>`;
   })();
 
+  window.__apprHdr_ = companyHeader;
   return `
   <div class="tabs">${tabs}</div>
-  ${companyHeader}
   <div class="card">
     <div class="eyebrow">Payment Voucher Close-out · ${meta.label}</div>
     <h3 style="margin-top:4px;">รายการรอ${meta.label}ดำเนินการ (${list.length})${helpToggleBtnHTML()}</h3>
@@ -7544,7 +7652,7 @@ async function confirmBatchPayment(){
   let pvFailed = false;
   const existingPv = state.paymentVouchers.find(v=>v.status!=='ยกเลิก' && String(v.docPayment)===String(docNum) && String(v.companyCode)===String(pvCompanyCode));
   if(existingPv){
-    if(existingPv.locked==='TRUE'){
+    if(existingPpvClosed_(v)){
       showToast('หมายเหตุ: Doc Payment นี้ปิดรอบ Payment ไปแล้ว เอกสารที่เพิ่มใหม่จะไม่ถูกรวมในชุดปิดรอบเดิม กรุณาแจ้ง Admin หากต้องการปลดล็อกเพื่อรวมเพิ่ม');
     } else {
       const mergedIds = Array.from(new Set(pvDocIds(existingPv).concat(ids)));
@@ -7906,7 +8014,7 @@ function openPaymentReport(docPayment){
       ${(pv && pv.reviewerBy) ? signBlock('ผู้ตรวจสอบ', pv.reviewerBy, pvReviewerTag) : blankSignBlock('ผู้ตรวจสอบ', pvReviewerTag)}
       ${(pv && pv.approverBy) ? signBlock('ผู้อนุมัติ', pv.approverBy, pvApproverTag) : blankSignBlock('ผู้อนุมัติ', pvApproverTag)}
     </div>
-    ${pv && pv.locked==='TRUE' ? '<div style="text-align:center;margin-top:10px;font-size:12px;color:#2a7;">✓ ปิดรอบ Payment สมบูรณ์แล้ว</div>' : (pv ? `<div style="text-align:center;margin-top:10px;font-size:12px;color:#999;">สถานะปิดรอบ Payment: ${pv.status}</div>` : '')}
+    ${pv && pvClosed_(pv) ? '<div style="text-align:center;margin-top:10px;font-size:12px;color:#2a7;">✓ ปิดรอบ Payment สมบูรณ์แล้ว</div>' : (pv ? `<div style="text-align:center;margin-top:10px;font-size:12px;color:#999;">สถานะปิดรอบ Payment: ${pv.status}</div>` : '')}
     <div class="no-print"><button onclick="window.print()" style="padding:8px 20px;font-size:13px;">พิมพ์ / บันทึกเป็น PDF</button></div>
   </body></html>`;
   const blob = new Blob([html], {type:'text/html'});
