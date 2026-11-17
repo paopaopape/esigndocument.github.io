@@ -110,7 +110,7 @@ input,select,textarea{font-family:inherit;font-size:13.5px;}
 
 /* ---------- LAYOUT ---------- */
 .app{display:flex;min-height:100vh;}
-.sidebar{width:236px;background:var(--navy);color:#EFE9DA;flex-shrink:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto;transition:width .18s ease;position:sticky;top:0;height:100vh;align-self:flex-start;} /* stays put while the page scrolls; scrolls by itself only if the menu is taller than the screen */
+.sidebar{width:236px;background:var(--navy);color:#EFE9DA;flex-shrink:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:auto;transition:width .18s ease;position:sticky;top:0;height:100vh;height:100dvh;align-self:flex-start;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;} /* stays put while the page scrolls; scrolls by itself only if the menu is taller than the screen */
 .sidebar.collapsed{width:0;}
 .sidebar-toggle{background:transparent;border:1px solid rgba(239,233,218,0.3);color:#EFE9DA;border-radius:6px;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
 .sidebar-toggle:hover{background:rgba(239,233,218,0.12);}
@@ -3049,6 +3049,7 @@ function dashDocRowHTML(d){
   const pencil = (canEditDocuments() || canOwnerEditDoc(d)) ? `<button class="icon-btn edit-icon" title="แก้ไขรายละเอียดเอกสาร" onclick="openDashDocEdit('${d.id}')">${PENCIL_SVG}</button>` : '';
   const cancelBtn = ((canEditDocuments() && ['รอนักบัญชี','รอผู้ตรวจสอบ','รอผู้อนุมัติ','รอผู้อนุมัติ2'].includes(d.status)) || canOwnerEditDoc(d) || canOwnerCancelDoc_(d) || canCancelRejectedDoc_(d))
     ? `<button class="icon-btn" style="color:var(--ink-soft);border-color:var(--ink-soft);" title="ยกเลิกเอกสาร (เอกสารซ้ำ/ผิดพลาด)" onclick="cancelDoc('${d.id}')">✕</button>` : '';
+  const recallBtn = canRecallDoc_(d) ? `<button class="icon-btn" style="color:#b45309;border-color:#b45309;" title="ถอนกลับมาแก้ไข (ดึงกลับมาที่รอนักบัญชี เพื่อเลือกผู้ตรวจสอบ/ตัวเลือกใหม่แล้วส่งอีกครั้ง)" onclick="recallToAccountant('${d.id}')">↩</button>` : '';
   const pdfBtn = `<button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสรุปการอนุมัติ" onclick="openApprovalReport('${d.id}')">${DOWNLOAD_SVG}</button>`;
   const cpl = dashCompleteView_();
   const payLinkBtn = (cpl && d.docPaymentLink) ? `<a class="icon-btn ql-payment" href="${String(d.docPaymentLink).replace(/"/g,'&quot;')}" target="_blank" rel="noopener" title="เปิดลิงก์เอกสารที่การเงินวางไว้ (สลิป/หลักฐานการโอน)">${PAYMENT_SLIP_SVG}</a>` : '';
@@ -3066,7 +3067,7 @@ function dashDocRowHTML(d){
       <td>${trailHTML(d)}</td>
       <td>${d.createdBy}</td>
       <td>${fmtDate(d.createdDate)}${agingHTML_(d)}</td>
-      <td style="text-align:right;white-space:nowrap;">${payLinkBtn} ${pencil} ${cancelBtn} ${pdfBtn}</td>
+      <td style="text-align:right;white-space:nowrap;">${payLinkBtn} ${recallBtn} ${pencil} ${cancelBtn} ${pdfBtn}</td>
     </tr>`;
 }
 function openDashDocEdit(id){
@@ -5314,7 +5315,7 @@ function openApprovalReport(id, draft){
   const money = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   let history = [];
   try{ history = d.historyLog ? JSON.parse(d.historyLog) : []; }catch(e){ history = []; }
-  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)', receive:'💰 ยืนยันรับเงิน', close_no_payment:'⏹ จบ Flow (ไม่ต้องจ่าย)' };
+  const actionLabel = { approve:'✓ อนุมัติ/ส่งต่อ', reject:'↺ ตีกลับแก้ไข', resubmit:'↻ แก้ไขแล้วส่งต่อใหม่', recall:'↩ ถอนกลับมาแก้ไข', reject_to_submitter:'↺ ส่งกลับผู้วางบิล', skip_reviewer:'⏭ ข้ามขั้นตอน (ไม่พร้อม)', receive:'💰 ยืนยันรับเงิน', close_no_payment:'⏹ จบ Flow (ไม่ต้องจ่าย)' };
   const mappedSlots_ = approver2Slots(d);
   const slotName_ = n => { const m = state.members.find(x=>x.id===(mappedSlots_.find(z=>z.slot===n)||{}).id); return m ? fullName(m) : ''; };
   // signature block that also works when the person hasn't signed yet: blank line + the mapped name in grey
@@ -6111,6 +6112,53 @@ async function resubmitPaymentVoucher(id){
   await refreshData({light:true});
   render();
 }
+
+// ถอนใบรวบจ่าย: การเงินที่ยืนยันรวบจ่ายแล้ว (หรือ Admin) ถอนกลับมา "รอชำระเงิน" ได้ ตราบใดที่ผู้ตรวจสอบ/ผู้อนุมัติ Payment ยังไม่ได้ดำเนินการ
+function pvForRecall_(docPayment){
+  return state.paymentVouchers.find(v=>v.status!=='ยกเลิก' && String(v.docPayment)===String(docPayment)) || null;
+}
+function canRecallPv_(v){
+  if(!state.user || !v) return false;
+  const st = v.status;
+  const untouched = (st==='รอผู้ตรวจสอบPayment' && !v.reviewerBy && !v.approverBy) || (st==='รอผู้อนุมัติPayment' && !v.reviewerBy && !v.approverBy);
+  if(!untouched || pvClosed_(v)) return false;
+  return isAdmin() || (!!v.createdBy && v.createdBy===fullName(state.user));
+}
+async function recallPaymentBatch(pvId){
+  const v = state.paymentVouchers.find(x=>x.id===pvId);
+  if(!v) return;
+  if(!canRecallPv_(v)){ showToast('ถอนไม่ได้ ผู้ตรวจสอบ/ผู้อนุมัติ Payment ดำเนินการไปแล้ว หรือคุณไม่ใช่ผู้ทำรายการ'); return; }
+  const ids = pvDocIds(v);
+  const ok = await confirmBox_('ถอนใบรวบจ่ายกลับมาที่การเงิน', 'Doc Payment '+(v.docPayment||'-')+' ('+ids.length+' รายการ)\n\nเอกสารทั้งหมดในใบนี้จะกลับไปอยู่ที่ "รอชำระเงิน" และใบปิดรอบ Payment นี้จะถูกยกเลิก\nการเงินเลือกผู้ตรวจสอบ/บัญชีโอนใหม่แล้วยืนยันรวบจ่ายอีกครั้งได้', 'ถอนกลับ');
+  if(!ok) return;
+  const who = fullName(state.user), when = nowStr();
+  let history = []; try{ history = v.historyLog ? JSON.parse(v.historyLog) : []; }catch(e){ history = []; }
+  history.push({ stage:'การเงิน', actor:who, date:when, note:'ถอนใบรวบจ่ายกลับมาแก้ไข (ผู้ตรวจสอบ/ผู้อนุมัติ Payment ยังไม่ดำเนินการ)', action:'recall' });
+  showBusyOverlay('กำลังถอนใบรวบจ่าย กรุณารอสักครู่...');
+  // cancel the voucher FIRST with a status guard — if the reviewer/approver acted in the meantime the server refuses and nothing else changes
+  const pr = await apiCall('updatePaymentVoucher', { id:pvId, status:'ยกเลิก', expectStatus:v.status, expectNoActor:true, historyLog:JSON.stringify(history) });
+  if(!pr || !pr.success){
+    hideBusyOverlay();
+    showToast(pr && pr.error==='status_changed' ? 'ถอนไม่ได้ ผู้ตรวจสอบ/ผู้อนุมัติ Payment ดำเนินการกับใบนี้ไปแล้ว' : 'ถอนไม่สำเร็จ ลองใหม่อีกครั้ง');
+    await refreshData({light:true}); render(); return;
+  }
+  let failed = [];
+  for(const did of ids){
+    const d = state.documents.find(x=>x.id===did);
+    if(!d) continue;
+    const r = await apiCall('updateDocument', {
+      id:did, status:'รอชำระเงิน', docPayment:'', docPaymentLink:'', paymentBy:'', paymentDate:'', timeApprove:'',
+      modifiedBy:who, modifiedDate:when,
+      historyLog: appendHistoryLog(d, {stage:'การเงิน', actor:who, date:when, note:'ถอนใบรวบจ่าย Doc Payment '+(v.docPayment||''), action:'recall'})
+    });
+    if(!r || !r.success) failed.push(did);
+  }
+  hideBusyOverlay();
+  await refreshData({light:true});
+  render();
+  if(failed.length) alert('ยกเลิกใบปิดรอบแล้ว แต่ถอนเอกสารต่อไปนี้ไม่สำเร็จ กรุณาแจ้งแอดมิน:\n'+failed.map(displayId).join(', '));
+  else showToast('ถอนใบรวบจ่าย '+(v.docPayment||'')+' กลับมาที่รอชำระเงินแล้ว ('+ids.length+' รายการ)');
+}
 async function unlockPaymentVoucher(id){
   if(!isAdmin()) return;
   const v = state.paymentVouchers.find(x=>x.id===id);
@@ -6429,6 +6477,39 @@ async function forwardToSubmitter(id){
   if(!res.success){ showToast('ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
   state.expandedRow = null;
   showToast('ส่งกลับให้ผู้วางบิลแก้ไขแล้ว · '+id);
+  await refreshData({light:true});
+  render();
+}
+
+// ถอนกลับ: นักบัญชีที่ส่งต่อเอกสารไปแล้ว (หรือ Admin) ดึงเอกสารที่ "ยังรอผู้ตรวจสอบ" กลับมาที่รอนักบัญชีได้เอง
+// (เช่น เลือกผู้ตรวจสอบผิด/ลืมเลือกกรณีหัวหน้าลา) — ทำได้เฉพาะตอนผู้ตรวจสอบยังไม่ได้ดำเนินการ
+function canRecallDoc_(d){
+  if(!state.user || !d || d.status!=='รอผู้ตรวจสอบ') return false;
+  if(d.reviewerBy) return false;
+  return isAdmin() || (!!d.accountantBy && d.accountantBy===fullName(state.user));
+}
+async function recallToAccountant(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc) return;
+  if(!canRecallDoc_(doc)){ showToast('ถอนกลับไม่ได้ เอกสารไม่ได้อยู่ในสถานะรอผู้ตรวจสอบ หรือคุณไม่ใช่ผู้ส่งต่อ'); return; }
+  const ok = await confirmBox_('ถอนเอกสารกลับมาแก้ไข', displayId(id)+(doc.docName?'  '+doc.docName:'')+'\n\nเอกสารจะกลับไปอยู่ที่ "รอนักบัญชี" เพื่อให้เลือกผู้ตรวจสอบ/ตัวเลือกใหม่แล้วส่งต่ออีกครั้ง\nผู้ตรวจสอบเดิมจะไม่เห็นเอกสารนี้อีก', 'ถอนกลับ');
+  if(!ok) return;
+  const who = fullName(state.user), when = nowStr();
+  const patch = {
+    id, status:'รอนักบัญชี', expectStatus:'รอผู้ตรวจสอบ',
+    accountantBy:'', accountantDate:'',
+    modifiedBy:who, modifiedDate:when,
+    historyLog: appendHistoryLog(doc, {stage:'นักบัญชี', actor:who, date:when, note:'ถอนเอกสารกลับมาแก้ไข (ยังรอผู้ตรวจสอบ)', action:'recall'})
+  };
+  showBusyOverlay('กำลังถอนเอกสารกลับ กรุณารอสักครู่...');
+  const res = await apiCall('updateDocument', patch);
+  hideBusyOverlay();
+  if(!res || !res.success){
+    if(res && res.error==='status_changed'){ showToast('ถอนไม่ได้ ผู้ตรวจสอบดำเนินการกับเอกสารนี้ไปแล้ว'); await refreshData({light:true}); render(); return; }
+    showToast('ถอนกลับไม่สำเร็จ ลองใหม่อีกครั้ง'); return;
+  }
+  state.expandedRow = null;
+  showToast('ถอน '+displayId(id)+' กลับมาที่รอนักบัญชีแล้ว');
   await refreshData({light:true});
   render();
 }
@@ -6927,6 +7008,7 @@ function paymentHTML(){
       <td>${b.paymentDate||'-'}</td>
       <td style="white-space:nowrap;">
         ${b.docPaymentLink ? `<a class="icon-btn ql-payment" href="${b.docPaymentLink}" target="_blank" rel="noopener" title="เปิดไฟล์สลิป/หลักฐานการโอน">${PAYMENT_SLIP_SVG}</a>` : ''}
+        ${(function(){ const pv = pvForRecall_(b.docPayment); return pv && canRecallPv_(pv) ? `<button class="icon-btn" style="color:#b45309;border-color:#b45309;" title="ถอนใบรวบจ่ายกลับมาที่การเงิน (ใช้ได้เฉพาะตอนที่ผู้ตรวจสอบ/ผู้อนุมัติ Payment ยังไม่ดำเนินการ)" onclick="recallPaymentBatch('${pv.id}')">↩</button>` : ''; })()}
         <button class="icon-btn edit-icon" title="แก้ไขเลข Doc Payment / ลิงก์ไฟล์" onclick="openBatchEdit('${b.docPayment}')">${PENCIL_SVG}</button>
         <button class="icon-btn dl-icon" title="ดาวน์โหลด / พิมพ์ใบสำคัญจ่าย" onclick="openPaymentReport('${b.docPayment}')">${DOWNLOAD_SVG}</button>
       </td>
