@@ -7778,6 +7778,17 @@ function parseThaiDateStr(str){
   const d = new Date(buddhistYear-543, month-1, day);
   return isNaN(d.getTime()) ? null : d;
 }
+// Report Payment search box: matches the Doc Payment number OR the batch ID (e.g. 1160-PV0066 / PV0066 / 66)
+function reportFilterByDocPaymentOrId_(docs, q){
+  q = String(q||'').trim().toLowerCase();
+  if(!q) return docs;
+  const hit = new Set();
+  state.paymentVouchers.forEach(v=>{
+    if(v.status==='ยกเลิก') return;
+    if(String(v.id||'').toLowerCase().includes(q)) hit.add(String(v.docPayment)+'|'+String(v.companyCode));
+  });
+  return docs.filter(d=>String(d.docPayment).toLowerCase().includes(q) || hit.has(String(d.docPayment)+'|'+String(d.companyCode)));
+}
 function reportPaymentHTML(){
   const companyOpts = userCompanyOptions();
   const companyHeader = `
@@ -7796,7 +7807,7 @@ function reportPaymentHTML(){
   if(state.reportCompany!=='all') docs = docs.filter(d=>d.companyCode===state.reportCompany);
 
   const s = state.reportSearch;
-  if(s.docPayment && s.docPayment.trim()) docs = docs.filter(d=>String(d.docPayment).toLowerCase().includes(s.docPayment.trim().toLowerCase()));
+  docs = reportFilterByDocPaymentOrId_(docs, s.docPayment);
   if(s.by && s.by.trim()) docs = docs.filter(d=>(d.paymentBy||'').toLowerCase().includes(s.by.trim().toLowerCase()));
   if(s.from){ const from = new Date(s.from); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt >= from; }); }
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
@@ -7847,7 +7858,7 @@ function reportPaymentHTML(){
 
   const filterBar = `
   <div class="filter-bar">
-    <div class="f-field"><label>ค้นหาเลข Doc Payment</label><input id="report-f-docpayment" type="text" placeholder="เช่น 6100001621" value="${s.docPayment}" oninput="setReportSearch('docPayment', this.value)"></div>
+    <div class="f-field"><label>ค้นหาเลข Doc Payment / ID</label><input id="report-f-docpayment" type="text" placeholder="เช่น 6100001621 หรือ PV0066" value="${s.docPayment}" oninput="setReportSearch('docPayment', this.value)"></div>
     <div class="f-field"><label>ผู้ทำรายการ</label><input id="report-f-by" type="text" placeholder="ชื่อผู้จ่ายเงิน..." value="${s.by}" oninput="setReportSearch('by', this.value)"></div>
     <div class="f-field"><label>จากวันที่</label><input id="report-f-from" type="date" value="${s.from}" onchange="setReportSearch('from', this.value)"></div>
     <div class="f-field"><label>ถึงวันที่</label><input id="report-f-to" type="date" value="${s.to}" onchange="setReportSearch('to', this.value)"></div>
@@ -7990,7 +8001,7 @@ function exportReportPaymentToExcel(){
   }
   if(state.reportCompany!=='all') docs = docs.filter(d=>d.companyCode===state.reportCompany);
   const s = state.reportSearch;
-  if(s.docPayment && s.docPayment.trim()) docs = docs.filter(d=>String(d.docPayment).toLowerCase().includes(s.docPayment.trim().toLowerCase()));
+  docs = reportFilterByDocPaymentOrId_(docs, s.docPayment);
   if(s.by && s.by.trim()) docs = docs.filter(d=>(d.paymentBy||'').toLowerCase().includes(s.by.trim().toLowerCase()));
   if(s.from){ const from = new Date(s.from); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt >= from; }); }
   if(s.to){ const to = new Date(s.to); to.setHours(23,59,59,999); docs = docs.filter(d=>{ const dt = parseThaiDateStr(d.paymentDate); return dt && dt <= to; }); }
