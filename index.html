@@ -1036,6 +1036,7 @@ async function refreshData(opts){
   if(data && data.success && state.pendingOps>0) return true;   // a background save is in flight — don't overwrite its optimistic state
   if(data && data.success){
     applyBootstrap_(data);
+    if(!data.partial) state.lastFullLoadAt = Date.now();
     cacheSave_();
     const kind = data._perf && data._perf.active ? ('delta/'+(data._perf.mode||'?')) : (data._perf && data._perf.lite ? 'lite' : 'full');
     window.__perf = { kind: kind, clientMs: ms, server: data._perf || null, at: new Date().toISOString() };
@@ -1246,7 +1247,10 @@ async function manualRefresh(){
   const btn = document.getElementById('refresh-btn');
   if(btn){ btn.disabled = true; btn.textContent = 'กำลังรีเฟรช...'; }
   const tm0 = performance.now();
-  const ok = await refreshData({light:true, active:true});
+  // the quick (delta) refresh never re-reads Complete rows whose content changed without a fresh updatedAt stamp (e.g. a link fixed by hand in the Sheet) —
+  // so every 10 minutes the ↻ button does a full reload instead, to keep long-open tabs (PC) from showing stale links
+  const needFull = (Date.now() - (state.lastFullLoadAt||0)) > 10*60000;
+  const ok = await (needFull ? refreshData() : refreshData({light:true, active:true}));
   if(ok && state.user){
     // re-point state.user at the refreshed record in case role/company changed
     const refreshedUser = state.members.find(m=>m.id===state.user.id);
@@ -5855,7 +5859,7 @@ function paymentApprovalHTML(){
         a.vat += num(d.vatAmount); a.wht += num(d.whtAmount); a.base += num(d.baseAmount); a.net += num(d.netAmount);
         if(d.payType) a.types.add(d.payType);
         if(d.paymentBy) a.paymentBy = d.paymentBy;
-        if(d.docPaymentLink) a.link = d.docPaymentLink;
+        if(d.docPaymentLink && (Number(d.updatedAt)||0) >= (a._lu||0)){ a.link = d.docPaymentLink; a._lu = Number(d.updatedAt)||0; }
         if((d.paymentDate||'') > a.paymentDate) a.paymentDate = d.paymentDate;
       });
       a.payTypeLabel = a.types.size===0 ? '-' : (a.types.size===1 ? payTypeLabel([...a.types][0]) : 'หลายประเภท');
@@ -6980,7 +6984,7 @@ function paymentHTML(){
     if(!batches[d.docPayment]) batches[d.docPayment] = {docPayment:d.docPayment, count:0, netSum:0, paymentDate:d.paymentDate||'', docPaymentLink:d.docPaymentLink||''};
     batches[d.docPayment].count++;
     batches[d.docPayment].netSum += (parseFloat(d.netAmount)||0);
-    if(d.docPaymentLink) batches[d.docPayment].docPaymentLink = d.docPaymentLink;
+    if(d.docPaymentLink && (Number(d.updatedAt)||0) >= (batches[d.docPayment]._lu||0)){ batches[d.docPayment].docPaymentLink = d.docPaymentLink; batches[d.docPayment]._lu = Number(d.updatedAt)||0; }
     if((d.paymentDate||'') > batches[d.docPayment].paymentDate) batches[d.docPayment].paymentDate = d.paymentDate;
   });
   const batchRows = Object.values(batches).sort((a,b)=>(b.paymentDate||'').localeCompare(a.paymentDate||'')).slice(0,10);
@@ -7807,7 +7811,7 @@ function reportPaymentHTML(){
     b.vat += num(d.vatAmount); b.wht += num(d.whtAmount); b.base += num(d.baseAmount); b.net += num(d.netAmount);
     if(d.payType) b.payTypes.add(d.payType);
     if(d.dueDate) b.dues.add(d.dueDate);
-    if(d.docPaymentLink) b.docPaymentLink = d.docPaymentLink;
+    if(d.docPaymentLink && (Number(d.updatedAt)||0) >= (b._lu||0)){ b.docPaymentLink = d.docPaymentLink; b._lu = Number(d.updatedAt)||0; }   // newest-written link wins, never array order
     if(dtMs_(d.paymentDate||'') > dtMs_(b.paymentDate||'')) b.paymentDate = d.paymentDate;
   });
   // newest batch first (real date-time compare; Thai D/M/BE strings can't be sorted as text)
@@ -7932,7 +7936,8 @@ async function saveBatchEdit(e, oldDocPayment){
   const newDocPayment = f.get('docPayment').trim();
   const newLink = f.get('docPaymentLink').trim();
   if(!newDocPayment){ showToast('กรุณาระบุเลข Doc Payment'); return; }
-  const docs = state.documents.filter(d=>String(d.docPayment)===String(oldDocPayment));
+  let docs = state.documents.filter(d=>String(d.docPayment)===String(oldDocPayment) && d.status==='Complete');
+  { const cos = new Set(docs.map(d=>String(d.companyCode))); if(cos.size>1 && !confirm('เลข Doc Payment '+oldDocPayment+' ถูกใช้ในหลายบริษัท ('+[...cos].join(', ')+')\n\nการแก้ไขนี้จะเปลี่ยนลิงก์/เลขของทุกบริษัทพร้อมกัน ต้องการทำต่อหรือไม่?')) return; }
   if(!docs.length){ showToast('ไม่พบเอกสารของ Doc Payment นี้'); return; }
   showBusyOverlay('กำลังบันทึกการแก้ไข กรุณารอสักครู่...');
   for(const doc of docs){
