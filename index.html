@@ -357,11 +357,11 @@ let state = {
   paymentVouchers:[], paymentMappings:[],
   expandedRow:null, permEditId:null, memberEditId:null, dashDocEditId:null, approvalDocEditId:null,
   authView:'login', authEmail:'',
-  dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:''},
+  dashSearch:{type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:'', vendor:''},
   dashPage:1,
   dashCompany:'all',
   dashGroupBy:'none',
-  approvalSearch:{type:'', name:'', due:'', createdBy:''},
+  approvalSearch:{type:'', name:'', due:'', createdBy:'', id:'', sap:'', vendor:''},
   approvalCompany:'all',
   paymentSearch:{type:'', name:'', due:'', createdBy:''},
   paymentCompany:'all',
@@ -2437,7 +2437,7 @@ function openDocFromLink(docId){
     if(state.approvalGroup==='payment') state.pvTab = 'pvDocs';
     state.approvalTab = tab;
     state.approvalCompany = 'all';
-    state.approvalSearch = { type:'', name:'', due:'', createdBy:'' };
+    state.approvalSearch = { type:'', name:'', due:'', createdBy:'', id:'', sap:'', vendor:'' };
     state.expandedRow = doc.id;
     showToast('เปิดเอกสาร ID ' + displayId(doc.id));
   } else {
@@ -2922,6 +2922,7 @@ function dashboardHTML(){
       try{ return parseSapLines(d).some(l=>String(l.fiDoc||l.docSAP||'').toLowerCase().includes(q)); }catch(_){ return false; }
     });
   }
+  if(s.vendor && s.vendor.trim()) filtered = filtered.filter(d=>docVendorMatch_(d, s.vendor));
   if(s.status){
     filtered = s.status==='__REJECTED__' ? filtered.filter(d=>d.status.startsWith('ตีกลับ')) : filtered.filter(d=>d.status===s.status);
   }
@@ -2978,6 +2979,9 @@ function dashboardHTML(){
     </div>
     <div class="f-field"><label>เลข Document SAP / Doc Payment / PO</label>
       <input id="dash-f-sap" type="text" placeholder="พิมพ์บางส่วนของเลขก็ได้..." value="${String(s.sap||'').replace(/"/g,'&quot;')}" oninput="setDashSearch('sap', this.value)" style="width:210px;">
+    </div>
+    <div class="f-field"><label>Vendor (รหัส/ชื่อ)</label>
+      <input id="dash-f-vendor" type="text" placeholder="เลข Vendor หรือชื่อ..." value="${String(s.vendor||'').replace(/"/g,'&quot;')}" oninput="setDashSearch('vendor', this.value)" style="width:170px;">
     </div>
     <div class="f-field"><label>สร้างโดย</label>
       <input id="dash-f-createdby" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setDashSearch('createdBy', this.value)">
@@ -3042,11 +3046,24 @@ function paginationHTML(current, total, fnName){
 function queueRender_(){ clearTimeout(window.__rqT); window.__rqT = setTimeout(render, 280); }
 function setDashSearch(field, val){ state.dashSearch[field] = val; state.dashPage = 1; queueRender_(); }
 function setDashStatusFilter(val){ state.dashSearch.status = state.dashSearch.status===val ? '' : val; state.dashPage = 1; render(); }
-function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:''}; state.dashPage = 1; render(); }
+function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:'', createdBy:'', due:'', sap:'', vendor:''}; state.dashPage = 1; render(); }
 
 /* ---- Recent Activity row edit (accountant / reviewer only) ---- */
 // Dashboard with the "Complete" status card selected: show the finance Doc Payment no. (after Document SAP) instead of Comment
 function dashCompleteView_(){ return !!(state.dashSearch && state.dashSearch.status==='Complete'); }
+/* search helpers shared by Dashboard / Approval filter bars */
+function docVendorMatch_(d, q){
+  q = String(q||'').trim().toLowerCase(); if(!q) return true;
+  if(String(d.vendor||'').toLowerCase().includes(q) || String(d.vendorName||'').toLowerCase().includes(q)) return true;
+  try{ return parseSapLines(d).some(l=>String(l.vendor||'').toLowerCase().includes(q) || String(l.vendorName||'').toLowerCase().includes(q)); }catch(_){ return false; }
+}
+function docSapPoMatch_(d, q){
+  q = String(q||'').trim().toLowerCase(); if(!q) return true;
+  if(String(d.docSAP||'').toLowerCase().includes(q)) return true;
+  if(String(d.docPayment||'').toLowerCase().includes(q)) return true;
+  if(poNoOf_(d).toLowerCase().includes(q)) return true;
+  try{ return parseSapLines(d).some(l=>String(l.fiDoc||l.docSAP||'').toLowerCase().includes(q)); }catch(_){ return false; }
+}
 function dashDocRowHTML(d){
   if(state.dashDocEditId === d.id){
     return `
@@ -3130,6 +3147,7 @@ function submitHTML(){
   const typeOptions = state.docTypes.map(t=>`<option value="${t.key}" data-auto="${t.autoComplete?'1':'0'}">${t.label}</option>`).join('');
   const companyOptions = userCompanyOptions().map(c=>`<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
   const firstTypeAuto = state.docTypes.length ? !!state.docTypes[0].autoComplete : false;
+  const firstTypeIsPO = state.docTypes.length ? isPoDocType_(state.docTypes[0].key) : false;   // the form opens with the first type pre-selected
 
   const myRejected = state.documents.filter(d=>d.status==='ตีกลับแก้ไข(นักบัญชี)' && d.createdBy===fullName(state.user));
   const rejectedBlock = myRejected.length ? `
@@ -3164,7 +3182,7 @@ function submitHTML(){
       <div class="form-grid">
         <div class="field"><label>ประเภทเอกสาร</label><select name="docType" id="submit-docType" required onchange="onSubmitDocTypeChange()">${typeOptions}</select></div>
         <div class="field"><label>รหัสบริษัท</label><select name="companyCode" required onchange="refreshVendorLists_()">${companyOptions}</select></div>
-        <div class="field full" id="submit-po-wrap" style="display:none;"><label>เลขที่ PO <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(จะแสดงนำหน้า Text ในใบสรุป)</span></label><input type="text" name="poNo" id="submit-poNo" placeholder="เช่น 4500123456" maxlength="60"></div>
+        <div class="field full" id="submit-po-wrap" style="display:${firstTypeIsPO ? '' : 'none'};"><label>เลขที่ PO <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(จะแสดงนำหน้า Text ในใบสรุป)</span></label><input type="text" name="poNo" id="submit-poNo" placeholder="เช่น 4500123456" maxlength="60"></div>
         <div class="field full"><label>ชื่อไฟล์เอกสาร</label><input type="text" name="docName" placeholder="เช่น ค่าเบี้ยเลี้ยง+ทางด่วน ยอด 1,045 บาท" required></div>
         <div class="field"><label>Due วันชำระเงิน</label><input type="date" name="dueDate" required></div>
         <div class="field"><label>Link File Folder</label><input type="url" name="linkFile" placeholder="https://drive.google.com/..." required></div>
@@ -3177,13 +3195,16 @@ function submitHTML(){
     </form>
   </div>`;
 }
+function isPoDocType_(key){
+  const t = state.docTypes.find(x=>x.key===key);
+  return String(key).toUpperCase()==='PO' || !!(t && String(t.label||'').trim().toUpperCase()==='PO');
+}
 function onSubmitDocTypeChange(){
   const sel = document.getElementById('submit-docType');
   const hint = document.getElementById('submit-autocomplete-hint');
   const poWrap = document.getElementById('submit-po-wrap');
   if(poWrap && sel){
-    const t = state.docTypes.find(x=>x.key===sel.value);
-    const isPO = String(sel.value).toUpperCase()==='PO' || (t && String(t.label||'').trim().toUpperCase()==='PO');
+    const isPO = isPoDocType_(sel.value);
     poWrap.style.display = isPO ? '' : 'none';
     if(!isPO){ const pi = document.getElementById('submit-poNo'); if(pi) pi.value = ''; }
   }
@@ -4861,6 +4882,30 @@ function printTrackingRegister(){
   const url = URL.createObjectURL(blob);
   window.open(url, '_blank');
 }
+function approvalTrackBoxHTML_(d){
+  if(!companyTrackingOn_(d.companyCode)) return '';
+  const done = !!d.trackAcct2By;
+  const can = canTrackDoc(d,'acct2');
+  if(!done && !can) return '';
+  const tip = done ? ('ได้รับเอกสารตัวจริงแล้ว — '+d.trackAcct2By+(d.trackAcct2Date?' · '+fmtDateTime(d.trackAcct2Date):'')) : 'ติ๊กเมื่อได้รับเอกสารตัวจริงแล้ว (บันทึกใน Tracking Invoice ช่อง นักบัญชี #2)';
+  return `<label class="trk-mini" title="${String(tip).replace(/"/g,'&quot;')}" style="display:flex;align-items:center;justify-content:flex-end;gap:5px;white-space:nowrap;margin-top:7px;font-family:'IBM Plex Sans Thai',sans-serif;font-size:11px;font-weight:500;color:${done?'var(--forest)':'var(--ink-soft)'};cursor:${can?'pointer':'default'};"><input type="checkbox" ${done?'checked':''} ${can?'':'disabled'} onchange="toggleTrackFromApproval('${d.id}', this)"> ได้รับตัวจริง</label>`;
+}
+async function toggleTrackFromApproval(id, el){
+  const doc = state.documents.find(d=>d.id===id);
+  if(!doc){ return; }
+  const was = !!doc.trackAcct2By;
+  if(was && !isAdmin() && doc.trackAcct2By !== fullName(state.user)){ el.checked = true; showToast('ยกเลิกได้เฉพาะรายการที่ตัวเองติ๊กรับไว้เท่านั้น'); return; }
+  if(!canTrackDoc(doc,'acct2')){ el.checked = was; showToast('คุณไม่มีสิทธิ์ติ๊กรับเอกสารนี้'); return; }
+  el.disabled = true;
+  const patch = { id, trackAcct2By: was ? '' : fullName(state.user), trackAcct2Date: was ? '' : nowStr() };
+  const res = await apiCall('updateDocument', patch);
+  el.disabled = false;
+  if(!res.success){ el.checked = was; showToast('บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง'); return; }
+  Object.assign(doc, patch);
+  // no full render(): keep any amounts the user has typed but not yet saved in this row
+  const lb = el.closest('label'); if(lb) lb.style.color = was ? 'var(--ink-soft)' : 'var(--forest)';
+  showToast(was ? 'ยกเลิกการรับเอกสารตัวจริงแล้ว' : 'บันทึกรับเอกสารตัวจริงแล้ว (ID '+displayId(id)+')');
+}
 async function toggleTrackReceipt(id, stage){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
@@ -4973,12 +5018,18 @@ function accountingApprovalHTML(mode){
   if(s.name && s.name.trim()) list = list.filter(d=>String(d.docName||'').toLowerCase().includes(s.name.trim().toLowerCase()));
   if(s.due) list = list.filter(d=>normalizeDateOnly(d.dueDate)===s.due);
   if(s.createdBy && s.createdBy.trim()) list = list.filter(d=>String(d.createdBy||'').toLowerCase().includes(s.createdBy.trim().toLowerCase()));
+  if(s.id && s.id.trim()) list = list.filter(d=>String(d.id||'').toLowerCase().includes(s.id.trim().toLowerCase()) || String(displayId(d.id)||'').toLowerCase().includes(s.id.trim().toLowerCase()));
+  if(s.sap && s.sap.trim()) list = list.filter(d=>docSapPoMatch_(d, s.sap));
+  if(s.vendor && s.vendor.trim()) list = list.filter(d=>docVendorMatch_(d, s.vendor));
 
   const filterBar = `
   <div class="filter-bar">
+    <div class="f-field"><label>ID</label><input id="appr-f-id" type="text" placeholder="เช่น D099" value="${String(s.id||'').replace(/"/g,'&quot;')}" oninput="setApprovalSearch('id', this.value)" style="width:100px;"></div>
     <div class="f-field"><label>ประเภทเอกสาร</label><select id="appr-f-type" onchange="setApprovalSearch('type', this.value)">${docTypeSelectOptions(s.type)}</select></div>
     <div class="f-field" style="flex:1;min-width:180px;"><label>ชื่อเอกสาร</label><input id="appr-f-name" type="text" placeholder="ค้นหาชื่อเอกสาร..." value="${s.name}" oninput="setApprovalSearch('name', this.value)"></div>
     <div class="f-field"><label>Due วันชำระเงิน</label><input id="appr-f-due" type="date" value="${s.due}" onchange="setApprovalSearch('due', this.value)"></div>
+    <div class="f-field"><label>Doc SAP / PO</label><input id="appr-f-sap" type="text" placeholder="เลข SAP หรือ PO..." value="${String(s.sap||'').replace(/"/g,'&quot;')}" oninput="setApprovalSearch('sap', this.value)" style="width:150px;"></div>
+    <div class="f-field"><label>Vendor (รหัส/ชื่อ)</label><input id="appr-f-vendor" type="text" placeholder="เลข Vendor หรือชื่อ..." value="${String(s.vendor||'').replace(/"/g,'&quot;')}" oninput="setApprovalSearch('vendor', this.value)" style="width:160px;"></div>
     <div class="f-field"><label>สร้างโดย</label><input id="appr-f-created" type="text" placeholder="ชื่อผู้สร้าง..." value="${s.createdBy}" oninput="setApprovalSearch('createdBy', this.value)"></div>
     <button class="filter-clear" onclick="clearApprovalSearch()">ล้างตัวกรอง</button>
   </div>`;
@@ -5126,7 +5177,7 @@ function accountingApprovalHTML(mode){
               <option value="VX" ${d.taxCode==='VX'?'selected':''}>VX (ไม่มี VAT)</option>
             </select>
           </td>
-          <td style="text-align:right;white-space:nowrap;">${editBtn} ${sapBtn} ${pdfBtn} ${actionBtn}</td>
+          <td style="text-align:right;white-space:nowrap;">${editBtn} ${sapBtn} ${pdfBtn} ${actionBtn}${approvalTrackBoxHTML_(d)}</td>
         </tr>`;
 
       let actionRow = '';
@@ -5286,7 +5337,7 @@ function accountingApprovalHTML(mode){
 }
 function setApprovalCompany(v){ state.approvalCompany = v; state.expandedRow=null; render(); }
 function setApprovalSearch(field, val){ state.approvalSearch[field] = val; queueRender_(); }
-function clearApprovalSearch(){ state.approvalSearch = {type:'', name:'', due:'', createdBy:''}; render(); }
+function clearApprovalSearch(){ state.approvalSearch = {type:'', name:'', due:'', createdBy:'', id:'', sap:'', vendor:''}; render(); }
 function toggleRow(id){ state.expandedRow = state.expandedRow===id ? null : id; render(); }
 
 /* ---- Approval-stage row edit: docType / docName / linkFile only (accountant / reviewer) ---- */
