@@ -3098,6 +3098,15 @@ function clearDashSearch(){ state.dashSearch = {type:'', name:'', status:'', id:
 /* ---- Recent Activity row edit (accountant / reviewer only) ---- */
 // Dashboard with the "Complete" status card selected: show the finance Doc Payment no. (after Document SAP) instead of Comment
 function dashCompleteView_(){ return !!(state.dashSearch && state.dashSearch.status==='Complete'); }
+// "6100000182, 6100000182, 6100000185" -> "6100000182 ×2, 6100000185" (display only; the stored value is unchanged)
+function docSapCompact_(v){
+  const parts = String(v==null?'':v).split(',').map(x=>x.trim()).filter(Boolean);
+  if(parts.length<2) return String(v==null?'':v);
+  const order = [], cnt = {};
+  parts.forEach(x=>{ if(!cnt[x]){ cnt[x]=0; order.push(x); } cnt[x]++; });
+  if(order.length===parts.length) return String(v);
+  return order.map(x=>cnt[x]>1 ? x+' ×'+cnt[x] : x).join(', ');
+}
 /* search helpers shared by Dashboard / Approval filter bars */
 function docVendorMatch_(d, q){
   q = String(q||'').trim().toLowerCase(); if(!q) return true;
@@ -3145,7 +3154,7 @@ function dashDocRowHTML(d){
       <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
       <td>${d.docName}</td>
       <td>${fmtDate(d.dueDate)}</td>
-      <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || 'ยังไม่ระบุ'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
+      <td class="sap-cell ${d.docSAP?'':'empty'}">${docSapCompact_(d.docSAP) || 'ยังไม่ระบุ'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
       ${cpl ? `<td class="mono">${d.docPayment ? String(d.docPayment).replace(/</g,'&lt;') : '-'}</td>` : ''}
       <td class="net-cell" style="text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;">${(function(){ let n = parseFloat(String(d.netAmount||'').replace(/,/g,'')); if(isNaN(n)){ const ls = parseSapLines(d); if(ls.length) n = ls.reduce((t,l)=>t+(parseFloat(l.net)||0),0); } return isNaN(n) ? '<span style="color:var(--ink-soft);">-</span>' : formatMoney(n); })()}</td>
       <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
@@ -5211,7 +5220,7 @@ function accountingApprovalHTML(mode){
           <td class="mono" style="font-weight:700;color:var(--heading);font-size:13.5px;">${displayId(d.id)}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span>${(d.skipApprover==='TRUE'||d.skipApprover===true)?'<span title="ข้ามขั้นผู้อนุมัติ" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">⤳หัวหน้าแผนก</span>':''}${(d.skipFinance==='TRUE'||d.skipFinance===true)?'<span title="ไม่ส่งการเงิน" style="margin-left:4px;font-size:10px;color:var(--ink-soft);">🚫การเงิน</span>':''}${getSkipReviewerReason(d)?`<span title="ยังไม่ได้ผ่านผู้ตรวจสอบ — ${getSkipReviewerReason(d)}" style="margin-left:4px;font-size:10px;color:var(--stamp-red);font-weight:600;">⚠ ข้ามผู้ตรวจสอบ</span>`:''}</td>
           <td>${d.docName}${d.comment?`<div style="color:var(--ink-soft);font-size:11.5px;margin-top:2px;">${d.comment}</div>`:''}</td>
-          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${docSapCompact_(d.docSAP) || '-'}${(function(){ const lines=parseSapLines(d); return lines.length>1 ? ` <span class="badge badge-blue" style="cursor:pointer;font-size:10px;" title="มีหลาย SAP Doc — กดดูรายละเอียด" onclick="viewSapLines('${d.id}')">📎 ${lines.length} SAP Docs</span>` : ''; })()}</td>
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${fmtDate(d.dueDate)}</td>
           <td>${d.createdBy}</td>
@@ -7171,7 +7180,7 @@ function paymentHTML(){
           <td class="mono">${displayId(d.id)}</td>
           <td><span class="badge badge-${docTypeInfo(d.docType).color}">${docTypeInfo(d.docType).label}</span></td>
           <td>${d.docName}</td>
-          <td class="sap-cell ${d.docSAP?'':'empty'}">${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
+          <td class="sap-cell ${d.docSAP?'':'empty'}">${docSapCompact_(d.docSAP) || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}</td>
           <td>${d.webDocNo||'-'}</td>
           <td class="link-cell"><a href="${d.linkFile}" target="_blank" rel="noopener">เปิดไฟล์ ↗</a></td>
           <td>${d.approverBy||'-'}</td>
@@ -7425,7 +7434,7 @@ function voucherReportHTML(){
       const canEditThis = canEditVoucherReport();
       const sapCell = (editing && lines.length<=1)
         ? `<input type="text" id="ved-sap-${d.id}" value="${d.docSAP||''}" style="width:100px;" class="sap-input">`
-        : `${d.docSAP || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}`;
+        : `${docSapCompact_(d.docSAP) || '-'}${lines.length>1 ? ` <span class="badge badge-blue" style="font-size:10px;">📎 ${lines.length}</span>` : ''}`;
       const amtCell = (field, val) => (editing && lines.length<=1)
         ? `<input type="text" inputmode="decimal" id="ved-${field}-${d.id}" value="${formatMoney(val)}" style="width:95px;text-align:right;" class="sap-input" onfocus="this.value=unformatMoney(this.value)">`
         : moneyText(val);
