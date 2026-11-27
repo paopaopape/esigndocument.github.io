@@ -580,6 +580,8 @@ function vendorsFor_(co){ const c = String(co||''); return state.vendors.filter(
 // One-time vendor cards: a code starting with OTD (e.g. OTD002) is kept in the Master as OTD002-1, OTD002-2 ... one per payee name.
 // Documents/reports keep the real SAP card code (OTD002); the payee is told apart by name.
 function isOtdCode_(c){ return /^OTD/i.test(String(c||'').trim()); }
+// report grouping key: normal vendors group by code; one-time (OTD…) cards share one SAP code, so group by code + payee name
+function vendorGroupKey_(r){ const c = String((r&&r.vendor)||'').trim(); if(!c) return (r&&r.vname)||'-'; return isOtdCode_(c) ? c+'|'+vendorNameKey_(r.vname) : c; }
 function vendorSapCode_(v){ const c = String((v&&v.vendorCode)||''); return isOtdCode_(c) ? c.replace(/-\d+$/, '') : c; }
 function vendorNameKey_(n){ return String(n||'').replace(/\s+/g,'').toLowerCase(); }
 function findVendor_(co, code, name){
@@ -1460,12 +1462,56 @@ function gatherCurrentSapLinesFromDOM(docId){
       text: textEl ? textEl.value.trim() : (l.text||''),
       vendor: vendorEl ? vendorEl.value.trim() : (l.vendor||''),
       vendorName: vendorNameEl ? vendorNameEl.value.trim() : (l.vendorName||''),
+      payType: (function(){ const e = document.getElementById('sapline-pay-'+docId+'-'+i); return e ? e.value : String(l.payType||''); })(),
+      bankAccount: (function(){ const e = document.getElementById('sapline-bankacct-'+docId+'-'+i); return e ? e.value.trim() : String(l.bankAccount||''); })(),
+      bankName: (function(){ const e = document.getElementById('sapline-bankname-'+docId+'-'+i); return e ? e.value.trim() : String(l.bankName||''); })(),
     });
   });
 }
 async function saveSapLineRowsNow(docId){
   const lines = gatherCurrentSapLinesFromDOM(docId);
   await saveSapLinesToDoc(docId, lines);
+}
+/* ---- accountant / reviewer: split ticked SAP lines of one ID into a NEW ID (e.g. Direct vs Media) ---- */
+function toggleApprSplitPick(docId, idx, on){
+  state.apprSplitPick = state.apprSplitPick || {};
+  const k = docId+'|'+idx;
+  if(on) state.apprSplitPick[k] = 1; else delete state.apprSplitPick[k];
+  const b = document.getElementById('appr-split-btn-'+docId);
+  if(b) b.innerHTML = b.innerHTML.replace(/\(\d+\)\s*$/, '('+Object.keys(state.apprSplitPick).filter(x=>x.indexOf(docId+'|')===0).length+')');
+}
+function sameSapLines_(a, b){
+  const n = v => (parseFloat(v)||0).toFixed(2), t = v => String(v==null?'':v).trim();
+  if(a.length!==b.length) return false;
+  return a.every((x,i)=>{ const y=b[i]; return n(x.vat)===n(y.vat)&&n(x.wht)===n(y.wht)&&n(x.base)===n(y.base)&&n(x.net)===n(y.net)&&t(x.fiDoc)===t(y.fiDoc)&&t(x.webDocNo)===t(y.webDocNo)&&t(x.text)===t(y.text)&&t(x.vendor)===t(y.vendor)&&t(x.vendorName)===t(y.vendorName)&&t(x.taxCode)===t(y.taxCode); });
+}
+async function splitApprovalLines(docId){
+  const doc = state.documents.find(d=>d.id===docId); if(!doc) return;
+  const pick = state.apprSplitPick || {};
+  const idxs = Object.keys(pick).filter(k=>k.indexOf(docId+'|')===0).map(k=>parseInt(k.split('|')[1],10)).sort((a,b)=>a-b);
+  const total = parseSapLines(doc).length;
+  if(!idxs.length){ showToast('กรุณาติ๊กเลือกบรรทัดที่ต้องการแยกก่อน'); return; }
+  if(idxs.length>=total){ showToast('ติ๊กครบทุกบรรทัดไม่ได้ — ต้องเหลืออย่างน้อย 1 บรรทัดไว้ใน ID เดิม'); return; }
+  // keep pending edits on screen: if any line was edited but not saved, save first so the server splits what the user sees
+  const cur = gatherCurrentSapLinesFromDOM(docId);
+  if(!sameSapLines_(cur, parseSapLines(doc))){
+    await saveSapLinesToDoc(docId, cur);
+  }
+  const lines = parseSapLines(doc);
+  const keyOf = (l,i)=>String(l.subId || (doc.id+'-'+(i+1)));
+  const subIds = idxs.map(i=>lines[i]).filter(Boolean).map((l,j)=>keyOf(l, idxs[j]));
+  const picked = idxs.map(i=>lines[i]).filter(Boolean);
+  const sum = picked.reduce((t,l)=>t+(parseFloat(l.net)||0),0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(!confirm('แยก '+picked.length+' รายการ (ยอดสุทธิ '+sum+' บาท) ออกเป็น ID ใหม่ ?\n\nรายการที่เหลือจะอยู่ที่ '+displayId(doc.id)+' เหมือนเดิม และทั้ง 2 ID จะอยู่ขั้นตอนเดียวกันนี้ — จากนั้นเลือกประเภทการจ่าย (Direct / Media) ของแต่ละ ID ได้แยกกัน')) return;
+  showBusyOverlay('กำลังแยก ID กรุณารอสักครู่...');
+  const res = await apiCall('splitDocForPayment', { id:doc.id, subIds, mode:'approval', modifiedBy:fullName(state.user), modifiedDate:nowStr() });
+  hideBusyOverlay();
+  if(!res || !res.success || !res.child){ showToast('แยก ID ไม่สำเร็จ'+(res&&res.error?' ('+res.error+')':'')+' — ลองใหม่อีกครั้ง'); return; }
+  if(res.parent) Object.assign(doc, res.parent);
+  state.documents.push(res.child);
+  Object.keys(pick).forEach(k=>{ if(k.indexOf(docId+'|')===0) delete pick[k]; });
+  showToast('แยกเรียบร้อย — ID ใหม่ '+displayId(res.child.id)+' ('+picked.length+' รายการ)');
+  render();
 }
 async function saveSapLinesToDoc(docId, lines){
   const doc = state.documents.find(d=>d.id===docId);
@@ -1580,6 +1626,7 @@ function saveSapLineDetailsLocal(docId, idx){
   if(textEl2) lines[idx].text = textEl2.value.trim();
   if(vendorEl) lines[idx].vendor = vendorEl.value.trim();
   if(vendorNameEl) lines[idx].vendorName = vendorNameEl.value.trim();
+  { const ba = document.getElementById('sapline-bankacct-'+docId+'-'+idx), bn = document.getElementById('sapline-bankname-'+docId+'-'+idx); if(ba) lines[idx].bankAccount = ba.value.trim(); if(bn) lines[idx].bankName = bn.value.trim(); }
   doc.sapLines = JSON.stringify(lines); // kept in memory only until the explicit Save button runs
 
   // reflect the edit directly on the visible row — no re-render needed
@@ -5073,6 +5120,7 @@ function accountingApprovalHTML(mode){
         const lines = parseSapLines(d);
         const canEditLines = (state.approvalTab==='accountant' || state.approvalTab==='reviewer') && canEditDocuments() && canActOnStage(d);
         const showBreakdown = lines.length >= 2; // 1 line is the normal simple case — no separate breakdown needed
+        const canSplitLines = canEditLines && showBreakdown && (d.status==='รอนักบัญชี' || d.status==='รอผู้ตรวจสอบ' || String(d.status).indexOf('ตีกลับแก้ไข')===0);
         if(!showBreakdown && !canEditLines) return '';
         const money = n => (parseFloat(n)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
         let rows = !showBreakdown ? '' : lines.map((l,i)=>{
@@ -5087,7 +5135,7 @@ function accountingApprovalHTML(mode){
           <td></td>
           <td></td>
           <td>${l.vendor||'-'}</td>
-          <td></td>
+          <td style="font-size:11px;color:var(--ink-soft);">${(l.payType||d.payType)?payTypeLabel(l.payType||d.payType):''}</td>
           <td style="text-align:right;">${money(l.vat)}</td>
           <td style="text-align:right;">${money(l.wht)}</td>
           <td style="text-align:right;">${money(l.base)}</td>
@@ -5110,6 +5158,8 @@ function accountingApprovalHTML(mode){
                 <datalist id="sapline-vendor-dl-${d.id}-${i}">${vendorOptionsHTML_(d.companyCode)}</datalist>
               </div>
               <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="sapline-vendorname-${d.id}-${i}" type="text" value="${l.vendorName||''}" style="width:170px;"></div>
+              <div class="sap-wrap"><label>เลขที่บัญชี <span style="font-weight:400;text-transform:none;color:var(--ink-soft);">(Vendor ขาจร/รายใหม่)</span></label><input class="sap-input" id="sapline-bankacct-${d.id}-${i}" type="text" value="${String(l.bankAccount||'').replace(/"/g,'&quot;')}" placeholder="${(function(){ const v = findVendor_(d.companyCode, l.vendor, l.vendorName); return v && v.bankAccount ? 'ใน Master: '+v.bankAccount : 'เลขที่บัญชี'; })()}" style="width:150px;"></div>
+              <div class="sap-wrap"><label>ธนาคาร</label><input class="sap-input" id="sapline-bankname-${d.id}-${i}" type="text" value="${String(l.bankName||'').replace(/"/g,'&quot;')}" placeholder="${(function(){ const v = findVendor_(d.companyCode, l.vendor, l.vendorName); return v && v.bankName ? 'ใน Master: '+v.bankName : 'ชื่อธนาคาร'; })()}" style="width:150px;"></div>
               <button class="btn btn-sm btn-approve" onclick="saveSapLineDetailsLocal('${d.id}',${i})">✓ ยืนยัน (ยังไม่บันทึกขึ้นระบบ)</button>
               <button class="btn btn-sm btn-outline" onclick="toggleSapLineDetailLocal('${d.id}',${i})">ปิด</button>
             </div>
@@ -5117,14 +5167,14 @@ function accountingApprovalHTML(mode){
         </tr>`;
           return `
         <tr style="background:var(--paper);font-size:12px;">
-          <td class="mono" style="color:var(--blue);">↳ ${subId}</td>
+          <td class="mono" style="color:var(--blue);white-space:nowrap;">${canSplitLines ? `<input type="checkbox" title="ติ๊กเพื่อแยกบรรทัดนี้ออกเป็น ID ใหม่" ${(state.apprSplitPick||{})[d.id+'|'+i]?'checked':''} onchange="toggleApprSplitPick('${d.id}',${i},this.checked)" style="margin-right:5px;vertical-align:middle;">` : ''}↳ ${subId}</td>
           <td style="color:var(--ink-soft);">SAP Line</td>
           <td id="sapline-vendorname-display-${d.id}-${i}">${l.vendorName||'-'}</td>
           <td class="sap-cell" id="sapline-fidoc-display-${d.id}-${i}">${l.fiDoc||'-'}${l.webDocNo?`<div style="font-size:10.5px;color:var(--ink-soft);font-weight:400;">${l.webDocNo}</div>`:''}</td>
           <td></td>
           <td></td>
           <td>${l.vendor||'-'}</td>
-          <td></td>
+          <td><select id="sapline-pay-${d.id}-${i}" title="ประเภทการจ่ายของบรรทัดนี้ — ถ้าในเอกสารมีหลายประเภท ระบบจะแยก ID ให้ตอนกดส่งงาน" style="width:112px;font-size:11px;${linePayDefault_(d,l)?'':'border-color:var(--stamp-red);'}"><option value="">— ประเภทการจ่าย —</option>${PAY_TYPES.map(t=>`<option value="${t[0]}" ${linePayDefault_(d,l)===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select></td>
           <td>${sapLineAmtInput(d.id,i,'vat',l.vat)}</td>
           <td>${sapLineAmtInput(d.id,i,'wht',l.wht)}<select id="sapline-whtrate-${d.id}-${i}" title="เลือก Rate WHT — ระบบคิด Base x Rate ใส่ WHT ให้" style="width:95px;font-size:11px;margin-top:4px;" onchange="applySapLineWhtRate('${d.id}',${i},this.value)">${whtRateOptionsHTML_(l.base,l.wht)}</select><div id="sapline-wht-hint-${d.id}-${i}">${whtPercentHTML(l.base,l.wht)}</div></td>
           <td>${sapLineAmtInput(d.id,i,'base',l.base)}</td>
@@ -5150,6 +5200,7 @@ function accountingApprovalHTML(mode){
             ${sapUploadBtnsHTML_(d.id)}
             <button class="btn btn-sm btn-outline" style="margin-left:2px;" onclick="addSapLineInline('${d.id}')">+ เพิ่มเอง</button>
             ${showBreakdown ? `<button class="btn btn-sm btn-outline" id="sapline-save-btn-${d.id}" onclick="saveSapLineRowsNow('${d.id}')" style="margin-left:8px;">💾 บันทึกรายการ SAP</button>` : ''}
+            ${canSplitLines ? `<button class="btn btn-sm btn-outline" id="appr-split-btn-${d.id}" onclick="splitApprovalLines('${d.id}')" style="margin-left:8px;border-color:var(--gold);color:var(--gold);" title="ติ๊กช่องหน้า ↳ ของบรรทัดที่ต้องการ แล้วกดปุ่มนี้ — ระบบจะแยกเป็น ID ใหม่ (เช่น Direct / Media แยกกัน)">✂ แยกรายการที่ติ๊กเป็น ID ใหม่ (${Object.keys(state.apprSplitPick||{}).filter(k=>k.indexOf(d.id+'|')===0).length})</button>` : ''}
           </td>
         </tr>`;
         }
@@ -5194,8 +5245,8 @@ function accountingApprovalHTML(mode){
             <div class="sap-wrap"><label>Vendor Name</label><input class="sap-input" id="vendorName-${d.id}" type="text" placeholder="ชื่อ Vendor (เติมอัตโนมัติ หรือพิมพ์เองได้)" value="${d.vendorName||''}" style="width:220px;"></div>
             <div id="vendor-bank-${d.id}" style="display:contents;">${vendorBankBlockHTML(d)}</div>
           </div>
-          <!--PAYSPLIT-->${sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : '')}
-          <div class="flag-wrap" style="display:flex;gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
+          <!--PAYSPLIT-->${parseSapLines(d).length>1 ? (sectionLabel('ประเภทการจ่าย') + '<div style="width:100%;font-size:12.5px;color:var(--ink-soft);">เอกสารนี้มีหลายบรรทัด SAP — เลือก <b>ประเภทการจ่ายที่แต่ละบรรทัด</b> ในตารางด้านบน ถ้ามีมากกว่า 1 ประเภท ระบบจะแยก ID ให้อัตโนมัติตอนกดส่งงาน</div>') : (sectionLabel('ประเภทการจ่าย') + (!d.payType ? '<span style="width:100%;font-size:12px;color:var(--stamp-red);font-weight:600;margin:-4px 0 6px;">⚠ ยังไม่มีการเลือกประเภทการจ่าย — กรุณาตรวจสอบกับนักบัญชีหรือเลือกให้ถูกต้องก่อนส่งต่อ</span>' : ''))}
+          <div class="flag-wrap" style="display:${parseSapLines(d).length>1?'none':'flex'};gap:16px;flex-wrap:wrap;width:100%;font-size:12.5px;">
             ${PAY_TYPES.map(t=>`<label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;"><input type="radio" name="payType-${d.id}" value="${t[0]}" ${d.payType===t[0]?'checked':''}> ${t[1]}</label>`).join('')}
           </div>
           <div style="width:100%;background:var(--paper);border-radius:8px;padding:10px 12px;margin-top:10px;">
@@ -5497,7 +5548,7 @@ function openApprovalReport(id, draft){
             rows = lines.map(l=>{
               const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
               return {key:String(l.subId||d.id), id:displayId(l.subId||d.id), sap:l.fiDoc, web:l.webDocNo||d.webDocNo, text:l.text||'', vendor:l.vendor, vname:l.vendorName,
-                      acct:vRec&&vRec.bankAccount, bank:vRec&&vRec.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net)};
+                      acct:(vRec&&vRec.bankAccount)||l.bankAccount, bank:(vRec&&vRec.bankName)||l.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net), payType:l.payType};
             });
           } else {
             rows = [{key:String(d.id), id:displayId(d.id), sap:d.docSAP, web:d.webDocNo, text:d.sapText||'', vendor:d.vendor, vname:d.vendorName,
@@ -5514,7 +5565,7 @@ function openApprovalReport(id, draft){
           <td>${r.vendor||'-'}</td>
           <td>${r.vname||'-'}</td>
           ${NL_ ? `<td>${(function(){ const tx = poTextOf_(poNoOf_(d), r.text||d.docName||''); return esc_((tx||'-') + whtTextSuffix_(r, tx)); })()}</td>` : ''}
-          <td>${payTypeLabel(d.payType)}</td>
+          <td>${payTypeLabel(r.payType||d.payType)}</td>
           ${NL_ ? '' : `<td>${r.acct||'-'}</td><td>${r.bank||'-'}</td>`}
           <td class="n">${money(r.base)}</td>
           <td class="n">${money(r.vat)}</td>
@@ -5529,12 +5580,12 @@ function openApprovalReport(id, draft){
           <td class="n">${money(t.base)}</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.base+t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.net)}</td></tr>`;
           // group rows by Vendor (first-appearance order), subtotal under each group, grand total at the end
           const order = [], groups = {};
-          rows.forEach(r=>{ const k = r.vendor || r.vname || '-'; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(r); });
+          rows.forEach(r=>{ const k = vendorGroupKey_(r); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(r); });
           let out = '';
           order.forEach(k=>{
             const g = groups[k];
             out += g.map(rowHTML).join('');
-            if(order.length>1) out += totHTML('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)'+(NL_?bankTxt(g[0]):''), sum(g), 'S:'+k);
+            if(order.length>1) out += totHTML('subtot', 'รวม '+(g[0].vendor||k)+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)'+(NL_?bankTxt(g[0]):''), sum(g), 'S:'+k);
           });
           out += totHTML('grand', 'Total ('+rows.length+' รายการ)'+((NL_ && order.length===1)?bankTxt(rows[0]):''), sum(rows), 'G');
           return out;
@@ -6325,6 +6376,80 @@ async function bgUpdateDoc_(doc, patch, okMsg, apiAction){
     if(!(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))) render();
   }
 }
+/* ---- payment type per SAP line (multi-line docs) + automatic split by type when the accountant/reviewer sends the doc on ---- */
+// default payment type of a SAP line: its own value -> suggested from the payee's bank (SCB = Direct, others = Media) -> the document's value
+function linePayDefault_(d, l){
+  if(l.payType) return String(l.payType);
+  const v = findVendor_(d.companyCode, l.vendor, l.vendorName);
+  const bank = l.bankName || (v && v.bankName) || '';
+  return payTypeFromBank_(bank) || String(d.payType||'');
+}
+function payTypeSel_(id){
+  const doc = state.documents.find(d=>d.id===id);
+  if(doc && parseSapLines(doc).length>1){
+    const ls = gatherCurrentSapLinesFromDOM(id);
+    if(!ls.length || ls.some(l=>!l.payType)) return null;
+    const types = []; ls.forEach(l=>{ const t = String(l.payType); if(types.indexOf(t)===-1) types.push(t); });
+    return { multi:true, mixed:types.length>1, types, lines:ls, value: types.length===1 ? types[0] : '' };
+  }
+  return document.querySelector('input[name="payType-'+id+'"]:checked');
+}
+function payMissTxt_(id){
+  const doc = state.documents.find(d=>d.id===id);
+  return (doc && parseSapLines(doc).length>1) ? 'ประเภทการจ่ายของทุกบรรทัด SAP' : 'ประเภทการจ่าย';
+}
+function mergeLinePayTypes_(doc, ls){
+  return JSON.stringify(parseSapLines(doc).map((l,i)=>Object.assign({}, l, { payType: (ls[i] && ls[i].payType) || '', bankAccount: (ls[i] && ls[i].bankAccount) || l.bankAccount || '', bankName: (ls[i] && ls[i].bankName) || l.bankName || '' })));
+}
+async function autoSplitSend_(doc, patch, sel){
+  const me = fullName(state.user);
+  const num = v => parseFloat(v)||0;
+  const retry = async (action, payload) => { let r = {success:false}; for(let i=0;i<3;i++){ if(i) await new Promise(x=>setTimeout(x, 1500*i)); try{ r = await apiCall(action, payload, true); }catch(e){ r = {success:false}; } if(r && r.success) break; } return r; };
+  showBusyOverlay('กำลังแยก ID ตามประเภทการจ่ายและส่งต่อ กรุณารอสักครู่...');
+  let done = 0;
+  try{
+    // 1) save the lines exactly as shown on screen (incl. their payment types) so the server splits what the user sees
+    const stored = parseSapLines(doc);
+    const lines = sel.lines.map((l,i)=>Object.assign({}, l, { subId: l.subId || (stored[i] && stored[i].subId) || (doc.id+'-'+(i+1)) }));
+    const sum = lines.reduce((t,l)=>({vat:t.vat+num(l.vat), wht:t.wht+num(l.wht), base:t.base+num(l.base), net:t.net+num(l.net)}), {vat:0,wht:0,base:0,net:0});
+    const save = { id:doc.id, sapLines:JSON.stringify(lines), vatAmount:sum.vat.toFixed(2), whtAmount:sum.wht.toFixed(2), baseAmount:sum.base.toFixed(2), netAmount:sum.net.toFixed(2), modifiedBy:me, modifiedDate:nowStr() };
+    let r = await retry('updateDocument', save);
+    if(!r || !r.success) throw new Error('save_lines');
+    Object.assign(doc, save);
+    // 2) the type with most lines stays on the original ID; every other type moves to its own new ID
+    const counts = {}; lines.forEach(l=>{ counts[l.payType] = (counts[l.payType]||0)+1; });
+    const order = sel.types.slice();
+    const main = order.slice().sort((a,b)=>counts[b]-counts[a] || order.indexOf(a)-order.indexOf(b))[0];
+    const targets = [{ doc, type:main }];
+    for(const t of order.filter(x=>x!==main)){
+      const subIds = lines.filter(l=>String(l.payType)===t).map(l=>l.subId);
+      r = await retry('splitDocForPayment', { id:doc.id, subIds, mode:'approval', modifiedBy:me, modifiedDate:nowStr() });
+      if(!r || !r.success || !r.child) throw new Error('split');
+      if(r.parent) Object.assign(doc, r.parent);
+      state.documents.push(r.child);
+      targets.push({ doc:r.child, type:t });
+    }
+    // 3) send every resulting ID on to the next stage
+    let entry = null; try{ const h = JSON.parse(patch.historyLog||'[]'); entry = h[h.length-1]; }catch(e){}
+    for(const tg of targets){
+      const p = Object.assign({}, patch, { id:tg.doc.id, payType:tg.type });
+      ['docSAP','webDocNo','vendor','vendorName','sapLines','vatAmount','whtAmount','baseAmount','netAmount'].forEach(k=>{ delete p[k]; });
+      if(entry) p.historyLog = appendHistoryLog(tg.doc, Object.assign({}, entry, { note:((entry.note||'')+' (แยก ID ตามประเภทการจ่าย: '+payTypeLabel(tg.type)+')').trim() }));
+      r = await retry('updateDocument', p);
+      if(!r || !r.success) throw new Error('send');
+      Object.assign(tg.doc, p); done++;
+    }
+    state.expandedRow = null;
+    hideBusyOverlay();
+    showToast('แยกเป็น '+targets.length+' ID และส่งต่อเรียบร้อย: '+targets.map(t=>displayId(t.doc.id)).join(', '));
+    await refreshData({light:true}); render();
+  }catch(e){
+    hideBusyOverlay();
+    showToast(done ? 'ส่งต่อได้บางส่วน ('+done+' ID) — กรุณาตรวจสอบรายการที่เหลือในหน้านี้แล้วกดส่งงานอีกครั้ง' : 'แยก/ส่งต่อไม่สำเร็จ ('+(e&&e.message||'error')+') — ข้อมูลที่แยกแล้วยังอยู่ในหน้านี้ กรุณากดส่งงานอีกครั้ง');
+    try{ await refreshData({light:true}); }catch(_){}
+    render();
+  }
+}
 async function processStage(id, decision){
   const doc = state.documents.find(d=>d.id===id);
   if(!doc) return;
@@ -6339,7 +6464,7 @@ async function processStage(id, decision){
   const skipFinanceEl = document.getElementById('skipFinance-'+id);
   const skipApprover = isReceivableDoc_(doc) || (skipApproverEl ? skipApproverEl.checked : (doc.skipApprover==='TRUE'||doc.skipApprover===true));
   const skipFinance = typeSkipLocked_(doc.docType) ? typeSkipFinance_(doc.docType) : (skipFinanceEl ? skipFinanceEl.checked : (doc.skipFinance==='TRUE'||doc.skipFinance===true));
-  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+  const payTypeEl = payTypeSel_(id);
 
   // mandatory fields before the accountant can forward a document on to the reviewer
   if(decision==='approve' && doc.status==='รอนักบัญชี'){
@@ -6350,7 +6475,7 @@ async function processStage(id, decision){
     if(!sapVal) missing.push('Document SAP');
     if(!vendorVal) missing.push('Vendor');
     if(!vendorNameVal) missing.push('Vendor Name');
-    if(!payTypeEl) missing.push('ประเภทการจ่าย');
+    if(!payTypeEl) missing.push(payMissTxt_(id));
     if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อผู้ตรวจสอบ: '+missing.join(', ')); return; }
   }
 
@@ -6398,7 +6523,7 @@ async function processStage(id, decision){
   // so the approver stage (which has no checkboxes) never overwrites what was decided earlier
   if(skipApproverEl) patch.skipApprover = skipApprover ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinance ? 'TRUE' : '';
-  if(payTypeEl) patch.payType = payTypeEl.value;
+  if(payTypeEl){ patch.payType = payTypeEl.value; if(payTypeEl.multi) patch.sapLines = mergeLinePayTypes_(doc, payTypeEl.lines); }
 
   if(decision!=='approve'){
     patch.status = cfg.reject;
@@ -6432,11 +6557,13 @@ async function processStage(id, decision){
     action: decision==='approve' ? 'approve' : 'reject',
   });
 
+  const needSplit_ = decision==='approve' && (doc.status==='รอนักบัญชี' || doc.status==='รอผู้ตรวจสอบ') && !!(payTypeEl && payTypeEl.multi && payTypeEl.mixed);
+  const splitTxt_ = needSplit_ ? ('\n\n⚠ เอกสารนี้มีหลายประเภทการจ่าย ระบบจะแยกเป็น '+payTypeEl.types.length+' ID ตามประเภท แล้วส่งต่อทุก ID พร้อมกัน:\n'+payTypeEl.types.map(t=>'• '+payTypeLabel(t)+' — '+payTypeEl.lines.filter(l=>String(l.payType)===t).length+' รายการ').join('\n')) : '';
   let statusBeforeAcct_ = '';
   {
     const statusBefore = doc.status; statusBeforeAcct_ = doc.status;
     const ok = await confirmBox_(decision==='approve' ? 'ยืนยันอนุมัติ / ส่งต่อ' : 'ยืนยันตีกลับแก้ไข',
-      displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\n' + (decision==='approve' ? 'ต้องการอนุมัติ / ส่งต่อเอกสารนี้ใช่หรือไม่?' : 'ต้องการตีกลับเอกสารนี้ให้แก้ไขใช่หรือไม่?') + ((note && note.trim()) ? '\n\nความเห็น: ' + note.trim() : ''),
+      displayId(id) + (doc.docName ? '  ' + doc.docName : '') + '\n\n' + (decision==='approve' ? ('ต้องการอนุมัติ / ส่งต่อเอกสารนี้ใช่หรือไม่?'+splitTxt_) : 'ต้องการตีกลับเอกสารนี้ให้แก้ไขใช่หรือไม่?') + ((note && note.trim()) ? '\n\nความเห็น: ' + note.trim() : ''),
       decision==='approve' ? 'อนุมัติ / ส่งต่อ' : 'ตีกลับ', decision==='approve' ? 'approve' : 'reject');
     if(!ok) return;
     const cur = state.documents.find(d=>d.id===id);
@@ -6444,8 +6571,10 @@ async function processStage(id, decision){
   }
   if(decision==='approve' && (statusBeforeAcct_ === 'รอนักบัญชี' || statusBeforeAcct_ === 'รอผู้ตรวจสอบ')){
     let ls = []; try{ ls = doc.sapLines ? JSON.parse(doc.sapLines) : []; }catch(e){ ls = []; }
-    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName}))));
+    if(typeof payTypeEl!=='undefined' && payTypeEl && payTypeEl.multi) ls = payTypeEl.lines;
+    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName, bankAccount:l.bankAccount, bankName:l.bankName}))));
   }
+  if(needSplit_){ await autoSplitSend_(doc, patch, payTypeEl); return; }
   bgUpdateDoc_(doc, patch, decision==='approve' ? 'ส่งต่อเอกสารเรียบร้อย' : 'ตีกลับเอกสารแล้ว');
 }
 function toggleSkipReasonOther(id){
@@ -6468,7 +6597,8 @@ async function skipReviewerStage(id){
   const webDocNoEl = document.getElementById('webDocNo-'+id);
   const vendorEl = document.getElementById('vendor-'+id);
   const vendorNameEl = document.getElementById('vendorName-'+id);
-  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+  const payTypeEl = payTypeSel_(id);
+  if(payTypeEl && payTypeEl.mixed){ showToast('เอกสารนี้มีหลายประเภทการจ่าย — กรุณาใช้ปุ่ม "✂ แยกรายการที่ติ๊กเป็น ID ใหม่" แยกตามประเภทก่อน หรือกด "อนุมัติ/ส่งต่อ" ตามปกติเพื่อให้ระบบแยก ID ให้'); return; }
 
   const sapVal = sapEl ? sapEl.value.trim() : (doc.docSAP||'');
   const vendorVal = vendorEl ? vendorEl.value.trim() : (doc.vendor||'');
@@ -6477,7 +6607,7 @@ async function skipReviewerStage(id){
   if(!sapVal) missing.push('Document SAP');
   if(!vendorVal) missing.push('Vendor');
   if(!vendorNameVal) missing.push('Vendor Name');
-  if(!payTypeEl) missing.push('ประเภทการจ่าย');
+  if(!payTypeEl) missing.push(payMissTxt_(id));
   if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อ: '+missing.join(', ')); return; }
 
   // ข้ามขั้นผู้ตรวจสอบเป็นเรื่องผิดปกติของ Flow ปกติ — ต้องมีเหตุผลกำกับไว้เสมอเพื่อการตรวจสอบย้อนหลัง
@@ -6496,7 +6626,7 @@ async function skipReviewerStage(id){
   const manualBankNameEl = document.getElementById('manualBankName-'+id);
   if(manualBankAccountEl) patch.manualBankAccount = manualBankAccountEl.value.trim();
   if(manualBankNameEl) patch.manualBankName = manualBankNameEl.value.trim();
-  patch.payType = payTypeEl.value;
+  patch.payType = payTypeEl.value; if(payTypeEl.multi) patch.sapLines = mergeLinePayTypes_(doc, payTypeEl.lines);
   patch.status = 'รอผู้อนุมัติ';
 
   let history = [];
@@ -6506,7 +6636,8 @@ async function skipReviewerStage(id){
   patch.historyLog = JSON.stringify(history);
 
   { let ls = []; try{ ls = doc.sapLines ? JSON.parse(doc.sapLines) : []; }catch(e){ ls = []; }
-    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName})))); }
+    if(typeof payTypeEl!=='undefined' && payTypeEl && payTypeEl.multi) ls = payTypeEl.lines;
+    ensureVendorsInMaster_(doc.companyCode, [{code:patch.vendor, name:patch.vendorName, bankAccount:patch.manualBankAccount, bankName:patch.manualBankName}].concat(ls.map(l=>({code:l.vendor, name:l.vendorName, bankAccount:l.bankAccount, bankName:l.bankName})))); }
   bgUpdateDoc_(doc, patch, 'ข้ามผู้ตรวจสอบและส่งต่อผู้อนุมัติเรียบร้อย');
 }
 async function resubmitFromStage(id){
@@ -6522,7 +6653,8 @@ async function resubmitFromStage(id){
   const vendorNameEl = document.getElementById('vendorName-'+id);
   const skipApproverEl = document.getElementById('skipApprover-'+id);
   const skipFinanceEl = document.getElementById('skipFinance-'+id);
-  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+  const payTypeEl = payTypeSel_(id);
+  if(payTypeEl && payTypeEl.mixed){ showToast('เอกสารนี้มีหลายประเภทการจ่าย — กรุณาแยก ID ตามประเภทด้วยปุ่ม "✂ แยกรายการที่ติ๊กเป็น ID ใหม่" ก่อนส่งต่อ'); return; }
 
   // same mandatory-fields gate as the normal accountant → reviewer forward
   if(cfg.next==='รอผู้ตรวจสอบ'){
@@ -6533,7 +6665,7 @@ async function resubmitFromStage(id){
     if(!sapVal) missing.push('Document SAP');
     if(!vendorVal) missing.push('Vendor');
     if(!vendorNameVal) missing.push('Vendor Name');
-    if(!payTypeEl) missing.push('ประเภทการจ่าย');
+    if(!payTypeEl) missing.push(payMissTxt_(id));
     if(missing.length){ showToast('กรุณากรอกให้ครบก่อนส่งต่อผู้ตรวจสอบ: '+missing.join(', ')); return; }
   }
 
@@ -6551,7 +6683,7 @@ async function resubmitFromStage(id){
   if(manualBankNameEl2) patch.manualBankName = manualBankNameEl2.value.trim();
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
-  if(payTypeEl) patch.payType = payTypeEl.value;
+  if(payTypeEl){ patch.payType = payTypeEl.value; if(payTypeEl.multi) patch.sapLines = mergeLinePayTypes_(doc, payTypeEl.lines); }
   const resubmitStageLabel = {'accountantBy':'นักบัญชี','reviewerBy':'ผู้ตรวจสอบ','approverBy':'ผู้อนุมัติ'}[cfg.actor] || cfg.actor;
   patch.historyLog = appendHistoryLog(doc, {
     stage: resubmitStageLabel,
@@ -7016,8 +7148,8 @@ function paymentHTML(){
           <td>${l.vendor||'-'}</td>
           <td>${l.vendorName||'-'}</td>
           <td>${payTypeLabel(d.payType)}</td>
-          <td class="mono">${(vRec&&vRec.bankAccount)||'-'}</td>
-          <td>${(vRec&&vRec.bankName)||'-'}</td>
+          <td class="mono">${(vRec&&vRec.bankAccount)||l.bankAccount||'-'}</td>
+          <td>${(vRec&&vRec.bankName)||l.bankName||'-'}</td>
           <td style="text-align:right;">${money2(l.vat)}</td>
           <td style="text-align:right;">${money2(l.wht)}</td>
           <td style="text-align:right;">${money2(l.base)}</td>
@@ -7437,7 +7569,7 @@ async function exportVoucherReportToExcel(){
     if(lines.length>1){
       lines.forEach(l=>{
         const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
-        lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||'-', (vRec&&vRec.bankName)||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
+        lineRows.push([d.id, docTypeInfo(d.docType).label, d.docName, l.fiDoc||'-', d.webDocNo||'-', l.vendor||'-', l.vendorName||'-', payTypeLabel(d.payType), (vRec&&vRec.bankAccount)||l.bankAccount||'-', (vRec&&vRec.bankName)||l.bankName||'-', l.vat||0, l.wht||0, l.base||0, l.net||0]);
       });
     } else {
       const bankAcct = vendorBankAccountFor(d), bankName = vendorBankNameFor(d);
@@ -7593,7 +7725,7 @@ function generateVoucherSummary(){
       lines.forEach(l=>{
         const vRec = findVendor_(d.companyCode, l.vendor, l.vendorName);
         recs.push({ id:displayId(l.subId||d.id), type:docTypeInfo(d.docType).label, name:d.docName||'-', sap:l.fiDoc, web:d.webDocNo, text:l.text||'', po:poNoOf_(d), vendor:l.vendor, vname:l.vendorName,
-          pay:payTypeLabel(d.payType), acct:vRec&&vRec.bankAccount, bank:vRec&&vRec.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net) });
+          pay:payTypeLabel(l.payType||d.payType), acct:(vRec&&vRec.bankAccount)||l.bankAccount, bank:(vRec&&vRec.bankName)||l.bankName, vat:num(l.vat), wht:num(l.wht), base:num(l.base), net:num(l.net) });
       });
     } else {
       recs.push({ id:displayId(d.id), type:docTypeInfo(d.docType).label, name:d.docName||'-', sap:d.docSAP, web:d.webDocNo, text:d.sapText||'', po:poNoOf_(d), vendor:d.vendor, vname:d.vendorName,
@@ -7623,12 +7755,12 @@ function generateVoucherSummary(){
         <tr class="${cls}"><td colspan="8" class="tl">${label}</td>
           <td class="n">${money(t.base)}</td><td class="n">${money(t.vat)}</td><td class="n">${money(t.base+t.vat)}</td><td class="n">${money(t.wht)}</td><td class="n">${money(t.net)}</td></tr>`;
   const vOrder = [], vGroups = {};
-  recs.forEach(r=>{ const k = r.vendor || r.vname || '-'; if(!vGroups[k]){ vGroups[k]=[]; vOrder.push(k); } vGroups[k].push(r); });
+  recs.forEach(r=>{ const k = vendorGroupKey_(r); if(!vGroups[k]){ vGroups[k]=[]; vOrder.push(k); } vGroups[k].push(r); });
   let rows = '';
   vOrder.forEach(k=>{
     const g = vGroups[k];
     rows += g.map(recHTML).join('');
-    if(vOrder.length>1) rows += totRow('subtot', 'รวม '+k+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)'+bankTxt(g[0]), sumRecs(g));
+    if(vOrder.length>1) rows += totRow('subtot', 'รวม '+(g[0].vendor||k)+(g[0].vname?' '+g[0].vname:'')+' ('+g.length+' รายการ)'+bankTxt(g[0]), sumRecs(g));
   });
   rows += totRow('grand', 'Total ('+recs.length+' รายการ)'+(vOrder.length===1?bankTxt(recs[0]):''), sumRecs(recs));
   const lastDoc = docs[docs.length-1] || {};
@@ -7790,7 +7922,7 @@ async function saveDraftChanges(id){
   const vendorNameEl = document.getElementById('vendorName-'+id);
   const skipApproverEl = document.getElementById('skipApprover-'+id);
   const skipFinanceEl = document.getElementById('skipFinance-'+id);
-  const payTypeEl = document.querySelector('input[name="payType-'+id+'"]:checked');
+  const payTypeEl = payTypeSel_(id);
   const taxCodeEl = document.getElementById('taxCode-'+id);
   if(sapEl) patch.docSAP = sapEl.value.trim();
   if(webDocNoEl) patch.webDocNo = webDocNoEl.value.trim();
@@ -7802,7 +7934,7 @@ async function saveDraftChanges(id){
   if(manualBankNameEl3) patch.manualBankName = manualBankNameEl3.value.trim();
   if(skipApproverEl) patch.skipApprover = skipApproverEl.checked ? 'TRUE' : '';
   if(skipFinanceEl) patch.skipFinance = skipFinanceEl.checked ? 'TRUE' : '';
-  if(payTypeEl) patch.payType = payTypeEl.value;
+  if(payTypeEl){ patch.payType = payTypeEl.value; if(payTypeEl.multi) patch.sapLines = mergeLinePayTypes_(doc, payTypeEl.lines); }
   if(taxCodeEl) patch.taxCode = taxCodeEl.value;
 
   showBusyOverlay('กำลังบันทึกการแก้ไข กรุณารอสักครู่...');
@@ -8166,8 +8298,8 @@ function openPaymentReport(docPayment){
           <td>${l.fiDoc||'-'}</td>
           <td>${l.vendor||'-'}</td>
           <td>${l.vendorName||'-'}</td>
-          <td>${(vRec&&vRec.bankAccount)||'-'}</td>
-          <td>${(vRec&&vRec.bankName)||'-'}</td>
+          <td>${(vRec&&vRec.bankAccount)||l.bankAccount||'-'}</td>
+          <td>${(vRec&&vRec.bankName)||l.bankName||'-'}</td>
           <td>${d.createdBy||'-'}</td>
           <td style="text-align:right;">${money(num(l.base))}</td>
           <td style="text-align:right;">${money(num(l.vat))}</td>
