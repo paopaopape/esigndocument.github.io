@@ -5442,8 +5442,17 @@ function toggleHdrBlock(id){
 }
 function openApprovalReport(id, draft){
   if(!sigReady_()) return;
-  const d = draft || state.documents.find(x=>x.id===id);
+  let d = draft || state.documents.find(x=>x.id===id);
   if(!d){ showToast('ไม่พบเอกสารนี้'); return; }
+  // multi-line docs: show the payment type / bank exactly as on screen (even if not saved yet), else the default we suggest
+  if(!draft && parseSapLines(d).length>1){
+    const stored = parseSapLines(d);
+    const scr = document.getElementById('sapline-pay-'+id+'-0') ? gatherCurrentSapLinesFromDOM(id) : null;
+    d = Object.assign({}, d, { sapLines: JSON.stringify(stored.map((l,i)=>Object.assign({}, l, {
+      payType: (scr && scr[i] && scr[i].payType) || linePayDefault_(d, l),
+      bankAccount: (scr && scr[i] && scr[i].bankAccount) || l.bankAccount || '',
+      bankName: (scr && scr[i] && scr[i].bankName) || l.bankName || '' }))) });
+  }
   const fmt = str => { if(!str) return '-'; const dt = parseThaiDateStr(str); return fmtDate(dt || str); };
   const num = v => parseFloat(v)||0;
   const NL_ = useNewReportLayout_(d);
